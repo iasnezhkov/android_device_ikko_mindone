@@ -1,0 +1,51 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// Open replacements for the MediaTek CCCI userspace daemons (MODEM-STACK-1409, Q23b).
+// Built under their own names so they can coexist with the stock binaries during the A/B on a rescue
+// slot (README-INTEGRATION.md); the kernel's process-name gate is satisfied by prctl(PR_SET_NAME) in the
+// code. No init_rc here on purpose: for the A/B the daemons are started by hand in place of the stock
+// services; the rc files next to the sources document the stock init actions they replace.
+//
+// 🔴 15.09 (F4442 resolved): this file was Android.bp.disabled, which kept the whole modem stack out
+// of the build. The blocker was linking the stock libnvram/libsysenv: they live in the soong namespace
+// `vendor/ikko/mindone`, invisible from `device/ikko/mindone`, and importing it is impossible because
+// vendor already imports device - the namespaces would form a cycle.
+// Resolved by binding those five entry points at RUNTIME instead (common/nvram_shim.c): dlopen()
+// resolves through the vendor namespace's own search path on the device, so nothing about what runs
+// changes, but the build graph no longer needs to see the blobs at all. The stock libraries are still
+// the ones doing the work - nothing is reimplemented (NVRAM-LID-1409 S5/S8).
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_defaults {
+    name: "mindone_ccci_daemon_defaults",
+    vendor: true,
+    compile_multilib: "64",
+    local_include_dirs: ["common"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-std=gnu11"],
+    // libdl replaces libnvram/libsysenv here: the shim dlopen()s them instead of linking.
+    shared_libs: ["liblog", "libcutils", "libdl"],
+}
+
+cc_binary {
+    name: "mindone_mdinit",
+    defaults: ["mindone_ccci_daemon_defaults"],
+    srcs: ["mdinit/ccci_mdinit.c", "common/nvram_shim.c"],
+}
+
+cc_binary {
+    name: "mindone_fsd",
+    defaults: ["mindone_ccci_daemon_defaults"],
+    srcs: ["fsd/ccci_fsd.c", "common/nvram_shim.c"],
+}
+
+cc_binary {
+    name: "mindone_rpcd",
+    defaults: ["mindone_ccci_daemon_defaults"],
+    srcs: ["rpcd/ccci_rpcd.c", "common/nvram_shim.c"],
+}

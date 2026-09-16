@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- Runtime permissions granted at first boot so the system install has no onboarding.
+     fixed="false" keeps them user-revocable in Settings. -->
+<exceptions>
+    <exception package="app.launcher">
+        <permission name="android.permission.READ_CALENDAR" fixed="false" />
+        <permission name="android.permission.READ_CONTACTS" fixed="false" />
+        <permission name="android.permission.ACCESS_COARSE_LOCATION" fixed="false" />
+        <!-- 3.4b: the Hub's call group. WRITE clears the NEW flag when the user marks them read. -->
+        <permission name="android.permission.READ_CALL_LOG" fixed="false" />
+        <permission name="android.permission.WRITE_CALL_LOG" fixed="false" />
+        <!-- 3.16: dictation from the search bar without a first-use prompt. -->
+        <permission name="android.permission.RECORD_AUDIO" fixed="false" />
+    </exception>
+</exceptions>

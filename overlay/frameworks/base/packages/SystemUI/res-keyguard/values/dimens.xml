@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- MINDONE 12.09 (F4185): moved from the wrong path res/values/ (AOSP does not declare these
+     three dimens there - SystemUI/res-keyguard is a SEPARATE resource_dir of the SystemUI-res module,
+     see Android.bp resource_dirs: ["res-product","res-keyguard","res"]; an overlay must match the
+     exact name). None of the three is overridden in the values-sw360dp bucket in AOSP, so the base
+     value is sufficient on any screen with smallestWidth >= 360dp. The goal is to free up height for the
+     PIN bouncer: 20dp (container padding, a separate overlay) + 80dp (input field) + 60dp (bottom margin)
+     were eating most of the ~522dp of available screen height, leaving the 4 key rows ~30dp per button. -->
+<resources>
+    <dimen name="keyguard_password_height">56dp</dimen>
+    <dimen name="num_pad_entry_row_margin_bottom">4dp</dimen>
+    <dimen name="keyguard_security_view_bottom_margin">12dp</dimen>
+</resources>

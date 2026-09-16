@@ -1,0 +1,20 @@
+# mindone: labels for nodes our kernel 6.1 exposes at paths the MT6789 baseline does not know.
+# vibrator LED class (haptic_nv vib_name=vibrator) — LineageOS vibrator-service.legacy (F3812)
+genfscon sysfs /devices/platform/soc/11f00000.i2c/i2c-7/7-0058/leds/vibrator u:object_r:sysfs_vibrator:s0
+# charger eta6965 power_supply nodes read by hal_health_default (ROM №9 avc, permissive)
+genfscon sysfs /devices/platform/eta6965_chg/power_supply u:object_r:sysfs_batteryinfo:s0
+
+# mindone 08.09 (F3975): the charger type detector. Of 12 power supplies, 10 are labeled
+# sysfs_batteryinfo, while mtk_charger_type carried the generic sysfs label - the battery HAL was getting
+# 74 read/open/getattr denials per hour. The path was cross-checked on the live device via the /sys/class/power_supply/ symlink.
+genfscon sysfs /devices/platform/soc/10026000.pwrap/10026000.pwrap:mt6366/mtk-charger-detection/power_supply u:object_r:sysfs_batteryinfo:s0
+
+# mindone 09.09 (F4059): the LARGEST single source of denials - 69 events per boot, more than a third
+# of the total. The proximity sensor registers as a power supply, gets caught by
+# hal_health_default's scan of /sys/class/power_supply/, but carries the GENERIC sysfs label. The path was
+# cross-checked on the live device: readlink -f /sys/class/power_supply/sar_cali gives exactly this node, and
+# all ten neighboring power-supply nodes are labeled sysfs_batteryinfo.
+genfscon sysfs /devices/virtual/hf_manager/hf_manager/sar_cali u:object_r:sysfs_batteryinfo:s0
+genfscon sysfs /devices/platform/soc/10010000.kp/hall_position u:object_r:sysfs_mindone_hall:s0
+genfscon sysfs /devices/virtual/hf_manager/hf_manager/sar_cali/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/platform/soc/11eb0000.i2c/i2c-2/2-0058/wakeup u:object_r:sysfs_wakeup:s0

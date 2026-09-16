@@ -1,0 +1,33 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// mindone (06.09, F3839): private wpa_supplicant driver-command library for MediaTek gen4m.
+// Without it Lineage links libdrivercmdfallback (all DRIVER commands are no-ops), and SETSUSPENDMODE 1 on
+// screen-off never reaches wlan_drv_gen4m: CONNSYS wakes the AP 2.6 times/s (F3838), 98 mA while idle (F3836).
+// The driver accepts commands via ioctl SIOCDEVPRIVATE+1 (struct android_wifi_priv_cmd, gl_wext_priv.c:15944).
+// Selected via: BoardConfig.mk -> $(call soong_config_set,wpa_supplicant_8,board_wpa_supplicant_private_lib,lib_driver_cmd_mt66xx)
+cc_library_static {
+    name: "lib_driver_cmd_mt66xx",
+    vendor: true,
+    srcs: ["driver_cmd_nl80211.c"],
+    shared_libs: ["libc", "libcutils", "libdl"],
+    cflags: [
+        "-DCONFIG_ANDROID_LOG",
+        "-DCONFIG_P2P",
+        "-Wall",
+        "-Werror",
+        "-Wno-unused-parameter",
+    ],
+    include_dirs: [
+        "external/libnl/include",
+        "external/wpa_supplicant_8/src",
+        "external/wpa_supplicant_8/src/common",
+        "external/wpa_supplicant_8/src/drivers",
+        "external/wpa_supplicant_8/src/l2_packet",
+        "external/wpa_supplicant_8/src/utils",
+        "external/wpa_supplicant_8/src/wps",
+        "external/wpa_supplicant_8/wpa_supplicant",
+    ],
+}

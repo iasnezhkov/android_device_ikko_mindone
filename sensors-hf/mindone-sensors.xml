@@ -1,0 +1,21 @@
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- mind_one: AIDL android.hardware.sensors/default replacing the stock
+     HIDL 2.0 android.hardware.sensors/default entry in
+     device/ikko/mindone/manifest.xml (currently lines 203-212 - a
+     <hal format="hidl"> block for ISensors@2.0/default). REPLACE that
+     block with this one (or install this as a separate vintf_fragment via
+     Android.bp's `vintf_fragments` and delete the old block) - a device
+     cannot declare the sensors HAL twice, framework only ever binds one.
+
+     !! VERIFY the <version> against the actual AIDL interface this tree
+     builds against (see Android.bp comment) before shipping. !! -->
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.sensors</name>
+        <version>3</version>
+        <fqname>ISensors/default</fqname>
+    </hal>
+</manifest>

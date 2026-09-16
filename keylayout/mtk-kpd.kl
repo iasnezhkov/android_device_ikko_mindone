@@ -1,0 +1,45 @@
+# mtk-kpd.kl - MediaTek keypad driver (mtk_kpd.ko), matched by Android's key layout loader
+# against the input device name "mtk-kpd" (KPD_NAME in mtk_kpd.c).
+#
+# 🔴 15.09 (F4460): THE CLAIM BELOW WAS WRONG AND IT COST THE VOLUME-DOWN KEY.
+# The original note said this file "does not change runtime behaviour by itself" because
+# Generic.kl resolves the same three scancodes anyway. That is not how Android's key layout
+# loader works: a device-specific .kl REPLACES Generic.kl for that input device, it is not
+# merged with it. Every scancode missing from this file therefore became unmapped.
+#
+# And this input node reports more than the hall switch. mtk_kpd.c sets
+# input_dev->name = KPD_NAME ("mtk-kpd") for ONE device that carries all of:
+#   - the hall switch edges          -> KEY_F2 (60) / KEY_F3 (61), hall_eint_handler()
+#   - the capacitive side key        -> KEY_F4 (62), touch_key_eint_handler()
+#   - the hardware keypad MATRIX     -> kpd_keymap_handler(), codes from the device tree
+# and our DT (mt6789.dtb, kp@10010000) has mediatek,hw-init-map = <0x72 0x00 ...>, i.e. exactly
+# one matrix key: 0x72 = 114 = KEY_VOLUMEDOWN. Dropping it left the volume-down key dead.
+#
+# So: list EVERY scancode this node can emit. Volume up is not here on purpose - it does not come
+# from this device (the PMIC node mt6366keys emits 0x74=116 POWER and 0x3b=59 KEY_F1).
+#
+# KEY_F2 (scancode 60) / KEY_F3 (scancode 61): the two edges of the flip-camera module's hall
+# switch (mtk_kpd.c hall_eint_handler(), F4296). Always fully consumed in system_server by
+# org.mindone.keyhandler.CameraFlipKeyHandler (see device/ikko/mindone/overlay/lineage-sdk/
+# lineage/res/res/values/config.xml) before any app is queued the key event -- they never reach
+# an app as a literal F2/F3 press. No WAKE flag: waking the AP for a flip is already handled at
+# the kernel level (irq_set_irq_wake() on the hall IRQ), and the flip should not turn the screen
+# on by itself.
+key 60   F2
+key 61   F3
+
+# KEY_F4 (scancode 62): the capacitive touch_key node sharing this input device (mtk_kpd.c
+# touch_key_eint_handler(), F4296 comment). Observed once during bring-up, not wired to anything
+# in userspace yet -- left as a plain, unconsumed F4.
+key 62   F4
+
+# The hardware keypad matrix on this same "mtk-kpd" node. The authority for what it can emit is
+# the device's own KEY capability bitmap, read live on 15.09 from /proc/bus/input/devices:
+#   B: KEY=100000 0 c000000000000 3000000000000000
+# which decodes to bits 60, 61, 114, 115 and 212 -- i.e. BOTH volume keys and the camera key, not
+# just the 0x72 that mediatek,hw-init-map lists. All three were missing here until 15.09, and that
+# is what killed them (F4460). Note bit 62 (F4) is absent from the live bitmap because the
+# capacitive side key is deliberately off (F4431); the mapping is kept above anyway, harmlessly.
+key 114  VOLUME_DOWN
+key 115  VOLUME_UP
+key 212  CAMERA

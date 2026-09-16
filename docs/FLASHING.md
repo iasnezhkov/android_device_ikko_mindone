@@ -1,0 +1,250 @@
+# Flashing
+
+Read this before writing anything. This device punishes the usual A/B assumptions: of the three
+standard ways to install a build, two do not work here at all, and the third needs care.
+
+## TL;DR
+
+```sh
+# 1. sign the build with your own keys -- the device accepts nothing else
+#    (see "Signing"; unsigned `mka bacon` output is rejected)
+# 2. pull the partition images out of the signed package, and build super from the
+#    signed target-files
+out/host/linux-x86/bin/build_super_image /tmp/signed.zip super-sparse.img
+
+# 3. write from the bootloader's fastboot, into the ACTIVE slot
+SLOT=$(adb shell getprop ro.boot.slot_suffix | tr -d '\r')
+adb reboot bootloader
+fastboot flash super super-sparse.img
+for p in boot vendor_boot dtbo vbmeta vbmeta_system vbmeta_vendor; do
+    fastboot flash "${p}${SLOT}" "$p.img"
+done
+fastboot reboot
+# 4. read every partition back and compare -- see "Verify, always"
+```
+
+One reboot, no intermediate state the device is ever asked to boot.
+
+## What does not work here, and why
+
+**`adb sideload`, `update_engine`, and the LineageOS Updater app.** These are one mechanism: the
+Updater only hands the package to the engine. The engine writes the *other* slot, and slot `_b`
+does not boot on this device -- the package applies cleanly, `_b` is marked active with six
+tries, the bootloader spends all six and returns to `_a`. Verified three times. `boot_b`,
+`vendor_boot_b` and `vbmeta_b` were byte-for-byte correct each time, the kernel inside was
+gzip-compressed, and `pstore` was empty afterwards, so the refusal happens below the kernel.
+**The cause is not known.** It is an open defect, not a solved one. Separately, the super
+metadata this tree produces sizes every `_b` partition at zero: there is no system there to boot.
+
+**Recovery.** It cannot be entered. This bootloader puts `androidboot.force_normal_boot=1` on the
+kernel command line **unconditionally** and never reads the `boot-recovery` command out of the
+BCB, so `adb reboot recovery` simply returns to the normal system. Measured: after such a reboot
+`/proc/cmdline` carries `force_normal_boot="1"` and the BCB is empty.
+
+🔴 This is not a packaging problem, and adding recovery resources does not fix it. Unpacking the
+`vendor_boot` off a running device shows `system/bin/recovery`, `adbd`, `recovery.fstab` and
+`ro.adb.secure=0` present the whole time. What is missing is the *entrance*, not the contents.
+`fastboot reboot recovery` is a different mechanism and has not been tried -- if you try it,
+that result is worth an issue.
+
+**`fastboot flash` from a macOS host.** Every write hangs the USB endpoint, and so does `getvar`.
+Read-only commands are fine. Write from a Linux host, or from a VM with real USB passthrough --
+that is what the flashing path above assumes. `adb reboot fastboot` lands in the preloader;
+`adb reboot bootloader` is the one that reaches the bootloader's fastboot.
+
+## The one thing that matters
+
+🔴 **Both slots share one `super` region.** All six logical partitions of slot A and slot B start
+at the same offsets inside it:
+
+| partition | offset (sectors) |
+|---|---|
+| `odm_dlkm` | 2048 |
+| `product` | 4096 |
+| `system` | 6 264 832 |
+| `system_ext` | 9 383 936 |
+| `vendor` | 10 813 440 |
+| `vendor_dlkm` | 12 421 120 |
+
+Consequences:
+
+- There is **no** "install to the spare slot and try it". The system is physically one copy; the
+  two slots' metadata merely describe it with different sizes.
+- After installing this ROM the other slot does not boot at all -- it fails while mounting, with
+  `EXT4-fs: bad geometry ... exceeds size of device`. That is expected, not a kernel bug.
+- `vendor_dlkm_a` and `vendor_dlkm_b` are the same extent. Switching slots without rewriting that
+  region gives a black screen with a live adb.
+
+## Before you start
+
+🔴 Take a full dump of the stock partitions **including the partition table**. Without the table
+there is nothing to restore the layout from, and no recovery image will help -- especially here,
+where recovery cannot be entered at all.
+
+## Write the whole set, or do not write
+
+A full package for this device holds 22 partitions. The procedure above writes twelve of them --
+six logical ones inside `super`, and six written directly. The remaining ten are the bootloader,
+the modem and the coprocessor firmwares:
+
+```
+lk  tee  gz  spmfw  sspm  scp  mcupm  dpm  pi_img  md1img
+```
+
+They are usually identical between your build and the device, which is why they can be left
+alone -- but check, do not assume. Compare each against the device before writing anything, and
+stop if one differs: a partial set leaves the device in a combination nobody built or tested.
+
+🔴 `vbmeta_system` and `vbmeta_vendor` belong in the *written* group, not the checked one. They
+do change between builds, and an earlier version of this procedure wrote neither -- the same
+class of omission that had already bootlooped this device once on a forgotten `vbmeta`.
+Six written + ten checked + six inside `super` = 22, with nothing left over. Keep it that way.
+
+## AVB is disabled here, and that is not permission to skip vbmeta
+
+The top-level `vbmeta` carries flags `0x3` -- `HASHTREE_DISABLED | VERIFICATION_DISABLED` -- and
+the bootloader is unlocked (`ro.boot.verifiedbootstate=orange`). So image verification does not
+gate booting, and dm-verity is not set up.
+
+🔴 It does not follow that the `vbmeta*` partitions can be left stale. That flag removes exactly
+one failure mode -- signature checking. It says nothing about whether the set of partitions is
+consistent with itself. Write them.
+
+## Signing
+
+The device verifies OTA payloads and images against the certificate in its own
+`/system/etc/security/otacerts.zip`. A stock `mka bacon` package is signed with the **AOSP test
+key** and is rejected. Sign with your own keys before installing.
+
+Every tool below is a host tool the build produces, in `out/host/linux-x86/bin/`. Make your keys
+once with `development/tools/make_key`.
+
+```sh
+cd <your lineage tree>
+source build/envsetup.sh && lunch lineage_mindone-bp4a-userdebug
+export PATH=$PWD/out/host/linux-x86/bin:$PATH
+KEYS=/path/to/your/keys
+
+# 1. target_files is a DIRECTORY, not a zip -- repack it yourself.
+#    -y is not optional: without it the symlinks inside become regular files
+#    and the resulting images are broken in ways that only show up on the device.
+D=$(ls -td out/target/product/mindone/obj/PACKAGING/target_files_intermediates/*-target_files | head -1)
+(cd "$D" && zip -r -q -y -X /tmp/tf.zip .)
+
+# 2. sign, then rebuild the images from the signed contents
+sign_target_files_apks -o -d "$KEYS" /tmp/tf.zip /tmp/signed.zip
+add_img_to_target_files -a --path out/host/linux-x86 /tmp/signed.zip
+
+# 3. the installable OTA package
+ota_from_target_files --path out/host/linux-x86 -k "$KEYS/releasekey" /tmp/signed.zip rom.zip
+```
+
+🔴 `--path out/host/linux-x86` is required on the last two: without it they cannot find the rest
+of the host tools and fail partway, after having already done work.
+
+`/tmp/signed.zip` is also what `build_super_image` takes.
+
+Check before you send a gigabyte to the device:
+
+```sh
+unzip -p rom.zip META-INF/com/android/otacert | openssl x509 -noout -fingerprint -sha256
+adb pull /system/etc/security/otacerts.zip && unzip -p otacerts.zip |
+  openssl x509 -noout -fingerprint -sha256
+```
+
+The two fingerprints must match.
+
+## Writing super
+
+`super` is an Android sparse image and `fastboot` understands it directly: it splits the image
+into download-sized pieces and skips the holes, which here are 6.1 GB out of 9. Nothing needs to
+be expanded on the host.
+
+```sh
+fastboot flash super super-sparse.img     # ~3.3 GB of real traffic, a couple of minutes
+```
+
+🔴 The image's logical size must equal the `super` partition on the device, byte for byte. Check
+it first -- `blockdev --getsize64 /dev/block/by-name/super` against the sparse header's
+`total_blocks * block_size`. An image built for a different size writes past the end.
+
+🔴 **Never write `super` from the running system.** It is running *from* that partition. `dd`,
+`sync` and `reboot` are themselves files in `/system`; once the write replaces them they die with
+`SIGILL` mid-operation. That was tried here and very nearly cost the device -- the write only
+finished because `dd` happened to already be resident in memory.
+
+## Verify, always
+
+A tool printing `OKAY` is not proof. Read the partition back and compare:
+
+```sh
+SZ=$(stat -c%s boot.img)                       # macOS: stat -f%z
+adb shell "dd if=/dev/block/by-name/boot${SLOT} bs=1M count=$(((SZ+1048575)/1048576)) |
+           head -c $SZ | sha256sum"
+sha256sum boot.img
+```
+
+🔴 Compare **the same number of bytes**, not whole partitions. Partitions of the same name in the
+two slots can differ in size, so hashing them whole reports a difference where the content is
+identical. That produced a wrong conclusion here once.
+
+The six logical partitions are checked the same way, through `/dev/block/mapper/<name>${SLOT}`.
+
+## Traps that have actually bitten
+
+**A duplicated device tree blob.** `BOARD_PREBUILT_DTBIMAGE_DIR` concatenates **every** `*.dtb`
+in that directory. Copy a new blob in under a different name without removing the old one and the
+build silently produces a `vendor_boot` carrying the DTB twice, with no warning anywhere. The
+device then does not boot: no adb, a preloader window every ~33 s. Check the size -- if the
+`dtb` inside `vendor_boot` is an exact multiple of the blob you built, that is what happened.
+The directory is a build product and is `.gitignore`d, so a clean clone does not protect you.
+
+**`grep -q` at the end of a pipeline.** With `set -o pipefail`, `grep -q` closes the pipe on its
+first match, the stage before it dies of SIGPIPE with 141, and the pipeline reports 141 -- a
+successful match that looks like a failure. A check written that way here reported "fastboot
+never appeared" while the device was sitting in fastboot. Capture into a variable, then match.
+
+**Piping flashing-tool output through `grep`/`tail`.** The pipeline buffers and a running flash
+looks hung. Write to a file and read the file.
+
+**`adb remount` before an install.** It leaves an overlayfs on six partitions, and `update_engine`
+then refuses with `kOverlayfsenabledError`. Anything changed live exists **only** in that
+overlay, so copy it out first -- file by file, because a recursive `adb pull` stops at overlayfs
+whiteouts (character devices marking deletions).
+
+## If the device does not come back
+
+| what you see | what to do |
+|---|---|
+| no adb, only a hub or a USB billboard on the bus | force a re-enumeration: on a hub that can switch its downstream data lines, cycle the port. This does **not** power-cycle the phone -- it only clears a stuck enumeration on the host side |
+| `0e8d:2000` on the bus, appearing and disappearing | preloader, cycling: the device is trying to boot and failing |
+| `0e8d:2000` on the bus **continuously** | preloader stuck; the same data-line cycle gets it out |
+| `0e8d:201c` on the bus | the bootloader's fastboot -- write from here, or `fastboot reboot` |
+| nothing on the bus at all | the device is not bringing up a USB gadget. Re-enumeration cannot help; hold Power ~12 s, then reconnect the cable |
+| adb answers but nothing else works | wait 30 s before acting; a stale transport after a reboot looks like a dead device |
+
+Data is not at risk in any of the above: `/data` is a separate partition and none of this touches
+it.
+
+🔴 **One thing does not survive, though: enrolled fingerprints.** After installing a build the
+sensor reports zero enrollments even though `/data` was never written. The hardware is fine --
+the kernel module loads, the HAL is alive, and re-enrolling works immediately. Expect to add your
+finger again after an install, and do not read a dead fingerprint reader into it. Why the
+templates are dropped is not yet understood.
+
+## What here has actually been run
+
+Being explicit, because a procedure nobody has executed is a guess with formatting.
+
+| | |
+|---|---|
+| Signing chain (repack, sign, `add_img_to_target_files`, `ota_from_target_files`) | **Run.** This is how the installed packages were produced |
+| `build_super_image` | **Run** |
+| Fingerprint comparison | **Run** |
+| `fastboot flash super` with a full 9 GB sparse image | **Run.** 3.3 GB of traffic, 53 sparse pieces, ~140 s |
+| Writing `boot`/`vendor_boot`/`dtbo`/`vbmeta`/`vbmeta_system`/`vbmeta_vendor` into the active slot | **Run** |
+| Reading all twelve written partitions back and comparing | **Run.** All twelve matched |
+| Completeness check of the ten unwritten firmwares | **Run.** All ten matched the device |
+| `adb reboot recovery` | **Run, and it does not work** -- see "What does not work here" |
+| `fastboot reboot recovery` | **Not tried** |
+| VTS / CTS | **Not run** |

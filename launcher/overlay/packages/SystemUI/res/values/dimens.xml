@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+  Keyguard metrics for a 432 × 496 dp panel. See ../../../../systemui/KEYGUARD.md §2.
+
+  🔴 SKELETON — same caveat as colors.xml: these are our names, not SystemUI's.
+
+  This file is where most of the short-screen fit lives, and it is the reason the plan starts with
+  a values overlay rather than a patch. The stock bouncer is laid out for ~900 dp of height; we
+  have 496 (or 551 at the density the ROM currently builds, TARGET_SCREEN_DENSITY := 360 — which
+  has not been measured on the device either). Shrinking the key pitch and the gaps is arithmetic;
+  rearranging the hierarchy is a patch. Do the arithmetic first and look at it.
+
+  Anything here that reads as a touch target must stay ≥ 48 dp: the launcher's own designLint
+  enforces that rule on our side and the lock screen should not be the one place it is broken.
+-->
+<resources>
+    <!-- One key of the PIN pad. 56 dp keeps a 48 dp target with room to breathe; drop to 48 only
+         if the pad still does not fit after the gaps are tightened. -->
+    <dimen name="launcher_keyguard_key_size">56dp</dimen>
+    <dimen name="launcher_keyguard_key_gap">8dp</dimen>
+
+    <!-- The digit inside a key. -->
+    <dimen name="launcher_keyguard_key_text">24sp</dimen>
+
+    <!-- Entry field, hint and error, top to bottom. -->
+    <dimen name="launcher_keyguard_entry_height">48dp</dimen>
+    <dimen name="launcher_keyguard_hint_text">14sp</dimen>
+    <dimen name="launcher_keyguard_error_text">12sp</dimen>
+
+    <!-- Distance from the clock above to the top of the pad. The stock value is generous because
+         it assumes a tall screen; this is the first number to cut. -->
+    <dimen name="launcher_keyguard_pad_top_margin">16dp</dimen>
+
+    <!-- Screen edge. Matches the launcher's screen_padding_h so the two screens line up. -->
+    <dimen name="launcher_keyguard_side_padding">16dp</dimen>
+</resources>

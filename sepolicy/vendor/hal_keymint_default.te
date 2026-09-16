@@ -1,0 +1,2 @@
+# Keymint (TEE, tkcore) talks to /dev/tkcoredrv (ROM №9 avc; blocker for enforcing, audit A16 §4.3)
+allow hal_keymint_default tkcore_admin_device:chr_file { read write open ioctl };

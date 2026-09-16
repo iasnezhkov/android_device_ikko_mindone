@@ -1,0 +1,10 @@
+# Display
+sys.brightness.disable_gamma_conversion=true
+
+# IMS — modem/VoLTE track not yet stable on kernel 6.1 (F2574, excluded from stable set) —
+# these debug-override props are placeholders, not verified against this device.
+persist.dbg.volte_avail_ovr=1
+persist.dbg.vt_avail_ovr=1
+persist.dbg.wfc_avail_ovr=1
+
+# 🔴 ro.fota.version is intentionally absent - it is device-specific and we have no value of our own.

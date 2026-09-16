@@ -1,0 +1,8 @@
+# mindone 09.09 (F4059): the framework reads the vibrator motor node (max_* in /sys/.../leds/vibrator).
+# 3 denials per boot. The node is already labeled sysfs_vibrator by our genfs_contexts.
+# Verified: the rule passes the AOSP neverallow check.
+allow system_server sysfs_vibrator:file r_file_perms;
+
+# mindone 13.09: MindOneKeyHandler (config_deviceKeyHandlerLibs, runs inside system_server)
+# reads the camera flip-module hall position our mtk_kpd driver exports once at boot.
+allow system_server sysfs_mindone_hall:file r_file_perms;

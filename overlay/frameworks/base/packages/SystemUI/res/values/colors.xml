@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- MINDONE 15.09: hide the gesture "pill" at the bottom of the screen (product decision).
+
+     The white bar is drawn by SystemUI's NavigationHandle
+     (packages/SystemUI/src/com/android/systemui/navigationbar/gestural/NavigationHandle.java),
+     which paints a rounded rect in navigation_bar_home_handle_light_color or
+     ..._dark_color depending on the background. Making both fully transparent removes the
+     bar and NOTHING else: the view still exists, still has its size, and every gesture
+     region, inset and animation is untouched. That is deliberate - this is the one way to
+     remove it that cannot break navigation.
+
+     🔴 What does NOT work, checked rather than assumed: LineageSettings.NAVIGATION_BAR_HINT
+     exists as a constant but nothing in this tree reads it - grep over frameworks/base,
+     lineage-sdk, LineageParts and vendor/lineage finds only its declaration in
+     LineageSettings.java. Setting it has no effect at all.
+-->
+<resources>
+    <color name="navigation_bar_home_handle_light_color">#00000000</color>
+    <color name="navigation_bar_home_handle_dark_color">#00000000</color>
+</resources>

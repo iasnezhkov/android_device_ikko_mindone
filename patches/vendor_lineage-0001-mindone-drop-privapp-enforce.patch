@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Mon, 07 Sep 2026 23:14:53 +0300
+Subject: [PATCH] mindone: do not enforce the privapp-permissions whitelist here
+
+The device tree sets ro.control_privapp_permissions=log in lineage_mindone.mk; with both
+assignments present the build system rejects the duplicate key (F3887 reverted, F3908).
+---
+diff --git a/config/common.mk b/config/common.mk
+index 3b68625f..8446e0e2 100644
+--- a/config/common.mk
++++ b/config/common.mk
+@@ -104,8 +104,12 @@ PRODUCT_COPY_FILES += \
+     vendor/lineage/config/permissions/org.lineageos.android.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/permissions/org.lineageos.android.xml
+ 
+ # Enforce privapp-permissions whitelist
+-PRODUCT_PRODUCT_PROPERTIES += \
+-    ro.control_privapp_permissions=enforce
++# MINDONE (F3887 withdrawn, F3908): dropped. Our value, = log, is set in
++# device/ikko/mindone/lineage_mindone.mk; with both assignments the new build system
++# treats the duplicate key as an ERROR, and filtering it out on our side does not help:
++# product config resolves inheritance across the graph only after the makefiles are read.
++#PRODUCT_PRODUCT_PROPERTIES += \
++#    ro.control_privapp_permissions=enforce
+ 
+ ifneq ($(TARGET_DISABLE_LINEAGE_SDK), true)
+ # Lineage SDK
+-- 
+2.43.0

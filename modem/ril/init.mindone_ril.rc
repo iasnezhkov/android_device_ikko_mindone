@@ -1,0 +1,27 @@
+# mind_one minimal RIL, phase 1 skeleton. See README-INTEGRATION.md and RIL-MINIMAL-1409.
+#
+# Disabled by default -- this is a design/skeleton deliverable, not validated on a live device
+# yet (task constraint: phone was read-only this session). Start manually on the RESCUE slot
+# only, per RECOVERY-PROCEDURE and this directory's README-INTEGRATION.md A/B plan:
+#   stop vendor.ril-daemon-mtk
+#   setprop persist.vendor.mindone_ril.cmd_dev /dev/radio/pttycmd1   # optional, matches default
+#   setprop persist.vendor.mindone_ril.noti_dev /dev/radio/pttynoti # optional, matches default
+#   start vendor.mindone_ril
+#
+# sepolicy (closed 14.09): the binary is labeled rild_exec in sepolicy/vendor/file_contexts, so it
+# runs in the stock "rild" domain (AOSP system/sepolicy/vendor/rild.te + MediaTek additions in
+# device/mediatek/sepolicy_vndr/base/vendor/rild.te: mtk_radio_device, radio properties, hwbinder).
+# Verified from the live device: /vendor/bin/hw/mtkfusionrild is rild_exec, /dev/radio/* are
+# mtk_radio_device, the running stock daemon is u:r:rild:s0.
+service vendor.mindone_ril /vendor/bin/hw/android.hardware.radio@1.6-service.mindone
+    interface android.hardware.radio@1.0::IRadio slot1
+    interface android.hardware.radio@1.1::IRadio slot1
+    interface android.hardware.radio@1.2::IRadio slot1
+    interface android.hardware.radio@1.3::IRadio slot1
+    interface android.hardware.radio@1.4::IRadio slot1
+    interface android.hardware.radio@1.5::IRadio slot1
+    interface android.hardware.radio@1.6::IRadio slot1
+    class hal
+    user radio
+    group radio inet
+    disabled

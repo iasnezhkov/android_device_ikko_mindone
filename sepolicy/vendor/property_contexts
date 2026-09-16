@@ -1,0 +1,6 @@
+# mindone vendor property contexts
+
+# mindone 12.09 (F4136): our own fingerprint HAL properties (Silead) - without a dedicated context
+# they fall under default_prop (platform-owned), which vendor domains are not allowed to write
+# (AOSP neverallow). See property.te (the type) and hal_fingerprint_default.te (the allow set).
+vendor.silead.fp.ext.    u:object_r:vendor_silead_fp_prop:s0

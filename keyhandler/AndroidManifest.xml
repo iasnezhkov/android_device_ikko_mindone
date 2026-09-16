@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+     mindone: device key handler for the flip-camera module's hall switch (F4296).
+     See CAMERA-FLIP-PLAN-1309.
+
+     This package carries no activities and is never launched as an app: PhoneWindowManager
+     loads CameraFlipKeyHandler directly out of the installed APK via PathClassLoader (the same
+     mechanism LineageParts' own gesture KeyHandler uses), so the class runs inside system_server
+     under the system UID. It does not need any <uses-permission> of its own: the Context passed
+     to its constructor is system_server's own Context, which already has unrestricted access to
+     Settings.System and to sending broadcasts protected by a permission this package defines.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.mindone.keyhandler">
+
+    <!-- Held by whoever wants to receive ACTION_CAMERA_FLIPPED. protectionLevel="signature"
+         (not signature|privileged) so a non-privileged platform-signed app such as Aperture,
+         which is not installed as a priv-app, is still granted it automatically. -->
+    <permission
+        android:name="org.mindone.permission.RECEIVE_CAMERA_FLIP_STATE"
+        android:protectionLevel="signature" />
+
+    <!-- Prevents any third-party app from spoofing the broadcast: only a system-UID sender
+         (this key handler, running inside system_server) is allowed to send an Intent with this
+         action at all, independently of the receive permission above. -->
+    <protected-broadcast android:name="org.mindone.intent.action.CAMERA_FLIPPED" />
+
+    <application android:hasCode="true" />
+
+</manifest>

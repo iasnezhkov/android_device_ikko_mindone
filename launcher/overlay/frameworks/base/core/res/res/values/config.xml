@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- Device overlay values for the launcher. Merge with existing entries if the device tree
+     already sets any of these (config_defaultListenerAccessPackages is colon-separated). -->
+<resources>
+    <!-- Notification listener access without the user dialog. -->
+    <string name="config_defaultListenerAccessPackages" translatable="false">app.launcher</string>
+
+    <!-- Recents stays with Launcher3QuickStep (TrebuchetQuickStep in LineageOS): its package is
+         com.android.launcher3, so the AOSP default is already right. Listed here so nobody
+         "fixes" it to our package: our launcher does not host Quickstep. -->
+    <string name="config_recentsComponentName" translatable="false">com.android.launcher3/com.android.quickstep.RecentsActivity</string>
+
+    <!-- The system should boot dark. -->
+    <integer name="config_defaultNightMode">2</integer>
+</resources>

@@ -1,0 +1,66 @@
+connect: 1
+fcntl64: 1
+socket: 1
+writev: 1
+clock_nanosleep: 1
+eventfd2: 1
+sched_getparam: 1
+sched_getscheduler :1
+setsockopt: 1
+bind: 1
+listen: 1
+
+# Add more for 32bits process, from android.hardware.media.c2@1.1-default-arm.policy
+mmap2: arg2 in ~PROT_EXEC || arg2 in ~PROT_WRITE
+ftruncate64: 1
+getuid32: 1
+open: 1
+fstat64: 1
+readlink: 1
+fstatfs64: 1
+_llseek: 1
+fstatat64: 1
+ugetrlimit: 1
+# crash dump policy additions
+sigreturn: 1
+futex: 1
+#mmap2: arg2 in 0x1|0x2
+geteuid32: 1
+getgid32: 1
+getegid32: 1
+getgroups32: 1
+getpriority: 1
+mlock: 1
+munlock: 1
+fchmod: 1
+getuid: 1
+mmap: 1
+getrlimit: 1
+newfstatat: 1
+fstat: 1
+fstatfs: 1
+flock: 1
+# MINDONE (06.09, F3817): Android 16 userspace on the stock A15 codec2 HAL — the service was killed by SIGSYS
+# at start. Names below come from A16's own mediaswcodec/crash_dump policies and modern bionic (rseq/clone3/…);
+# all are known to the A15 vendor libminijail table (kernel 6.6 uapi), so the policy still parses.
+clone3: 1
+close_range: 1
+epoll_pwait2: 1
+faccessat2: 1
+fsetxattr: 1
+getegid: 1
+geteuid: 1
+getgid: 1
+getgroups: 1
+membarrier: 1
+pidfd_open: 1
+process_mrelease: 1
+rseq: 1
+sched_get_priority_max: 1
+sched_get_priority_min: 1
+sched_getattr: 1
+sched_setscheduler: 1
+statfs64: 1
+statx: 1
+sysinfo: 1
+uname: 1

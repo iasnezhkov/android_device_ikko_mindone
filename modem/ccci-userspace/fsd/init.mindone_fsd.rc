@@ -1,0 +1,25 @@
+# mindone_fsd init service.
+#
+# NOTE (see README-INTEGRATION.md "ccci_fsd has no stock init service"):
+# the stock init.cccifsd.rc on this device has ONLY mkdir/restorecon
+# lines, no "service ccci_fsd ..." stanza at all -- disassembly of the
+# stock ccci_mdinit binary shows it statically links the same file-service
+# logic (function fsd_main(), thread names "ccci_fsd(0)"/"ccci_fsd(1)")
+# and appears to run it as an internal pthread rather than exec'ing a
+# separate process, even though a standalone /vendor/bin/ccci_fsd binary
+# also exists on the partition (126 KB, unused by any service on this
+# build as far as this recon found).
+#
+# mindone_fsd is deliberately kept as its OWN separate process (matching
+# this task's four-daemon deliverable shape and ccci_fsd.te's existing,
+# already-correct standalone sepolicy domain) rather than folded into
+# mindone_mdinit as a thread. This is a documented, deliberate
+# architectural deviation from the stock binary's internal shape -- NOT a
+# functional gap, since the wire protocol on /dev/ccci_fs is identical
+# either way and does not care which process serves it.
+
+service ccci_fsd /vendor/bin/ccci_fsd
+    user radio
+    group radio system
+    class core
+    oneshot

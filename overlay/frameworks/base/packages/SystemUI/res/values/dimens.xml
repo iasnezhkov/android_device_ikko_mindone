@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- MINDONE 12.09 (fixed by F4185): screen 1080x1240 @380dpi - smallestWidth approx. 455dp,
+     "short". Only THESE two dimens are actually declared in SystemUI/res/values/dimens.xml
+     (resource_dir "res" of the SystemUI-res module); the other six dimens of the former overlay
+     (num_pad_key_width and the keyboard margins, keyguard_password_height,
+     keyguard_security_view_bottom_margin) are declared in a DIFFERENT resource_dir - "res-keyguard" -
+     and were moved to overlay/.../res-keyguard/values(-sw360dp)/dimens.xml; here they were a no-op. -->
+<resources>
+    <dimen name="keyguard_security_container_padding_top">0dp</dimen>
+    <dimen name="keyguard_lock_padding">8dp</dimen>
+</resources>

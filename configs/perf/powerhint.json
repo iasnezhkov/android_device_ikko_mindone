@@ -1,0 +1,101 @@
+{
+  "Nodes": [
+    {
+      "Name": "CPULittleClusterMinFreq",
+      "Paths": ["/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"],
+      "Values": ["2000000", "1700000", "1500000", "1200000", "1000000", "500000"],
+      "DefaultIndex": 5,
+      "ResetOnInit": true,
+      "HoldFd": true
+    },
+    {
+      "Name": "CPUBigClusterMinFreq",
+      "Paths": ["/sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq"],
+      "Values": ["2200000", "1900000", "1600000", "1300000", "1000000", "725000"],
+      "DefaultIndex": 5,
+      "ResetOnInit": true,
+      "HoldFd": true
+    },
+    {
+      "Name": "CPULittleClusterMaxFreq",
+      "Paths": ["/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"],
+      "Values": ["1000000", "1200000", "2000000"],
+      "DefaultIndex": 2,
+      "ResetOnInit": true
+    },
+    {
+      "Name": "CPUBigClusterMaxFreq",
+      "Paths": ["/sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq"],
+      "Values": ["1000000", "1300000", "2200000"],
+      "DefaultIndex": 2,
+      "ResetOnInit": true
+    },
+    {
+      "Name": "CPULittleClusterDownRateLimit",
+      "Paths": ["/sys/devices/system/cpu/cpufreq/policy0/sugov_ext/down_rate_limit_us"],
+      "Values": ["50000", "20000"],
+      "DefaultIndex": 1,
+      "ResetOnInit": false,
+      "HoldFd": true,
+      "AllowFailure": true
+    },
+    {
+      "Name": "CPUBigClusterDownRateLimit",
+      "Paths": ["/sys/devices/system/cpu/cpufreq/policy6/sugov_ext/down_rate_limit_us"],
+      "Values": ["50000", "20000"],
+      "DefaultIndex": 1,
+      "ResetOnInit": false,
+      "HoldFd": true,
+      "AllowFailure": true
+    },
+    {
+      "Name": "PowerHALAudioState",
+      "Paths": ["vendor.powerhal.audio"],
+      "Values": ["AUDIO_STREAMING_LOW_LATENCY", ""],
+      "Type": "Property"
+    },
+    {
+      "Name": "PowerHALRenderingState",
+      "Paths": ["vendor.powerhal.rendering"],
+      "Values": ["EXPENSIVE_RENDERING", ""],
+      "Type": "Property"
+    }
+  ],
+  "Actions": [
+    { "PowerHint": "INTERACTION", "Node": "CPULittleClusterMinFreq", "Value": "1200000", "Duration": 150 },
+    { "PowerHint": "INTERACTION", "Node": "CPUBigClusterMinFreq", "Value": "1000000", "Duration": 150 },
+    { "PowerHint": "INTERACTION", "Node": "CPULittleClusterDownRateLimit", "Value": "50000", "Duration": 150 },
+    { "PowerHint": "INTERACTION", "Node": "CPUBigClusterDownRateLimit", "Value": "50000", "Duration": 150 },
+
+    { "PowerHint": "LAUNCH", "Node": "CPULittleClusterMinFreq", "Value": "1700000", "Duration": 1500 },
+    { "PowerHint": "LAUNCH", "Node": "CPUBigClusterMinFreq", "Value": "1900000", "Duration": 1500 },
+    { "PowerHint": "LAUNCH", "Node": "CPULittleClusterDownRateLimit", "Value": "50000", "Duration": 1500 },
+    { "PowerHint": "LAUNCH", "Node": "CPUBigClusterDownRateLimit", "Value": "50000", "Duration": 1500 },
+
+    { "PowerHint": "SUSTAINED_PERFORMANCE", "Node": "CPULittleClusterMinFreq", "Value": "1200000", "Duration": 0 },
+    { "PowerHint": "SUSTAINED_PERFORMANCE", "Node": "CPUBigClusterMinFreq", "Value": "1300000", "Duration": 0 },
+
+    { "PowerHint": "EXPENSIVE_RENDERING", "Node": "CPULittleClusterMinFreq", "Value": "1200000", "Duration": 0 },
+    { "PowerHint": "EXPENSIVE_RENDERING", "Node": "CPUBigClusterMinFreq", "Value": "1300000", "Duration": 0 },
+    { "PowerHint": "EXPENSIVE_RENDERING", "Node": "CPULittleClusterDownRateLimit", "Value": "50000", "Duration": 0 },
+    { "PowerHint": "EXPENSIVE_RENDERING", "Node": "CPUBigClusterDownRateLimit", "Value": "50000", "Duration": 0 },
+    { "PowerHint": "EXPENSIVE_RENDERING", "Node": "PowerHALRenderingState", "Value": "EXPENSIVE_RENDERING", "Duration": 0 },
+
+    { "PowerHint": "LOW_POWER", "Node": "CPULittleClusterMaxFreq", "Value": "1200000", "Duration": 0 },
+    { "PowerHint": "LOW_POWER", "Node": "CPUBigClusterMaxFreq", "Value": "1300000", "Duration": 0 },
+
+    { "PowerHint": "DISPLAY_INACTIVE", "Node": "CPULittleClusterMaxFreq", "Value": "1000000", "Duration": 0 },
+    { "PowerHint": "DISPLAY_INACTIVE", "Node": "CPUBigClusterMaxFreq", "Value": "1000000", "Duration": 0 },
+
+    { "PowerHint": "AUDIO_STREAMING_LOW_LATENCY", "Node": "PowerHALAudioState", "Value": "AUDIO_STREAMING_LOW_LATENCY", "Duration": 0 },
+    { "PowerHint": "AUDIO_STREAMING_LOW_LATENCY", "Node": "CPULittleClusterMinFreq", "Value": "1000000", "Duration": 0 },
+
+    { "PowerHint": "CAMERA_STREAMING_LOW", "Node": "CPULittleClusterMinFreq", "Value": "1000000", "Duration": 0 },
+
+    { "PowerHint": "CAMERA_STREAMING_MID", "Node": "CPULittleClusterMinFreq", "Value": "1200000", "Duration": 0 },
+    { "PowerHint": "CAMERA_STREAMING_MID", "Node": "CPUBigClusterMinFreq", "Value": "1000000", "Duration": 0 },
+
+    { "PowerHint": "CAMERA_STREAMING_HIGH", "Node": "CPULittleClusterMinFreq", "Value": "1200000", "Duration": 0 },
+    { "PowerHint": "CAMERA_STREAMING_HIGH", "Node": "CPUBigClusterMinFreq", "Value": "1300000", "Duration": 0 }
+  ]
+}

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- MINDONE 12.09 (remainder of F4185): on a bare keyguard (clock, no bouncer) the screen turns
+     off after 10s - SystemUI holds this as config_lockScreenDisplayTimeout (default 10000,
+     frameworks/base/packages/SystemUI/res/values/config.xml), read by
+     NotificationShadeWindowControllerImpl.applyUserActivityTimeout(), which sets
+     mLpChanged.userActivityTimeout when the keyguard is shown, the bouncer is not raised, and QS is not
+     expanded. Raised to 30s. The overlay path is correct: this dimen is declared in the resource_dirs
+     module "res" (not "res-keyguard" - see F4185, where exactly this split broke the neighboring
+     overlay for ). -->
+<resources>
+    <integer name="config_lockScreenDisplayTimeout">30000</integer>
+</resources>

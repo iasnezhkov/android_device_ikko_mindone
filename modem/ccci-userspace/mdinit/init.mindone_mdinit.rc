@@ -1,0 +1,35 @@
+# mindone_mdinit init service -- replaces the stock ccci_mdinit blob in
+# place. Same binary name/path/args as init.cccimdinit.rc's existing
+# "service ccci_mdinit /vendor/bin/ccci_mdinit 0" stanza (see
+# README-INTEGRATION.md for exactly why the name/path must stay
+# identical), so on a real device this REPLACES that stanza rather than
+# adding a second one -- do not run both.
+#
+# All mkdir/restorecon lines below are copied verbatim from the existing
+# stock init.cccimdinit.rc (build environment:
+# vendor/etc/init/init.cccimdinit.rc) -- unchanged, since mindone_mdinit
+# depends on the same directories existing with the same labels.
+
+on post-fs-data
+    mkdir /mnt/vendor/nvdata/md  0770 root system
+    mkdir /mnt/vendor/nvdata/md3  0770 root system
+    mkdir /data/vendor/md3	0770 root system
+    chown radio radio /sys/kernel/ccci/boot
+
+    mkdir /data/vendor/mdlpm 0770 system radio
+    restorecon /data/vendor/mdlpm
+    restorecon /data/vendor/md3
+
+    mkdir /data/vendor_de/md 0770 system radio
+    restorecon /data/vendor_de/md
+
+    restorecon_recursive /mnt/vendor/protect_f
+    restorecon_recursive /mnt/vendor/protect_s
+
+service ccci_mdinit /vendor/bin/ccci_mdinit 0
+    user system
+    group radio system
+    class core
+    priority -20
+    ioprio rt 4
+    oneshot

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- MINDONE 12.09 (F4185): moved from the wrong path res/values-sw360dp/ - that path
+     belongs to the resource_dir "res", but this bucket only actually exists in AOSP under
+     "res-keyguard" (SystemUI/res-keyguard/values-sw360dp/dimens.xml). Our device
+     (1080x1240 @380dpi, smallestWidth approx. 455dp) resolves exactly this bucket - the next one
+     defined by AOSP in res-keyguard is only values-sw600dp, so sw360dp remains the closest match.
+     num_pad_key_width is already 84dp by AOSP default in this bucket - the line is kept explicit for
+     readability and in case upstream changes the default; row_margin/key_margin are narrowed so the four
+     key rows fit into the height freed up by the neighboring res-keyguard/values/dimens.xml. -->
+<resources>
+    <dimen name="num_pad_key_width">84dp</dimen>
+    <dimen name="num_pad_row_margin_bottom">8dp</dimen>
+    <dimen name="num_pad_key_margin_end">16dp</dimen>
+</resources>

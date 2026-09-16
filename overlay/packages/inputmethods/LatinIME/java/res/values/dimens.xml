@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+  On-screen keyboard height for our short screen.
+
+  The screen is 1080 x 1240 px. At TARGET_SCREEN_DENSITY 380 that is 455 x 522 dp, and the app
+  keeps 496 dp of it once the status bar is gone  - roughly half the vertical room a normal
+  phone has, which is why a keyboard sized for a normal phone swallows this screen.
+
+  Stock LatinIME asks for 205.6 dp. The previous value here was 150 dp, chosen when the tree
+  still set density 360; at 380 that works out to a 37 dp key row, below the 48 dp touch target
+  and noticeably cramped  - "the standard keyboard was smaller" is exactly that.
+
+  210 dp gives a ~52 dp key row, comfortably above the target, and with the suggestion strip on
+  top the keyboard lands near half the usable height. That is the shape asked for: half the
+  screen, and keys big enough to hit.
+
+  🔴 Two things outside this file decide how much of that height is actually keys:
+    - the framework dimens overlay sets navigation_bar_frame_height to 0, so no system inset is
+      wasted under the bottom row;
+    - config.xml here zeroes LatinIME's own bottom padding.
+  Without both, height added here goes into empty space instead of into keys.
+
+  🔴 This file governs the AOSP keyboard only. Gboard is a separate application and ignores it;
+  its height and its toolbar row are its own settings.
+
+  Why config_default_keyboard_height and not the keyboard-heights.xml table: that table is keyed
+  by Build.HARDWARE and ours (mt8781) is not in it, so the device already falls back to this
+  default  - this is the value that actually applies.
+-->
+<resources>
+    <dimen name="config_default_keyboard_height">210dp</dimen>
+</resources>

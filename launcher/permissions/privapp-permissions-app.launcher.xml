@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- Privileged permissions the launcher may hold as a priv-app. Keep this list minimal;
+     every entry here must also be declared in the app manifest. -->
+<permissions>
+    <privapp-permissions package="app.launcher">
+        <!-- Pull down the shade from the home screen. -->
+        <permission name="android.permission.STATUS_BAR" />
+        <!-- Sort app lists by use without the usage-access dialog. -->
+        <permission name="android.permission.PACKAGE_USAGE_STATS" />
+        <!-- Mirror the launcher's appearance into Settings.Secure for the SystemUI clock plugin. -->
+        <permission name="android.permission.WRITE_SECURE_SETTINGS" />
+    </privapp-permissions>
+</permissions>

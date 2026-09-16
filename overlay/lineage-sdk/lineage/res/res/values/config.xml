@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+     mindone (/F4296): register the camera-flip device key handler (org.mindone.keyhandler.
+     CameraFlipKeyHandler) alongside LineageParts' own gesture handler.
+
+     Both arrays are read in lockstep by PhoneWindowManager (frameworks/base/services/core/java/
+     com/android/server/policy/PhoneWindowManager.java), which iterates
+     min(libs.length, classes.length) and instantiates one DeviceKeyHandler per pair; a resource
+     overlay REPLACES a string-array wholesale, so index 0 (the framework default, LineageParts'
+     org.lineageos.lineageparts.gestures.KeyHandler) has to be repeated here, not just our own
+     entry appended, or Settings > Buttons gesture actions would silently stop working.
+
+     Real-device precedent for exactly this two-entry pattern (grepped from the lineage-23.2
+     source tree, since no third-party device tree happened to be synced locally):
+     device/lineage/atv/overlay/lineage-sdk/lineage/res/res/values/config.xml appends a second
+     {lib,class} pair for its own org.lineageos.lineageparts.atv.KeyHandler the same way.
+
+     See CAMERA-FLIP-PLAN-1309.
+-->
+<resources>
+    <string-array name="config_deviceKeyHandlerLibs" translatable="false">
+        <item>/system_ext/priv-app/LineageParts/LineageParts.apk</item>
+        <item>/system_ext/priv-app/MindOneKeyHandler/MindOneKeyHandler.apk</item>
+    </string-array>
+    <string-array name="config_deviceKeyHandlerClasses" translatable="false">
+        <item>org.lineageos.lineageparts.gestures.KeyHandler</item>
+        <item>org.mindone.keyhandler.CameraFlipKeyHandler</item>
+    </string-array>
+</resources>

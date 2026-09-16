@@ -1,0 +1,8 @@
+# system_suspend enumerates wakeup sources; the charger's power_supply/usb/wakeupN nodes carry the stock
+# sysfs_batteryinfo label (genfscon /devices/platform/charger, stock policy) — grant read (audit A16 §4.8)
+# 🔴 07.09 (F3908): rule REMOVED - it violates an AOSP neverallow and breaks the build
+# (`libsepol.report_failure` -> `Error while expanding policy`). Cannot be restored:
+# neverallow is a platform restriction, not a gap on our part. If access is genuinely needed,
+# solve it via relabeling (our own label instead of the platform one), not an allow on top of a denial.
+# allow system_suspend sysfs_batteryinfo:file r_file_perms;
+# allow system_suspend sysfs_batteryinfo:dir r_dir_perms;

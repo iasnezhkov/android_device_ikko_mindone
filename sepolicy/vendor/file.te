@@ -1,0 +1,32 @@
+# mindone - intentionally empty.
+#
+# 07.09: there used to be two lines here, `typeattribute proc_battery_cmd proc_type;` and `typeattribute proc_aed
+# proc_type;`, added from the A16 log audit (par. 4.5). They were needed for REPACKAGING, where we
+# patch the already-compiled stock policy via CIL (`sepolicy/repack-extra.cil`): in the device's binary
+# policy these types really did lack the `proc_type` attribute, hence the "associate" denial.
+#
+# In a build from source they must not be here, and they break the build:
+#   file.te:3:ERROR 'unknown type proc_battery_cmd'  ->  vendor_sepolicy.cil fails to compile.
+# Reason: both types are ALREADY declared with the needed attribute in the MediaTek policy -
+#   device/mediatek/sepolicy_vndr/base/private/file.te:25   type proc_battery_cmd, fs_type, proc_type;
+#   device/mediatek/sepolicy_vndr/debug/vendor/file.te:24   type proc_aed, fs_type, proc_type;
+# and the first one is in `private`, meaning the vendor policy cannot see it at all, so a repeated
+# `typeattribute` for it references an unknown type.
+#
+# 🔴 Rule for the future: fixes devised for CIL repair of a binary policy do NOT carry over
+# into the source tree one-to-one - always check first how the type is declared in the sources.
+#
+# The file is kept (not deleted) on purpose: deleting it changes the file list under the
+# `sepolicy/vendor/*.te` glob and forces soong to redo its analysis (F3834), whereas editing the content does not.
+
+# mindone 09.09 (F4059): a type of OUR OWN for fingerprint data is NOT needed - it is already declared in AOSP
+# (system/sepolicy/public/file.te:535, `type fingerprint_vendor_data_file, file_type,
+# data_file_type;`), which also labels the path /data/vendor_de/<user>/fpdata. Our Silead blob puts
+# its config in /data/vendor/silead, so only a label (file_contexts) and rules
+# (hal_fingerprint_default.te) are needed. Declaring our own type with the same name would break the
+# full build with a name conflict - caught by the check before flashing.
+
+# Camera flip-module hall switch position exported by our mtk_kpd driver
+# (/sys/devices/platform/soc/10010000.kp/hall_position); read once at boot by the
+# MindOneKeyHandler inside system_server (CAMERA-FLIP-PLAN-1309).
+type sysfs_mindone_hall, fs_type, sysfs_type;

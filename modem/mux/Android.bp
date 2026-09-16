@@ -1,0 +1,39 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// mind_one open GSM 07.10 mux daemon -- replaces the stock
+// /vendor/bin/gsm0710muxd blob. See README-INTEGRATION.md for the full
+// recovered stock contract, the A/B test plan and citations. This file
+// lives in modem/mux/ and is NOT wired into
+// device/ikko/mindone/ by this commit -- copying the module below (plus
+// deciding whether to add an init_rc) into the device tree is a
+// separate, deliberate integration step.
+//
+// 64-bit only, matching this task's brief (the stock blob is 32-bit ARM,
+// but nothing in the 07.10 wire protocol or the /dev/radio/* PTY
+// contract has an ILP32-vs-LP64 dependency -- same deliberate, harmless
+// deviation already used for ccci_fsd in modem/ccci-userspace/).
+//
+// No init_rc: per this task's brief the daemon is started by hand for
+// the rescue-slot A/B test (stop vendor.gsm0710muxd, run mindone_mux
+// with the same -s/-f/-n/-m arguments, start rild). Wiring a permanent
+// init.rc service (replacing gsm0710muxd.rc's `service vendor.gsm0710muxd`
+// entry) is a follow-up step once the A/B test passes.
+
+cc_binary {
+    name: "mindone_mux",
+    vendor: true,
+    compile_multilib: "64",
+    srcs: ["mindone_mux.c"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-std=gnu11",
+    ],
+    shared_libs: [
+        "liblog",
+    ],
+}

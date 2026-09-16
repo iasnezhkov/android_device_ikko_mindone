@@ -1,0 +1,20 @@
+# mindone (06.09): AIDL fingerprint V4 -> HIDL fingerprint@2.1 bridge - the AIDL server and HIDL client share one domain
+hal_client_domain(hal_fingerprint_default, hal_fingerprint)
+
+# mindone 09.09 (F4059): 9 denials on /data/vendor/silead/config/*.cfg. The HAL creates the directory
+# itself, so a type transition is needed on creation - otherwise it would inherit vendor_data_file from the parent.
+type_transition hal_fingerprint_default vendor_data_file:dir fingerprint_vendor_data_file "silead";
+allow hal_fingerprint_default vendor_data_file:dir { search write add_name };
+allow hal_fingerprint_default fingerprint_vendor_data_file:dir create_dir_perms;
+allow hal_fingerprint_default fingerprint_vendor_data_file:file create_file_perms;
+# 3 denials: the HAL polls power supplies (checking whether the sensor is warming up)
+allow hal_fingerprint_default sysfs_batteryinfo:dir search;
+allow hal_fingerprint_default sysfs_batteryinfo:file r_file_perms;
+
+# mindone 12.09 (F4136): the HAL sets its own property vendor.silead.fp.ext.enable while
+# initializing the sensor - 1 property_service {set} denial per boot
+# (device/logs/catch-0911-185910/dmesg.txt.gz). Without a dedicated context the property falls under
+# default_prop (a platform type), which vendor domains are not allowed to write - a separate
+# type vendor_silead_fp_prop was created (property.te, property_contexts), and set_prop grants the HAL
+# the right to write specifically to it.
+set_prop(hal_fingerprint_default, vendor_silead_fp_prop)

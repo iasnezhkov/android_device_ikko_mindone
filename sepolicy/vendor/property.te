@@ -1,0 +1,7 @@
+# mindone 12.09 (F4136): a dedicated property type for the fingerprint HAL (Silead) - see
+# property_contexts and hal_fingerprint_default.te. Without a dedicated type, the property
+# vendor.silead.fp.ext.enable falls under the generic platform default_prop, and vendor domains are
+# forbidden from writing there by an AOSP neverallow (allow triggers libsepol.report_failure, F3908).
+# 13.09: must be declared through the vendor macro (adds vendor_property_type/vendor_internal_property_type);
+# a bare property_type violates enforce_sysprop_owner/treble_sysprop_neverallow (ROM #1 build failure 07:23).
+vendor_internal_prop(vendor_silead_fp_prop)

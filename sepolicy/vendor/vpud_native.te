@@ -1,0 +1,5 @@
+# mindone 12.09 (F4136): venc_srv (domain vpud_native, MTK video codec daemon) reads the generic
+# PLATFORM context default_prop (1 read/open/getattr/map denial,
+# device/logs/catch-0912-053819/logcat-all.txt) - the same class of restriction as mtk_hal_camera.te/
+# mediacodec.te (AOSP neverallow). dontaudit is safe for enforcing.
+dontaudit vpud_native default_prop:file { read open getattr map };

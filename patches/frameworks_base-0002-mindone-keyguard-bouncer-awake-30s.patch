@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Mon, 07 Sep 2026 12:00:00 +0300
+Subject: [PATCH] mindone: keyguard bouncer keeps the screen awake for 30 s
+
+Converted 13.09 to git-am format (was a plain diff).
+---
+diff --git a/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardViewMediator.java b/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardViewMediator.java
+index 62c41395da57..2a9252db42dd 100644
+--- a/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardViewMediator.java
++++ b/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardViewMediator.java
+@@ -312,7 +312,10 @@ public class KeyguardViewMediator implements CoreStartable,
+     /**
+      * The default amount of time we stay awake (used for all key input)
+      */
+-    public static final int AWAKE_INTERVAL_BOUNCER_MS = 10000;
++    // MINDONE (remainder of ): the same short keyguard timeout as
++    // config_lockScreenDisplayTimeout (SystemUI res/values/config.xml, device overlay),
++    // but this constant is not a resource - it is used while the bouncer (PIN entry) is shown.
++    public static final int AWAKE_INTERVAL_BOUNCER_MS = 30000;
+
+     /**
+      * How long to wait after the screen turns off due to timeout before
+-- 
+2.43.0

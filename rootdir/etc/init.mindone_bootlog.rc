@@ -1,0 +1,34 @@
+# Boot evidence collector for bring-up: without adb/USB/display the only way to get logs out of a
+# boot that never completes is to write them to a partition that survives a reboot. /metadata is
+# mounted by first-stage init, is not encrypted and is small but sufficient for one logcat dump.
+# The service waits, dumps logcat/dmesg/props/mounts to /metadata/mindone/, and if boot has not
+# completed by then it reboots cleanly (a clean reboot keeps DRAM, so pstore console survives too).
+service mindone_bootlog /vendor/bin/mindone-bootlog.sh
+    class core
+    user root
+    group root system log
+    oneshot
+    disabled
+    seclabel u:r:su:s0
+
+# Gated on a property rather than started unconditionally (15.09).
+#
+# This is a bring-up instrument: it exists so that a boot which never completes still leaves
+# evidence on a partition that survives the reboot. That is worth a service running as root with
+# no domain of its own WHILE bringing the device up - it is not worth it on every boot of a daily
+# image, where boots complete and the only lasting effect is an unconfined root service and a
+# write to /metadata each time. Now that SELinux runs enforcing, that matters more, not less.
+#
+# The capability is kept, not removed: set the property and reboot, and it behaves exactly as
+# before. Without it, nothing starts.
+#
+#     adb shell setprop persist.vendor.mindone.bootlog 1   (then reboot)
+#
+# Start as early as /metadata is available (post-fs, before /data), so evidence is captured
+# even when boot stalls before `on boot` fires (e.g. keystore/keymint TEE negotiation loop
+# blocking late-init). oneshot: the later `on boot` start is a no-op if it already ran.
+on post-fs && property:persist.vendor.mindone.bootlog=1
+    start mindone_bootlog
+
+on boot && property:persist.vendor.mindone.bootlog=1
+    start mindone_bootlog

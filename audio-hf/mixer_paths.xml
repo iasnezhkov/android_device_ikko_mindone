@@ -1,0 +1,349 @@
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+  mixer_paths.xml for audio.primary.mindone (MT6789 + MT6366 codec, aw87xxx smart PA) - v2
+
+  v2 (13/14.09.2026 night) supersedes the v1 draft. Full derivation and every
+  citation is in AUDIO-ROUTES-1309; this header only lists what changed from v1 and why.
+  Read the route doc before touching this file further.
+
+  WHAT CHANGED FROM v1 (the actual functional fixes, not cosmetic):
+    1. Added the AFE crossbar/interconnection switches (AUDIO-ROUTES-1309 section 5,
+       F4308). v1 set every codec-side mux (LOL Mux, ADC L/R Mux, ...) correctly but never touched
+       the separate hardware summing-mixer layer between the DL/UL memifs and ADDA
+       ("ADDA_DL_CH1 DL1_CH1", "UL1_CH1 ADDA_UL_CH1", ...). Without these, v1 would have opened
+       PCM successfully and produced no audible output/input at all - confirmed from BOTH our own
+       kernel source (mt6789-dai-adda.c, mt6789-afe-pcm.c) and the stock blob's own routing table
+       (the stock firmware's audio_device.xml), which applies exactly these switches as a mandatory step.
+       New paths: dl1-adda/dl1-adda-off, dl2-adda/dl2-adda-off, dl3-adda/dl3-adda-off (one pair per
+       PCM device v2 can open for playback), folded directly into mic/mic-back/headset-mic for
+       capture (only one capture PCM device, UL1, in v2).
+    2. Added the "ADDA_UL_Mux"="MTKAIF" top-level default (register-backed enum selecting the
+       analog codec ADC as the UL source, as opposed to "AP_DMIC" - matches this board's analog
+       electret mic, confirmed in the stock reset_device_setting path).
+    3. Added a "headset-mic" path (AIN1 pad, distinct from AIN0 main mic / AIN2 back mic) -
+       documented in v1 as an open item but never implemented. NOTE (AUDIO-ROUTES-1309
+       section 4.4, F4309): this path is currently unreachable through Android's audio policy on
+       this device - neither the stock nor our own audio_policy_configuration.xml declares
+       AUDIO_DEVICE_IN_WIRED_HEADSET/OUT_WIRED_HEADSET/OUT_WIRED_HEADPHONE. Kept here as faithful,
+       correct, dead-until-policy-changes plumbing (matches the project's "no silent stub" rule -
+       the path is real and correct if it is ever reached, not a placeholder), not removed.
+
+  Every <ctl> name/value pair is sourced twice, per the project's device-free verification standard:
+    (1) the kcontrol/DAPM/crossbar definitions in our own compiled kernel modules
+        (the kernel tree's mindone/modules/snd_soc_mt6366/mt6358.c,
+         the kernel tree's mindone/modules/mt6789_mt6366/mt6789_mt6366.c,
+         the kernel tree's mindone/modules/snd_soc_mt6789_afe/mt6789-dai-adda.c,
+         the kernel tree's mindone/modules/snd_soc_mt6789_afe/mt6789-afe-pcm.c)
+    (2) the identical control name used by the stock blob's own routing table,
+        the stock firmware's audio_device.xml
+
+  Format: system/media/audio_route (libaudioroute). Top-level <ctl> entries are the register-backed
+  reset defaults applied once at mixer init. <path> blocks are applied/reset per stream open/standby
+  by audio_route_apply_path() / audio_route_reset_and_update_path().
+
+  VERIFY-ON-DEVICE items are marked inline; see AUDIO-ROUTES-1309 section 6/7 and
+  README-INTEGRATION.md for the read-only commands to confirm each one.
+-->
+<mixer>
+    <!-- Real registers, safe to set once and leave alone.
+         "Sgen" is the internal sine-generator test mode - never select it here.
+         "ADDA_UL_Mux"="MTKAIF" selects the analog codec ADC as the AFE's UL source (as opposed to
+         "AP_DMIC", the AP-side digital mic path this board does not use) -
+         mt6789-dai-adda.c:694-718,765-766,876; confirmed in stock reset_device_setting,
+         audio_device.xml:988. -->
+    <ctl name="DAC In Mux" value="Normal Path"/>
+    <ctl name="ADDA_UL_Mux" value="MTKAIF"/>
+
+    <!-- ================= AFE crossbar: PCM device -> ADDA (playback) =================
+         AUDIO-ROUTES-1309 section 5. Applied by the HAL at stream-open time based on
+         which PCM device was opened (PCM_DEVICE_PRIMARY/_FAST/_DEEP_BUFFER), independent of and
+         in addition to the speaker/headphone device-selection paths below - these three crossbar
+         paths touch different, non-overlapping control names, so multiple can be active
+         concurrently if AudioFlinger opens more than one output stream at once (e.g. primary +
+         deep_buffer), matching how the stock AFE is designed to sum multiple DL memifs. -->
+    <path name="dl1-adda">
+        <ctl name="ADDA_DL_CH1 DL1_CH1" value="1"/>
+        <ctl name="ADDA_DL_CH2 DL1_CH2" value="1"/>
+    </path>
+    <path name="dl1-adda-off">
+        <ctl name="ADDA_DL_CH1 DL1_CH1" value="0"/>
+        <ctl name="ADDA_DL_CH2 DL1_CH2" value="0"/>
+    </path>
+    <path name="dl2-adda">
+        <ctl name="ADDA_DL_CH1 DL2_CH1" value="1"/>
+        <ctl name="ADDA_DL_CH2 DL2_CH2" value="1"/>
+    </path>
+    <path name="dl2-adda-off">
+        <ctl name="ADDA_DL_CH1 DL2_CH1" value="0"/>
+        <ctl name="ADDA_DL_CH2 DL2_CH2" value="0"/>
+    </path>
+    <path name="dl3-adda">
+        <ctl name="ADDA_DL_CH1 DL3_CH1" value="1"/>
+        <ctl name="ADDA_DL_CH2 DL3_CH2" value="1"/>
+    </path>
+    <path name="dl3-adda-off">
+        <ctl name="ADDA_DL_CH1 DL3_CH1" value="0"/>
+        <ctl name="ADDA_DL_CH2 DL3_CH2" value="0"/>
+    </path>
+
+    <!-- ================= Voice call: modem PCM ("PCM 2" BE) crossbar =================
+         AUDIO-ROUTES-1309 section 3. Every control name below was verified to exist on
+         the live device (tinymix, 15.09) before this was written - the AFE side of a call is
+         nothing but crossbar switches; the modem itself streams over the "PCM 2" backend.
+
+         Applied by adev_set_mode() on AUDIO_MODE_IN_CALL / AUDIO_MODE_IN_COMMUNICATION and torn
+         down on leaving. These names do not overlap the dlN-adda playback paths, so a media
+         stream left open across a call cannot silently cancel them.
+    -->
+
+    <!-- Downlink: network -> ADDA -> the normal RCV/LOL/HPL device selection.
+         The call is mono, so BOTH ADDA DL channels take the modem's capture CH1: that is what
+         makes the far end audible from either the earpiece (DACL) or the speaker (DACR). -->
+    <path name="voice-downlink">
+        <ctl name="ADDA_DL_CH1 PCM_2_CAP_CH1" value="1"/>
+        <ctl name="ADDA_DL_CH2 PCM_2_CAP_CH1" value="1"/>
+    </path>
+    <path name="voice-downlink-off">
+        <ctl name="ADDA_DL_CH1 PCM_2_CAP_CH1" value="0"/>
+        <ctl name="ADDA_DL_CH2 PCM_2_CAP_CH1" value="0"/>
+    </path>
+
+    <!-- Uplink: the ADC/PGA-selected mic straight into the modem PCM. From the AFE's point of
+         view "playback into the modem BE" IS the uplink. Note this needs the mic path (ADC/PGA
+         muxes) applied as well - adev_set_mode() applies both. -->
+    <path name="voice-uplink">
+        <ctl name="PCM_2_PB_CH1 ADDA_UL_CH1" value="1"/>
+        <ctl name="PCM_2_PB_CH2 ADDA_UL_CH2" value="1"/>
+    </path>
+    <path name="voice-uplink-off">
+        <ctl name="PCM_2_PB_CH1 ADDA_UL_CH1" value="0"/>
+        <ctl name="PCM_2_PB_CH2 ADDA_UL_CH2" value="0"/>
+    </path>
+
+    <!-- Echo reference for the modem's AEC: the downlink we are playing is fed back into the
+         modem's echo-reference channels 4/5. Without it the far end hears itself through our
+         speaker. Separate path because it is only worth enabling for the speaker/speakerphone
+         case - on the earpiece the acoustic coupling is small and the extra memif costs power. -->
+    <path name="voice-echo-ref">
+        <ctl name="PCM_2_PB_CH4 DL1_CH1" value="1"/>
+        <ctl name="PCM_2_PB_CH5 DL1_CH2" value="1"/>
+    </path>
+    <path name="voice-echo-ref-off">
+        <ctl name="PCM_2_PB_CH4 DL1_CH1" value="0"/>
+        <ctl name="PCM_2_PB_CH5 DL1_CH2" value="0"/>
+    </path>
+
+    <!-- Uplink readback for in-call recording (Capture_Mono_1 FE). Not applied by default: it is
+         only needed when the framework actually opens an in-call capture stream. -->
+    <path name="voice-uplink-capture">
+        <ctl name="UL_MONO_1_CH1 PCM_2_CAP_CH1" value="1"/>
+    </path>
+    <path name="voice-uplink-capture-off">
+        <ctl name="UL_MONO_1_CH1 PCM_2_CAP_CH1" value="0"/>
+    </path>
+
+    <!-- ================= Playback endpoints (device selection) ================= -->
+
+    <!--
+      Speaker: DL1 -> ADDA -> DACR -> "LOL Mux"="Playback" -> LOL Buffer ->
+      LINEOUT L -> aw87xxx (I2C amp, analog input, no digital audio interface).
+      Merges the stock speaker_output + ext_speaker_output sub-paths into one, since this board has
+      a single physical speaker amp (mt6789_mt6366.c does not enable CONFIG_SND_SOC_AW8839X / the
+      dual-amp branch; "Speaker Codec"/"Speaker Codec Ref" dai_links referenced in
+      mt6789_mt6366_dev_probe() do not exist in the card's dai_link[] array - dead code,
+      re-confirmed AUDIO-ROUTES-1309 section 2.1).
+
+      VERIFY-ON-DEVICE (unchanged from v1): mt6789_mt6366.c:192-194 wires THREE possible sources
+      into the Ext_Speaker_Amp pin (LINEOUT L, Headphone L/R Ext Spk Amp) - only one is physically
+      connected on this board. This path assumes LINEOUT L per the stock audio_device.xml never
+      combining HPL/HPR Mux with Ext_Speaker_Amp Switch. Confirm with:
+        tinymix set 'LOL Mux' 'Playback'; tinymix set 'Ext_Speaker_Amp Switch' 1
+      and listen - if silent, try HPL/HPR Mux = "LoudSPK Playback" instead
+      (the stock headphoneSpeaker_output path, audio_device.xml:67-76).
+    -->
+    <!--
+      MINDONE stereo speaker (F4434): bottom speaker = DACR (LOL Mux "Playback" ->
+      LINEOUT L -> Ext_Speaker_Amp), earpiece = DACL ("RCV Mux" "Media Playback" ->
+      Receiver). Both DACs carry the L/R of the stereo DL, so this plays the LEFT
+      channel from the earpiece and the RIGHT from the bottom speaker. The receiver is
+      a low-power transducer, so the top channel is quieter by nature; trim if wanted
+      via "Handset Volume". This lives ONLY in the mind_one HAL's device path, so it
+      never affects the stock voice-call / speakerphone routing. Requires the codec
+      change that adds the "Media Playback" RCV selection (snd_soc_mt6366, F4434).
+    -->
+    <path name="speaker">
+        <ctl name="LOL Mux" value="Playback"/>
+        <ctl name="Ext_Speaker_Amp Switch" value="1"/>
+        <ctl name="RCV Mux" value="Media Playback"/>
+    </path>
+    <path name="speaker-off">
+        <ctl name="RCV Mux" value="Open"/>
+        <ctl name="Ext_Speaker_Amp Switch" value="0"/>
+        <ctl name="LOL Mux" value="Open"/>
+    </path>
+
+    <!--
+      Headphone: DL1 -> ADDA -> DACL/DACR -> HPL/HPR Mux = "Audio Playback" ->
+      Headphone L/R (codec's own HP buffer drives the jack, no external amp).
+      Matches audio_device.xml:9-18 verbatim.
+
+      NOTE (AUDIO-ROUTES-1309 section 4.4, F4309): audio_policy_configuration.xml (both
+      stock and ours) declares NO AUDIO_DEVICE_OUT_WIRED_HEADSET/_HEADPHONE devicePort at all -
+      this path is currently unreachable from Android on this product regardless of what the HAL
+      does. Kept as correct, faithful plumbing (not a stub) in case policy is ever extended, or the
+      product turns out to have a jack after all - needs physical confirmation.
+    -->
+    <path name="headphone">
+        <ctl name="HPL Mux" value="Audio Playback"/>
+        <ctl name="HPR Mux" value="Audio Playback"/>
+    </path>
+    <path name="headphone-off">
+        <ctl name="HPL Mux" value="Open"/>
+        <ctl name="HPR Mux" value="Open"/>
+    </path>
+
+    <!--
+      Earpiece/receiver: included only so policy never crashes if it asks for it
+      (audio_policy_configuration.xml still declares an Earpiece devicePort, reachable from
+      primary/fast/deep_buffer sources too, not only the voice-call chain - see
+      AUDIO-ROUTES-1309 section 2.3). Not applied by v1/v2 HAL device-selection logic -
+      voice calls are out of scope (AUDIO-HAL-PLAN-1309 section 3). Matches
+      audio_device.xml:26-33.
+    -->
+    <path name="earpiece">
+        <ctl name="RCV Mux" value="Voice Playback"/>
+    </path>
+    <path name="earpiece-off">
+        <ctl name="RCV Mux" value="Open"/>
+    </path>
+
+    <!-- ================= Capture endpoints ================= -->
+
+    <!--
+      Main mic (UL1/Capture_1): AIN0 -> MIC_BIAS -> PGA L/R Mux "AIN0" ->
+      PGA L/R -> ADC L/R Mux "Left/Right Preamplifier" -> ADC L/R -> UL1,
+      plus AFE crossbar "UL1_CH1/CH2 ADDA_UL_CH1/CH2" (new in v2, AUDIO-ROUTES-1309
+      section 5.1/5.3, F4308) - without these two lines v1 would read silence/garbage. Folded
+      directly into this path rather than a separate crossbar path like the DL side, since v1/v2
+      only ever opens one capture PCM device (UL1) regardless of which mic source is selected.
+      ADC/PGA lines match audio_device.xml:85-90 (builtin_Mic_Mic1) verbatim.
+
+      RESOLVED 15.09 (F4467): the stock audio_device.xml never sets "Mic Type Mux", and that is
+      correct rather than a gap. The type comes from the board's device tree
+      (mt6789-pmic.dtsi, mt6358codec: "mediatek,mic-type = <0x02>" = DMIC) and selects the whole
+      enable sequence in the codec driver. Earlier versions of this file wrote "ACC" here on the
+      theory that the stock omission was an oversight; that forced the analog sequence onto a
+      digital microphone, and the built-in mic recorded only preamp noise. Verified on the device:
+      with the line removed the driver logs mt6358_dmic_enable() and programs the DMIC registers
+      (AUDENC_ANA_CON8=0x5, AFE_UL_SRC_CON0_H=0x80, _L=0x3) instead of the analog ones.
+    -->
+    <path name="mic">
+        <!-- Mic Type Mux is deliberately NOT set here. The board declares the
+             microphone type in the device tree (mt6789-pmic.dtsi, mt6358codec:
+             "mediatek,mic-type = <0x02>" = DMIC), the codec driver reads it into
+             priv->mux_select[MUX_MIC_TYPE] at probe, and that value decides which
+             enable sequence runs: mt6358_dmic_enable() vs mt6358_amic_enable()
+             (mt6358.c, the MUX_MIC_TYPE test in the ADC supply event). Writing
+             "ACC" from here overrode the board's own declaration and forced the
+             analog sequence onto a digital microphone - the built-in mic then
+             recorded nothing but the preamp's own noise. The stock audio_device.xml
+             sets no Mic Type Mux for the same reason. The headset mic still gets
+             the analog path automatically: the same test falls through to
+             mt6358_amic_enable() whenever a PGA mux selects AIN1. -->
+        <ctl name="ADC L Mux" value="Left Preamplifier"/>
+        <ctl name="ADC R Mux" value="Right Preamplifier"/>
+        <ctl name="PGA L Mux" value="AIN0"/>
+        <ctl name="PGA R Mux" value="AIN0"/>
+        <!-- Analog preamp gain. The codec resets these to 0 (0 dB) on every path
+             teardown, and nothing else in this file or in the driver restores them,
+             so without these two lines every recording starts at unity gain. Index 4
+             is 24 dB, the top of the preamp range (mt6358.c: RG_AUDPREAMPLGAIN,
+             6 dB per step); stock drives the equivalent gain programmatically from
+             its tuning tables rather than from a mixer path, which is why the stock
+             audio_device.xml has no counterpart to these lines. -->
+        <ctl name="PGA1 Volume" value="4"/>
+        <ctl name="PGA2 Volume" value="4"/>
+        <!-- The built-in mic is digital (device tree: mediatek,mic-type = DMIC), so the AFE
+             receiver must decimate a PDM bitstream off the MTKAIF data lines rather than accept
+             PCM. This is the AFE half of that decision - the codec half comes from the device
+             tree - and both halves are required: the working configuration captured from the
+             stock HAL on 14.09 shows "mt6789_adda_dmic_set(), MTKAIF_DMIC, dmic_on 1" together
+             with "mt6358_dmic_enable()". With this Off the AFE expects PCM and the decimator
+             produces a constant, which the uplink high-pass filter then removes to silence. -->
+        <ctl name="MTKAIF_DMIC" value="On"/>
+        <ctl name="UL1_CH1 ADDA_UL_CH1" value="1"/>
+        <ctl name="UL1_CH2 ADDA_UL_CH2" value="1"/>
+    </path>
+    <path name="mic-off">
+        <ctl name="MTKAIF_DMIC" value="Off"/>
+        <ctl name="UL1_CH1 ADDA_UL_CH1" value="0"/>
+        <ctl name="UL1_CH2 ADDA_UL_CH2" value="0"/>
+        <ctl name="ADC L Mux" value="Idle"/>
+        <ctl name="ADC R Mux" value="Idle"/>
+        <ctl name="PGA L Mux" value="None"/>
+        <ctl name="PGA R Mux" value="None"/>
+    </path>
+
+    <!--
+      Back mic (sub mic, AIN2): matches audio_device.xml:109-114 (builtin_Mic_Mic2). Same AFE
+      crossbar as "mic" above (same UL1 capture device regardless of pad). Not wired into the HAL's
+      device-selection logic in v1/v2 (single-mic only, AUDIO-HAL-PLAN-1309 section 3;
+      physical presence of a second mic pad on this board is unconfirmed,
+      AUDIO-ROUTES-1309 section 2.4) - kept ready for a future addition.
+    -->
+    <path name="mic-back">
+        <!-- No Mic Type Mux here either: the board declares the type in the device tree
+             and the codec driver picks the enable sequence from it. See the comment on
+             the "mic" path above. -->
+        <ctl name="ADC L Mux" value="Left Preamplifier"/>
+        <ctl name="ADC R Mux" value="Right Preamplifier"/>
+        <ctl name="PGA L Mux" value="AIN2"/>
+        <ctl name="PGA R Mux" value="AIN2"/>
+        <ctl name="UL1_CH1 ADDA_UL_CH1" value="1"/>
+        <ctl name="UL1_CH2 ADDA_UL_CH2" value="1"/>
+    </path>
+    <path name="mic-back-off">
+        <ctl name="UL1_CH1 ADDA_UL_CH1" value="0"/>
+        <ctl name="UL1_CH2 ADDA_UL_CH2" value="0"/>
+        <ctl name="ADC L Mux" value="Idle"/>
+        <ctl name="ADC R Mux" value="Idle"/>
+        <ctl name="PGA L Mux" value="None"/>
+        <ctl name="PGA R Mux" value="None"/>
+    </path>
+
+    <!--
+      Wired headset mic (AIN1 pad, new in v2): matches audio_device.xml:193-198
+      (headset_mic_input) verbatim - AIN1 is the only stock path using that pad, distinct from
+      AIN0 (main mic) / AIN2 (back mic). Same AFE crossbar as builtin mic (same UL1 device).
+
+      NOTE (AUDIO-ROUTES-1309 section 4.4, F4309): like "headphone" above, this path is
+      currently unreachable through Android's audio policy on this device - no
+      AUDIO_DEVICE_IN_WIRED_HEADSET devicePort exists in either the stock or our own
+      audio_policy_configuration.xml. Kept as correct, faithful plumbing, not a stub.
+    -->
+    <path name="headset-mic">
+        <!-- Analog pad, so the AFE receiver stays in PCM mode (the codec falls back to
+             mt6358_amic_enable() on its own whenever a PGA mux selects AIN1). -->
+        <ctl name="MTKAIF_DMIC" value="Off"/>
+        <!-- No Mic Type Mux here either: the board declares the type in the device tree
+             and the codec driver picks the enable sequence from it. See the comment on
+             the "mic" path above. -->
+        <ctl name="ADC L Mux" value="Left Preamplifier"/>
+        <ctl name="ADC R Mux" value="Right Preamplifier"/>
+        <ctl name="PGA L Mux" value="AIN1"/>
+        <ctl name="PGA R Mux" value="AIN1"/>
+        <ctl name="UL1_CH1 ADDA_UL_CH1" value="1"/>
+        <ctl name="UL1_CH2 ADDA_UL_CH2" value="1"/>
+    </path>
+    <path name="headset-mic-off">
+        <ctl name="UL1_CH1 ADDA_UL_CH1" value="0"/>
+        <ctl name="UL1_CH2 ADDA_UL_CH2" value="0"/>
+        <ctl name="ADC L Mux" value="Idle"/>
+        <ctl name="ADC R Mux" value="Idle"/>
+        <ctl name="PGA L Mux" value="None"/>
+        <ctl name="PGA R Mux" value="None"/>
+    </path>
+</mixer>

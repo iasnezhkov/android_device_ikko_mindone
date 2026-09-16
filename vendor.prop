@@ -1,0 +1,429 @@
+# Adapted from a LineageOS device tree for the same MT6789
+# chipset) — kept largely as-is, these are MediaTek platform-level feature flags (audio/BT/
+# camera/sensors/thermal/USB/Widevine), not device-specific. Spot-checked against our own
+# facts where we have independent confirmation:
+#   vendor.usb.controller=musb-hdrc          — matches our own musb_hdrc driver
+#   ro.vendor.mtk_widevine_drm_l3_support=1  — matches F3378 (L3 achievable, L1 architectural dead-end)
+# 🔴 NOT individually verified line-by-line against our device (271 lines) — telephony/SIM-count
+# props in particular assume a single-SIM device, which is not confirmed for the MindOne.
+
+# Audio
+# logd ring sizes (02.09.2026, F2811): the audio HAL floods 'main' at ~92 msg/s and the
+# 256 KiB default is gone in 50 s, blinding every post-mortem. persist.logd.size.* is
+# ignored on this build (checked 29.08); ro.logd.size.* is read by logd at start.
+# Replaces the Magisk script 85-mindone-logsize.sh (rule: no Magisk scripts in the product).
+ro.logd.size=64M
+ro.logd.size.main=64M
+ro.logd.size.system=32M
+ro.logd.size.events=16M
+ro.logd.size.kernel=16M
+ro.logd.size.crash=8M
+
+aaudio.mmap_exclusive_policy=2
+aaudio.mmap_policy=2
+# 🔴 15.09 (F4461): THIS is what picks the audio HAL. Without it libhardware walks its property
+# chain down to ro.board.platform=mt6789 and loads a stock blob - or, in a 64-bit service, finds no
+# audio.primary.mt6789.so in /vendor/lib64/hw at all and silently falls back to
+# audio.primary.default.so, the STUB, which accepts every write and reports success while the
+# kernel sees nothing. That is exactly how ROM 1409 shipped with no sound and no error anywhere.
+# Naming our own HAL here makes the choice explicit instead of emergent.
+ro.hardware.audio.primary=mindone
+
+ro.vendor.mtk_audio_alac_support=1
+ro.vendor.mtk_audio_ape_support=1
+ro.vendor.mtk_audio_tuning_tool_ver=V1
+ro.vendor.mtk_audio_tuning_tool_ver=V1
+ro.vendor.mtk_hifiaudio_support=1
+ro.vendor.mtk_hifiaudio_support=1
+
+# Bluetooth
+bluetooth.profile.a2dp.source.enabled?=true
+bluetooth.profile.asha.central.enabled?=true
+bluetooth.profile.avrcp.target.enabled?=true
+bluetooth.profile.bas.client.enabled?=true
+bluetooth.profile.gatt.enabled?=true
+bluetooth.profile.hfp.ag.enabled?=true
+bluetooth.profile.hid.device.enabled?=true
+bluetooth.profile.hid.host.enabled?=true
+bluetooth.profile.map.server.enabled?=true
+bluetooth.profile.opp.enabled?=true
+bluetooth.profile.pan.nap.enabled?=true
+bluetooth.profile.pan.panu.enabled?=true
+bluetooth.profile.pbap.server.enabled?=true
+bluetooth.profile.sap.server.enabled?=true
+persist.bluetooth.a2dp_offload.cap=sbc-aac
+persist.bluetooth.a2dp_offload.disabled=true
+ro.bluetooth.a2dp_offload.supported=true
+ro.vendor.mtk.bt_sap_enable=true
+vendor.bluetooth.ldac.abr=true
+
+# Camera
+camera.disable_zsl_mode=1
+persist.vendor.camera3.pipeline.bufnum.base.imgo=4
+persist.vendor.camera3.pipeline.bufnum.base.lcso=4
+persist.vendor.camera3.pipeline.bufnum.base.rrzo=4
+persist.vendor.camera3.pipeline.bufnum.base.rsso=5
+persist.vendor.camera3.pipeline.bufnum.min.high_ram.fdyuv=5
+persist.vendor.camera3.pipeline.bufnum.min.high_ram.imgo=7
+persist.vendor.camera3.pipeline.bufnum.min.high_ram.lcso=7
+persist.vendor.camera3.pipeline.bufnum.min.high_ram.rrzo=7
+persist.vendor.camera3.pipeline.bufnum.min.high_ram.rsso=7
+persist.vendor.camera3.pipeline.bufnum.min.low_ram.fdyuv=5
+persist.vendor.camera3.pipeline.bufnum.min.low_ram.imgo=6
+persist.vendor.camera3.pipeline.bufnum.min.low_ram.lcso=6
+persist.vendor.camera3.pipeline.bufnum.min.low_ram.rrzo=6
+persist.vendor.camera3.pipeline.bufnum.min.low_ram.rsso=6
+ro.vendor.camera.isp.support.colorspace=0
+ro.vendor.camera3.zsl.default=260
+ro.vendor.mtk_cam_security_support=0
+ro.vendor.mtk_camera_app_version=3
+ro.vendor.mtk_slow_motion_support=1
+ro.vendor.smvr.p2batch.hd=4
+ro.vendor.smvr.p2batch.vga=8
+vendor.camera.mdp.cz.enable=1
+vendor.camera.mdp.dre.enable=1
+vendor.mtk.camera.app.fd.video=1
+
+# Connectivity
+persist.vendor.connsys.chipid=-1
+persist.vendor.connsys.dynamic.dump=0
+persist.vendor.connsys.fm_chipid=mt6631_6635
+persist.vendor.connsys.patch.version=-1
+ro.vendor.bt.platform=connac1x
+ro.vendor.connsys.dedicated.log.port=bt,wifi,gps,mcu
+ro.vendor.connsys.dedicated.log=1
+ro.vendor.fm.platform=mt6631_6635
+ro.vendor.gps.chrdev=gps_drv_stp
+ro.vendor.wlan.chrdev=wmt_chrdev_wifi
+ro.vendor.wlan.gen=gen4m_6789
+ro.vendor.wlan.standalone.log=y
+vendor.connsys.driver.ready=no
+
+# Display
+debug.mediatek.appgamepq_compress=1
+debug.mediatek.disp_decompress=1
+debug.sf.disable_backpressure=1
+# 🔴 The stock values here were 20.0 ms for the app, 27.6 ms for SurfaceFlinger and 23.0 ms as the
+# composer minimum. Those describe a 60 Hz pipeline: one vsync period is 16.7 ms there, so 27.6 ms
+# is under two periods. This panel runs at 96 Hz and a period is 10.4 ms, which made the composer's
+# declared work duration 2.65 periods -- it scheduled composition almost three frames ahead and its
+# deadlines stopped lining up. Measured consequence while walking through Settings: the composer
+# missed 18 frames a second, the app's frame could not finish because its buffer was not released
+# (up to 190 ms) and the next frame therefore started late (up to 175 ms). Input, layout, draw
+# recording and the GPU were all fast throughout; only the waiting was slow.
+# Sized to the real period instead. Measured on the device over the same navigation, with the
+# screen verified on and Settings verified in focus for both runs:
+#   90th percentile frame   150 ms -> 25 ms
+#   99th percentile frame   200 ms -> 105 ms
+#   composer misses         18/s   -> 4.25/s
+debug.sf.early.app.duration=10400000
+debug.sf.early.sf.duration=10400000
+debug.sf.earlyGl.app.duration=10400000
+debug.sf.earlyGl.sf.duration=10400000
+debug.sf.enable_hwc_vds=0
+debug.sf.hwc.min.duration=5000000
+debug.sf.late.app.duration=10400000
+debug.sf.late.sf.duration=10400000
+debug.sf.use_phase_offsets_as_durations=1
+
+# RegionSampling is SurfaceFlinger taking a screenshot of a strip of the display and measuring
+# its luminance, so SystemUI can decide whether the status bar icons and the gesture handle
+# should be dark or light. It runs on the same RenderEngine thread as composition, and on this
+# device a single capture costs up to 88 ms of GPU time.
+#
+# Measured over 16.3 s of walking through Settings: 76 captures, 820 ms total -- 5% of wall
+# time -- and one of them lands inside the worst frame of the run, where the render thread is
+# already waiting 160 ms for a buffer and the GPU is 140 ms deep in a fence.
+#
+# AOSP's default period is 100 ms (RegionSamplingThread.cpp). Five times that keeps the feature
+# -- the handle still adapts to what is under it -- and takes the cost to about 1%. The icons
+# follow content half a second later than before, which is not noticeable at a glance but is
+# the reason this is a number and not an off switch.
+debug.sf.region_sampling_period_ns=500000000
+
+# Which layer kinds SurfaceFlinger precompiles shaders for at startup. The switch is in
+# device.mk; these narrow what it does. Every "dimmed" variant doubles the set, and shadow and
+# picture-in-picture layers are not composed on this device -- dropping them is what makes
+# priming affordable, after the full set took 14 581 ms and ANR'd SystemUI on every boot.
+debug.sf.prime_shader_cache.clipped_dimmed_image_layers=0
+debug.sf.prime_shader_cache.image_dimmed_layers=0
+debug.sf.prime_shader_cache.pip_image_layers=0
+debug.sf.prime_shader_cache.shadow_layers=0
+debug.sf.prime_shader_cache.solid_dimmed_layers=0
+debug.sf.prime_shader_cache.transparent_image_dimmed_layers=0
+ro.surface_flinger.force_hwc_copy_for_virtual_displays=true
+ro.surface_flinger.has_HDR_display=false
+ro.surface_flinger.max_frame_buffer_acquired_buffers=3
+ro.surface_flinger.protected_contents=true
+# MINDONE 12.09 (the project issue registry registry): screen recording does not work - SurfaceFlinger
+# does not assign a layer stack to the virtual display (ERROR: UNASSIGNED_LAYER_STACK). Cross-checking against
+# the stock default.prop from this device's own vendor_boot ramdisk (the
+# "MindOne start"/PRODUCT_DEFAULT_PROPERTY_OVERRIDES block) showed: five HWC/SurfaceFlinger properties
+# that stock sets for the mtk_common compositor were MISSING ENTIRELY on our side (grep -c = 0 for
+# each one in this file) - the primary display orientation and the composer HAL version, plus two families
+# of MTK compositor timings (dynamic_duration, cpupolicy) that the mtk_common blob itself reads,
+# not AOSP SurfaceFlinger. It is not proven that these specifically fix virtual displays (F4134/# describes a failure in SF, not in HWC timings), but since they exist in stock and are missing for us -
+# this is a divergence from the image the compositor was written for, and a candidate to eliminate FIRST,
+# before digging into the SurfaceFlinger code. Restored verbatim from stock.
+ro.surface_flinger.primary_display_orientation=ORIENTATION_0
+ro.vendor.composer_version=2.1
+vendor.debug.sf.dynamic_duration.switch=1
+vendor.debug.sf.dynamic_duration.sf.late=14600000
+vendor.debug.sf.dynamic_duration.app.late=18000000
+vendor.debug.sf.dynamic_duration.sf.early=14600000
+vendor.debug.sf.dynamic_duration.app.early=18000000
+vendor.debug.sf.dynamic_duration.sf.earlyGl=14600000
+vendor.debug.sf.dynamic_duration.app.earlyGl=18000000
+vendor.debug.sf.dynamic_duration.sf.decouple=27600000
+vendor.debug.sf.dynamic_duration.app.decouple=20000000
+vendor.debug.sf.dynamic_duration.sf.late.60=15600000
+vendor.debug.sf.dynamic_duration.app.late.60=16600000
+vendor.debug.sf.dynamic_duration.sf.early.60=15600000
+vendor.debug.sf.dynamic_duration.app.early.60=16600000
+vendor.debug.sf.dynamic_duration.sf.earlyGl.60=15600000
+vendor.debug.sf.dynamic_duration.app.earlyGl.60=16600000
+vendor.debug.sf.dynamic_duration.sf.late.90=13100000
+vendor.debug.sf.dynamic_duration.app.late.90=19200000
+vendor.debug.sf.dynamic_duration.sf.early.90=13100000
+vendor.debug.sf.dynamic_duration.app.early.90=19200000
+vendor.debug.sf.dynamic_duration.sf.earlyGl.90=13100000
+vendor.debug.sf.dynamic_duration.app.earlyGl.90=19200000
+vendor.debug.sf.dynamic_duration.sf.late.120=12300000
+vendor.debug.sf.dynamic_duration.app.late.120=11600000
+vendor.debug.sf.dynamic_duration.sf.early.120=12300000
+vendor.debug.sf.dynamic_duration.app.early.120=11600000
+vendor.debug.sf.dynamic_duration.sf.earlyGl.120=12300000
+vendor.debug.sf.dynamic_duration.app.earlyGl.120=11600000
+vendor.debug.sf.hwc.min.duration=2000000
+vendor.debug.sf.cpupolicy.upbound_uclamp_min=350
+vendor.debug.sf.cpupolicy.max_correct_offset=150
+vendor.debug.sf.cpupolicy.rt_bl_min=300
+vendor.debug.sf.cpupolicy.base_min_bl=310
+vendor.debug.sf.cpupolicy.sf_cpu_thres=290
+vendor.debug.sf.cpupolicy.upbound_uclamp_max_ll=262
+vendor.debug.sf.cpupolicy.hw_comp_suspend=1
+vendor.debug.sf.cpupolicy.hw_hfr_suspend=1
+vendor.debug.sf.cpupolicy.xgf_min=25
+vendor.debug.sf.cpupolicy.min_60_mml=165
+vendor.debug.sf.cpupolicy.min_30_mml=165
+vendor.debug.sf.cpupolicy.lowbound_uclamp_min=165
+vendor.debug.sf.cpupolicy.upbound_uclamp_ret_sys=210
+vendor.debug.sf.cpupolicy.min_60=130
+vendor.debug.sf.cpupolicy.min_90=165
+vendor.debug.sf.cpupolicy.min_120=165
+vendor.debug.sf.cpupolicy.min_boost=165
+vendor.debug.sf.cpupolicy.power_up_120=-300000
+vendor.debug.sf.cpupolicy.power_down_120=300000
+vendor.debug.sf.cpupolicy.re_hfr=0
+# MINDONE 11.09: DISABLED for testing (in the project issue registry).
+# This property does NOT exist in the stock vendor/build.prop - we added it. With blur
+# enabled, the compositor (pid 859) gets a blit failure 656 times per boot,
+# "DpAsyncBlitStream:: this platform unsupport compress format", and right next to it in the log
+# are BaseDepthController lines about applying blur to the launcher. In the same boot there are
+# 444 dropped frames flagged JANK_COMPOSER (one for apps), in the categories
+# LOCKSCREEN, NOTIFICATION_SHADE, LAUNCHER_APP - exactly where blur is applied.
+# Test: build without it, reboot, recount both numbers.
+# Restore the line if the correlation does not hold up.
+# ro.surface_flinger.supports_background_blur=1
+ro.vendor.mtk_blulight_def_support=1
+ro.vendor.mtk_pq_color_mode=3
+ro.vendor.mtk_pq_support=0
+ro.vendor.pq.mtk_aal_support=0
+ro.vendor.pq.mtk_ai_scence_pq_support=0
+ro.vendor.pq.mtk_ai_sdr_to_hdr_support=0
+ro.vendor.pq.mtk_backlight_smooth_support=0
+ro.vendor.pq.mtk_blulight_def_support=1
+ro.vendor.pq.mtk_caltm_support=1
+ro.vendor.pq.mtk_clearzoom_support=1
+ro.vendor.pq.mtk_dc_support=0
+ro.vendor.pq.mtk_disp_c3d_support=0
+ro.vendor.pq.mtk_disp_ccorr_support=1
+ro.vendor.pq.mtk_disp_color_support=1
+ro.vendor.pq.mtk_disp_game_pq_support=0
+ro.vendor.pq.mtk_disp_gamma_support=1
+ro.vendor.pq.mtk_disp_tdshp_support=0
+ro.vendor.pq.mtk_dre30_support=0
+ro.vendor.pq.mtk_ds_support=0
+ro.vendor.pq.mtk_hdr10_plus_recording_support=0
+ro.vendor.pq.mtk_hfg_support=1
+ro.vendor.pq.mtk_mdp_ccorr_support=0
+ro.vendor.pq.mtk_mdp_lite_pq_support=0
+ro.vendor.pq.mtk_pq_interface_support=0
+ro.vendor.pq.mtk_pq_video_whitelist_support=0
+ro.vendor.pq.mtk_scltm_support=0
+ro.vendor.pq.mtk_ultra_dimming_support=0
+ro.vendor.pq.mtk_ultra_resolution_support=0
+ro.vendor.pq.mtk_video_transition=0
+
+# Factory
+persist.vendor.factory.GB2312=yes
+
+# Fuelgauge
+ro.vendor.mtk_fast_charging_support=1
+
+# Gatekeeper
+ro.hardware.gatekeeper=trustkernel
+
+# Graphics
+debug.renderengine.backend=skiaglthreaded
+ro.gfx.driver.0=com.mediatek.mt6789.gamedriver
+ro.hardware.egl=meow
+ro.hardware.gralloc=common
+ro.hardware.hwcomposer=mtk_common
+ro.hardware.vulkan=mali
+ro.opengles.version=196610
+ro.vendor.mtk_backlight_hwc_support=0
+ro.vendor.mtk_ovl_bringup=0
+
+# FRP
+ro.frp.pst=/dev/block/by-name/frp
+
+# FUSE passthrough
+persist.sys.fuse.passthrough.enable=true
+
+# GPS
+ro.vendor.mtk_agps_app=1
+ro.vendor.mtk_gps_support=1
+ro.vendor.mtk_log_hide_gps=1
+
+# Keymaster
+ro.hardware.kmsetkey=trustkernel
+
+# LMK
+ro.lmk.downgrade_pressure=60
+ro.lmk.psi_complete_stall_ms=150
+ro.lmk.swap_free_low_percentage=20
+ro.lmk.swap_util_max=90
+
+# Media
+media.c2.dmabuf.padding=3072
+ro.vendor.mtk.c2.vdec.fmt.support.level=1
+ro.vendor.mtk_mvpu_security_support=0
+ro.vendor.mtk_svp_on_mtee_support=2
+ro.vendor.mtk_video_hevc_enc_support=1
+vendor.media.heif.feature.off=1
+vendor.media.heif.highThreshold=20
+vendor.mtk.vdec.waitkeyframeforplay=9
+
+# Mediatek
+ro.vendor.mediatek.platform=MT6789
+ro.vendor.mediatek.version.branch=alps-mp-s0.mp1
+ro.vendor.mediatek.version.release=alps-mp-s0.mp1-V15.240
+ro.vendor.mgk_name=mgk_64_entry_level_k510
+ro.vendor.mgvi_name=mgvi_64_nfc_armv82
+
+# NFC
+ro.vendor.mtk_nfc_addon_support=1
+
+# Netflix
+ro.netflix.bsp_rev=MTK6789-35965-1
+
+# NeuralNetworks
+debug.mtk_tflite.target_nnapi=29
+ro.vendor.mtk_nn.option=A,B,C,D,E,F,G,Z
+ro.vendor.mtk_nn_baseline_support=1
+ro.vendor.mtk_nn_quant_preferred=1
+
+# OEM Unlocking
+ro.oem_unlock_supported=1
+
+# Perf
+ro.vendor.pref_scale_enable_cfg=1
+
+# RIL
+persist.radio.multisim.config=ss
+persist.vendor.ims_support=1
+persist.vendor.log.tel_log_ctrl=1
+persist.vendor.md_c2k_cap_dep_check=0
+persist.vendor.mdrsra_v2_support=1
+persist.vendor.mims_support=2
+persist.vendor.mtk.volte.enable=1
+persist.vendor.mtk_ct_volte_support=3
+persist.vendor.mtk_dynamic_ims_switch=1
+persist.vendor.mtk_sim_switch_policy=2
+persist.vendor.mtk_sim_switch_policy=2
+persist.vendor.mtk_wfc_support=1
+persist.vendor.radio.fd.counter=150
+persist.vendor.radio.fd.off.counter=50
+persist.vendor.radio.fd.off.r8.counter=50
+persist.vendor.radio.fd.r8.counter=150
+persist.vendor.radio.flashless.fsm=0
+persist.vendor.radio.flashless.fsm_cst=0
+persist.vendor.radio.flashless.fsm_rw=0
+persist.vendor.radio.msimmode=ss
+persist.vendor.radio.mtk_dsbp_support=2
+persist.vendor.radio.mtk_ps2_rat=L/W/G
+persist.vendor.radio.mtk_ps3_rat=G
+persist.vendor.radio.smart.data.switch=1
+# 🔴 15.09 (F4456): video telephony OFF. The videotelephony HAL was removed from
+# the VINTF manifest on 13.09 ("VoLTE video calling only; stopping it live changed
+# nothing else"), but these two properties kept starting its CLIENT
+# /system_ext/bin/vtservice, which then retried getTransport for the HAL that is no
+# longer declared - every 502 ms, forever: ~172 800 binder calls + 345 600 log lines
+# a day, and the CPU never settles. Measured 2.0 lines/s, and exactly 0 after stop.
+# volte_support below is VOICE over LTE and is deliberately left ON - different thing.
+persist.vendor.vilte_support=0
+persist.vendor.viwifi_support=0
+persist.vendor.volte_support=1
+persist.vendor.xfrm_support=1
+ro.telephony.default_network=10,10,10,10
+ro.telephony.iwlan_operation_mode=AP-assisted
+# MINDONE 12.09 (F4136): ro.telephony.sim.count REMOVED from here - the property is marked
+# by AOSP as default_prop (platform-owned), while vendor.prop is loaded by vendor_init, so we get
+# avc: denied { set } scontext=vendor_init tcontext=default_prop tclass=property_service
+# (device/logs/catch-0911-185910/dmesg.txt.gz). The rule "vendor_init may only write
+# vendor-context properties" is a platform neverallow, it cannot be worked around with an allow rule (the same
+# class as the reverted changes in sepolicy/vendor/vendor_init.te, F3908). The value has been moved to
+# PRODUCT_SYSTEM_PROPERTIES in device.mk - there it is set by init (default_prop is its domain).
+# 🔴 ro.telephony.default_network and ro.telephony.iwlan_operation_mode on the line above are the same
+# class (also default_prop, also written by vendor_init), but their denial has NOT been
+# observed even once in the current logs (likely due to avc caching - the kernel does not repeat an
+# identical decision), so I am not touching them without direct proof. If they show up when switching to
+# enforcing, move them the same way.
+ro.vendor.ap_info_monitor=0
+ro.vendor.md_auto_setup_ims=1
+ro.vendor.md_prop_ver=1
+ro.vendor.mtk_c2k_lte_mode=2
+ro.vendor.mtk_c2k_support=1
+ro.vendor.mtk_c2k_support=1
+ro.vendor.mtk_data_config=1
+ro.vendor.mtk_eccci_c2k=1
+ro.vendor.mtk_external_sim_only_slots=0
+ro.vendor.mtk_fd_support=1
+ro.vendor.mtk_lte_support=1
+ro.vendor.mtk_md_world_mode_support=1
+ro.vendor.mtk_protocol1_rat_config=C/Lf/Lt/W/G
+ro.vendor.mtk_ps1_rat=C/Lf/Lt/W/G
+ro.vendor.mtk_ril_mode=c6m_1rild
+ro.vendor.mtk_rild_read_imsi=1
+ro.vendor.mtk_sim_card_onoff=3
+ro.vendor.mtk_single_bin_modem_support=1
+ro.vendor.mtk_tb_wifi_3g_mode=0
+ro.vendor.mtk_uicc_clf=1
+ro.vendor.mtk_wappush_support=1
+ro.vendor.mtk_world_phone_policy=0
+ro.vendor.num_md_protocol=2
+ro.vendor.radio.max.multisim=ss
+ro.vendor.sim_me_lock_mode=3
+telephony.active_modems.max_count=1
+telephony.lteOnCdmaDevice=1
+
+# Sensors
+ro.vendor.mtk.sensor.support=yes
+
+# Thermal
+ro.vendor.mtk_thermal_2_0=1
+
+# USB
+vendor.usb.controller=musb-hdrc
+
+# Wi-Fi
+ro.vendor.wifi.sap.concurrent.iface=ap1
+ro.vendor.wifi.sap.interface=ap0
+
+# Widevine
+ro.vendor.mtk_widevine_drm_l3_support=1
+
+# 13.09 log flood (LOG-REVIEW-1309): vendor Codec2 buffer manager (~950/min) and the RIL mux daemon (~460/min)
+log.tag.C2MtkBufferManager=SILENT
+log.tag.RILMUXD=SILENT

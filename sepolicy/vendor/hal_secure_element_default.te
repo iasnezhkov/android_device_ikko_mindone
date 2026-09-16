@@ -1,0 +1,3 @@
+# mindone (06.09): AIDL secure_element V1 -> HIDL secure_element@1.2 bridge (stock: domain mtk_hal_secure_element).
+# The bridge is an AIDL server in the AOSP domain hal_secure_element_default and at the same time a client of the stock HIDL service.
+hal_client_domain(hal_secure_element_default, hal_secure_element)

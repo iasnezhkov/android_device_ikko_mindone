@@ -1,0 +1,147 @@
+{
+  "_comment": "mindone thermal_info_config v2 (14.09, Q7 BLOBS-QUEUE-1309; supersedes device/ikko/mindone/configs/thermal/thermal_info_config.json v1 13.09 / THERMAL-HAL-PLAN-1309). Same HAL: hardware/mediatek/aidl/thermal, android.hardware.thermal-service.mediatek, AIDL v3. Schema: hardware/mediatek/aidl/thermal/utils/config_schema.json; BindedCdevInfo/LimitInfo fields read directly from utils/thermal_info.cpp (ParseBindedCdevInfo line ~726, LimitInfo parsing line ~843: a 7-int CdevArray, one state request per ThrottlingSeverity NONE..SHUTDOWN, parsed UNCONDITIONALLY -- i.e. independent of the PID/power_allocator machinery this project does not use). CHANGES FROM v1, see THERMAL-TUNING-1409 for full rationale and citations: (1) CoolingDevices gained charger-cooler and lcd-backlight, missing from v1 despite being live on the device (the device's thermal zone dump, cooling_device0/1) -- a real v1 gap, not a design choice. (2) battery HotThreshold ladder replaced: v1's 42/48/52/57/60/65 C was an unsourced JEITA-adjacent guess; v2 uses the ACTUAL stock JEITA table read from the charger DT node (mindone.dts:704-735): temp_t3_thres=45C (CV reduction starts), temp_t4_thres=50C (further CV reduction), max_charge_temp_minus_x_degree=53C, max_charge_temp=55C (charging hard-stops in the kernel's OWN charger driver, independent of any cooling device). (3) battery now carries BindedCdevInfo -> charger-cooler: safe because charger-cooler cur_state is idle/unbound in the DT (grep of mindone.dts thermal-zones found no cooling-map referencing &charger_cooler) and the stock JEITA mechanism throttles charge VOLTAGE via the charger driver's own state machine, a different code path/property (POWER_SUPPLY_PROP_VOLTAGE_MAX vs charger_cooling.c's POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX) -- not literally the same actuator, but the v2 ladder deliberately mirrors the stock 45/50/55 boundaries so the two layers reinforce instead of fighting on timing. (4) ltepa_ntc now carries BindedCdevInfo -> mutt-pa1: also unbound in DT (mindone.dts:113-122, mutt_pa1 has no cooling-map consumer), and ltepa_ntc (POWER_AMPLIFIER, the literal PA NTC) is the more direct causal sensor for a PA-scoped cooler than 'md' (modem die) -- 'md' therefore stays unbound on purpose, so mutt-pa1 is never driven by two independent zones at once. (5) lcd-backlight is listed (was entirely missing) but DELIBERATELY left unbound in v2: ap_ntc is the SKIN proxy and its thresholds are still uncalibrated (no hand-feel validation has happened since v1 shipped hours ago) -- binding a brightness cut to an unverified sensor risks nuisance dimming or under-protection in either direction; revisit in v3 after the morning validation plan's ap_ntc calibration step. (6) mindone_cpu_little/mindone_cpu_big/mindone_gpu/soc_max sensors are UNCHANGED from v1 (still Monitor-only, still no BindedCdevInfo -- see v1 rationale, reconfirmed in THERMAL-TUNING-1409); only soc_max's _comment is corrected (it is its own dedicated LVTS hardware channel, lvts index 0, NOT a software max of soc1/soc2 as the v1 comment implied).",
+  "Sensors": [
+    {
+      "_comment": "Aggregate of cpu_little1..4 (max), the exact zone mindone_thermal.ko's little-cluster passive trip acts on (mindone_thermal.c:40-42,76-89). MODERATE mirrors the kernel's little_trip default (85 C). UNCHANGED from v1. Note (THERMAL-TUNING-1409): the DT ALSO defines cpu_little1..4 as their own zones with a 90 C passive trip bound to the same cpufreq-cpu0 cooler (mindone.dts:152-270) -- a second, higher-temperature kernel-level backstop on the same actuator, not something this HAL sensor controls either way.",
+      "Name": "mindone_cpu_little",
+      "Type": "CPU",
+      "HotThreshold": ["NAN", 75.0, 85.0, 90.0, 95.0, 100.0, 108.0],
+      "HotHysteresis": [0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 0.0],
+      "VrThreshold": "NAN",
+      "Multiplier": 0.001,
+      "Monitor": true,
+      "PollingDelay": 10000,
+      "PassiveDelay": 2000
+    },
+    {
+      "_comment": "Aggregate of cpu_big1..4 (max). MODERATE mirrors the kernel's big_trip default (80 C, mindone_thermal.c:43-45). UNCHANGED from v1. Same DT backstop note as mindone_cpu_little applies (mindone.dts:272-390, 90 C trip on cpu_big1..4 bound to cpufreq-cpu6).",
+      "Name": "mindone_cpu_big",
+      "Type": "CPU",
+      "HotThreshold": ["NAN", 70.0, 80.0, 85.0, 90.0, 95.0, 105.0],
+      "HotHysteresis": [0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 0.0],
+      "VrThreshold": "NAN",
+      "Multiplier": 0.001,
+      "Monitor": true,
+      "PollingDelay": 10000,
+      "PassiveDelay": 2000
+    },
+    {
+      "_comment": "Aggregate of gpu1/gpu2 (max), the zone mindone_thermal.ko's GPU passive trip (85 C default, mindone_thermal.c:337-352) acts on via the mindone-gpufreq cooler (8 states, gpufreq_set_limit ceiling). UNCHANGED from v1. Note (THERMAL-TUNING-1409, OPEN): the DT's own gpu2 zone ALSO has an 85 C passive trip (mindone.dts:392-414) bound to the mali node, and mali_kbase_devfreq.c (the kernel module tree mali_kbase_clean) calls of_devfreq_cooling_register_power against that same node -- a possible second, independently-registered GPU cooling path via devfreq rather than gpufreq_set_limit. the device's thermal zone dump shows only 6 live cooling devices (no devfreq-named entry), which does not confirm this path is active; unresolved without a live dmesg check (no device access tonight). This HAL sensor is unaffected either way (still report-only).",
+      "Name": "mindone_gpu",
+      "Type": "GPU",
+      "HotThreshold": ["NAN", 75.0, 85.0, 90.0, 95.0, 100.0, 108.0],
+      "HotHysteresis": [0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 0.0],
+      "VrThreshold": "NAN",
+      "Multiplier": 0.001,
+      "Monitor": true,
+      "PollingDelay": 10000,
+      "PassiveDelay": 2000
+    },
+    {
+      "_comment": "CORRECTED comment vs v1: soc_max is its OWN dedicated LVTS hardware channel (mindone.dts:137-150, 'thermal-sensors = <&lvts 0x00>', sensor index 0) -- it is NOT a software max(soc1, soc2) as v1's comment claimed; soc1/soc2 are separate channels (lvts 0xb/0xc). The DT's only configured trip on this zone is a single 'critical' trip at 113500 mC = 113.5 C, hysteresis 2000 mC (mindone.dts:144-148); the second '115 C' figure referenced in the original registry note was not independently re-verified against this DT in this session (it may originate from the still-undeciphered stock thermal_policy_*.conf files, see THERMAL-TUNING-1409 section on stock config obfuscation). Numeric ladder below is UNCHANGED from v1 (graduated ladder topping out just under the 113.5 C stock critical trip).",
+      "Name": "soc_max",
+      "Type": "SOC",
+      "HotThreshold": ["NAN", "NAN", 95.0, 105.0, 110.0, 113.0, 118.0],
+      "HotHysteresis": [0.0, 0.0, 2.0, 2.0, 2.0, 1.0, 0.0],
+      "VrThreshold": "NAN",
+      "Multiplier": 0.001,
+      "Monitor": true,
+      "PollingDelay": 30000,
+      "PassiveDelay": 5000
+    },
+    {
+      "_comment": "Real Li-ion pack temperature (thermal_zone5 'battery', DT trips=0 -- this zone carries no kernel thermal-framework trips of its own; it is exposed by the battery/gauge power_supply stack, not by the LVTS/generic-adc/pmic-temp drivers). REPLACED v1's unsourced 42/48/52/57/60/65 C guess with the ACTUAL stock JEITA/charger-safety table read from the 'charger' DT node (mindone.dts:704-735): temp_t3_thres=0x2d=45C (jeita_temp_t2_to_t3_cv 4.3272V -> jeita_temp_t3_to_t4_cv 4.242V, i.e. charge voltage target starts dropping here), temp_t4_thres=0x32=50C (stays at the reduced 4.242V CV), max_charge_temp_minus_x_degree=0x35=53C (charging-resume hysteresis), max_charge_temp=0x37=55C (charging HARD-STOPS in the kernel's own charger driver -- a real, already-active stock safety action, independent of any cooling device). SHUTDOWN=60C keeps a tight-but-safe 5 C margin above that real stock cutoff (v1's 65 C margin was ungrounded). NEW in v2: BindedCdevInfo -> charger-cooler (see top-level _comment point 3 for why this does not fight the stock JEITA mechanism).",
+      "Name": "battery",
+      "Type": "BATTERY",
+      "HotThreshold": ["NAN", 40.0, 45.0, 50.0, 53.0, 55.0, 60.0],
+      "HotHysteresis": [0.0, 2.0, 2.0, 2.0, 1.0, 1.0, 0.0],
+      "VrThreshold": "NAN",
+      "Multiplier": 0.001,
+      "Monitor": true,
+      "PollingDelay": 60000,
+      "PassiveDelay": 5000,
+      "BindedCdevInfo": [
+        {
+          "_comment": "charger-cooler max_state=8 (the kernel module tree charger_cooling.c: CHARGER_STATE_NUM=9, state0=unlimited). master_charger_state_to_current_limit (charger_cooling.c:26-28) = [-1(unlim), 2.6A, 2.2A, 1.8A, 1.4A, 1.0A, 0.7A, 0.5A, 0A]. Ladder below: NONE/LIGHT unlimited (state 0); MODERATE(45C, stock t3) -> state 3 (1.8A), matching the stock CV-reduction boundary; SEVERE(50C, stock t4) -> state 5 (1.0A); CRITICAL(53C) -> state 6 (0.7A); EMERGENCY(55C) -> state 8 (0A, charging halted) -- exactly the stock max_charge_temp hard-stop, now also visible to the framework/dumpsys; SHUTDOWN -> state 8 (already halted; device-level shutdown is the framework's job at this point, not the charger).",
+          "CdevRequest": "charger-cooler",
+          "LimitInfo": [0, 0, 3, 5, 6, 8, 8]
+        }
+      ]
+    },
+    {
+      "_comment": "Modem/CONNSYS die (thermal_zone19 'md'). UNCHANGED from v1: no cooling-device binding here on purpose, even though mutt-pa1 is now bound in v2 -- it is bound to 'ltepa_ntc' below instead, so mutt-pa1 is never driven by two independent HAL sensors at once (that would recreate, inside the HAL, the exact double-control pattern this project avoids for cpufreq/gpufreq). Ladder unchanged (inferred, no stock source found for this specific zone).",
+      "Name": "md",
+      "Type": "MODEM",
+      "HotThreshold": ["NAN", "NAN", 65.0, 75.0, 85.0, 95.0, 110.0],
+      "HotHysteresis": [0.0, 0.0, 2.0, 2.0, 2.0, 2.0, 0.0],
+      "VrThreshold": "NAN",
+      "Multiplier": 0.001,
+      "Monitor": true,
+      "PollingDelay": 60000,
+      "PassiveDelay": 5000
+    },
+    {
+      "_comment": "LTE PA NTC (thermal_zone21 'ltepa_ntc'), the literal AOSP POWER_AMPLIFIER use case. Ladder UNCHANGED from v1 (inferred; the stock thermal_policy_*.conf files that might carry a real PA ladder are byte-obfuscated and were not decoded this session, see THERMAL-TUNING-1409). NEW in v2: BindedCdevInfo -> mutt-pa1, the modem PA thermal cooler (DT: mindone.dts:113-122, 'mutt-pa1' under md_cooler/pa1, unbound in DT -- confirmed no cooling-map in mindone.dts references it). Chosen over 'md' as the driving sensor because mutt-pa1 is explicitly PA-scoped (driver pa_id indexing, the kernel module tree md_cooling_all/_nest/md_cooling.c) and ltepa_ntc is the literal PA thermal probe -- the more direct causal pairing.",
+      "Name": "ltepa_ntc",
+      "Type": "POWER_AMPLIFIER",
+      "HotThreshold": ["NAN", "NAN", 70.0, 80.0, 90.0, 100.0, 115.0],
+      "HotHysteresis": [0.0, 0.0, 2.0, 2.0, 2.0, 2.0, 0.0],
+      "VrThreshold": "NAN",
+      "Multiplier": 0.001,
+      "Monitor": true,
+      "PollingDelay": 60000,
+      "PassiveDelay": 5000,
+      "BindedCdevInfo": [
+        {
+          "_comment": "mutt-pa1 max_state=9 (the kernel module tree md_cooling.h: md_cooling_pdata.max_lv=9). state_to_mutt_lv(state)=state-1 sent to the modem firmware over CCCI as a MUTT throttle level; per md_cooling.c:134-148, state==max_lv(9) maps to MD_NO_IMS (IMS/VoLTE dropped, maximum throttle) and state==max_lv-1(8) to MD_IMS_ONLY. The driver's actual per-level TX-power-in-dB semantics live in modem firmware, not visible from the AP side -- this ladder only requests a MUTT severity level, it does not claim specific dB backoff numbers (the driver's tx_pwr_throttle/DEFAULT_THROTTLE_TX_PWR_LV1..3 = 4/6/8 dB path is a SEPARATE, currently-unwired cooling type on this DT, not what mutt-pa1 drives). Ladder: NONE/LIGHT unlimited; MODERATE(70C) -> level 2 (mild, early); SEVERE(80C) -> level 4; CRITICAL(90C) -> level 6; EMERGENCY(100C) -> level 8 (MD_IMS_ONLY); SHUTDOWN(115C) -> level 9 (MD_NO_IMS, maximum throttle -- defense in depth, the framework shutdown ladder also fires here).",
+          "CdevRequest": "mutt-pa1",
+          "LimitInfo": [0, 0, 2, 4, 6, 8, 9]
+        }
+      ]
+    },
+    {
+      "_comment": "SKIN proxy. UNCHANGED from v1: this board has no dedicated case/back-cover NTC zone; ap_ntc (thermal_zone20, board NTC near the AP) is the closest physical stand-in. Thresholds remain ABOVE the textbook Pixel skin ladder because an AP-area NTC runs hotter than a true outer-case sensor at the same felt warmth. Still uncalibrated (no hand-feel validation run since v1 shipped) -- this is exactly why lcd-backlight is listed in CoolingDevices below (so its idle state is visible in dumpsys) but NOT bound here in v2. See THERMAL-TUNING-1409 validation plan.",
+      "Name": "ap_ntc",
+      "Type": "SKIN",
+      "HotThreshold": ["NAN", 42.0, 46.0, 50.0, 53.0, 56.0, 60.0],
+      "HotHysteresis": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+      "VrThreshold": "NAN",
+      "Multiplier": 0.001,
+      "Monitor": true,
+      "PollingDelay": 60000,
+      "PassiveDelay": 5000
+    }
+  ],
+  "CoolingDevices": [
+    {
+      "_comment": "Kernel DT-registered little-cluster cpufreq cooler (max_state=23), driven by mindone_thermal.ko's step_wise governor (and, independently, by the DT's own cpu_little1..4 90 C trips, see mindone_cpu_little's _comment above). Listed for dumpsys/getCurrentCoolingDevices() read-only reporting only -- no BindedCdevInfo anywhere in this file targets it. UNCHANGED from v1.",
+      "Name": "cpufreq-cpu0",
+      "Type": "CPU"
+    },
+    {
+      "_comment": "Kernel DT-registered big-cluster cpufreq cooler (max_state=15), same kernel-driven, read-only-report status as cpufreq-cpu0. UNCHANGED from v1.",
+      "Name": "cpufreq-cpu6",
+      "Type": "CPU"
+    },
+    {
+      "_comment": "mindone_thermal.ko's own GPU cooler (max_state=8, gpufreq_set_limit ceiling steps), kernel-driven, read-only-report status. UNCHANGED from v1.",
+      "Name": "mindone-gpufreq",
+      "Type": "GPU"
+    },
+    {
+      "_comment": "NEW in v2 (v1 gap): charger current-limit cooler (the kernel module tree charger_cooling.c, DT node mindone.dts:124-127 'mediatek,mt6375-charger-cooler', max_state=8). Live on the device per the device's thermal zone dump, cooling_device0 ('charger-cooler max=8 cur=0') but was entirely absent from v1's CoolingDevices list. Now bound from the 'battery' sensor above.",
+      "Name": "charger-cooler",
+      "Type": "BATTERY"
+    },
+    {
+      "_comment": "NEW in v2 (v1 gap): backlight cooler (the kernel module tree backlight_cooling.c, DT node mindone.dts:129-133 'mediatek,backlight-cooler', max_state=100, bl_percent=100-state). Live per zones.txt cooling_device1 ('lcd-backlight max=100 cur=0') but was entirely absent from v1's CoolingDevices list. Listed here for read-only reporting only -- deliberately NOT bound to ap_ntc in v2, see ap_ntc's _comment.",
+      "Name": "lcd-backlight",
+      "Type": "DISPLAY"
+    },
+    {
+      "_comment": "Registered cooling device for the modem/PA TX-power path (max=9 per zones.txt), the kernel module tree md_cooling_all. NEW in v2: bound from 'ltepa_ntc' above (was report-only in v1).",
+      "Name": "mutt-pa1",
+      "Type": "MODEM"
+    }
+  ]
+}

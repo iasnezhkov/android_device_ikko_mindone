@@ -1,0 +1,71 @@
+on early-init
+    # boot perf. tune
+    write /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 2000000
+    write /sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq 2200000
+    write /sys/class/devfreq/mtk-dvfsrc-devfreq/userspace/set_freq 5500000000
+
+on charger
+    write /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 0
+    write /sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq 0
+    write /sys/class/devfreq/mtk-dvfsrc-devfreq/userspace/set_freq 0
+
+
+on post-fs-data
+    # MINDONE 12.09 (F4174): schedutil instead of sugov_ext - on 6.12 EAS only recognizes schedutil
+    # (sched_energy_aware=1 verified live), the energy model is now real (F4174);
+    # the sugov_ext hook is dead (the util_freq table is empty: the EM does not exist yet when the module loads).
+    # 12.09 night (F4271): A/B on the same image, n=2 per governor - plain schedutil turns EAS on
+    # (sched_energy_aware=1) but regresses UI pacing (Settings scroll 50th/90th 12-10/15-14 ms,
+    # legacy jank 39-54 %) and cold starts (Chrome 2108-2435 ms) versus the vendor sugov_ext
+    # (9/11 ms, 6-11 %, 1456-1735 ms). Keep sugov_ext until schedutil is tuned for MTK's
+    # non-linear OPP capacity (rate limits / uclamp); EAS stays off for now (P35).
+    # write /sys/devices/system/cpu/cpufreq/policy0/scaling_governor schedutil
+    # write /sys/devices/system/cpu/cpufreq/policy6/scaling_governor schedutil
+    write /proc/sys/kernel/sched_util_clamp_min_rt_default 0
+
+    # boot perf. tune
+    write /dev/cpuctl/system/cpu.uclamp.min 100
+    write /dev/cpuctl/system/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/system-background/cpu.uclamp.min 100
+    write /dev/cpuctl/system-background/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/foreground/cpu.uclamp.min 100
+    write /dev/cpuctl/foreground/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/top-app/cpu.uclamp.min 100
+    write /dev/cpuctl/top-app/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/background/cpu.uclamp.min 100
+    write /dev/cpuctl/background/cpu.uclamp.latency_sensitive 1
+
+on property:sys.boot_completed=1
+    # MINDONE 11.09: without this property the power service waits for it FOREVER in
+    # WaitForProperty (hardware/lineage/interfaces/power-libperfmgr/aidl/service.cpp:78),
+    # HintManager::Start() never gets called, the NodeLooperThread never starts,
+    # and NOT A SINGLE frequency-boost hint gets executed: 112 dropped
+    # INTERACTION / EXPENSIVE_RENDERING / LAUNCH requests per boot, and a growing task queue.
+    # This is in the project issue registry - a candidate cause for the general sluggishness.
+    setprop vendor.powerhal.init 1
+
+    write /proc/sys/kernel/sched_migration_cost_ns 200000
+
+    # restore boot perf. tune
+    write /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq 0
+    write /sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq 0
+    write /dev/cpuctl/system/cpu.uclamp.min 0
+    write /dev/cpuctl/system/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/system-background/cpu.uclamp.min 0
+    write /dev/cpuctl/system-background/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/foreground/cpu.uclamp.min 0
+    write /dev/cpuctl/foreground/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/top-app/cpu.uclamp.min 0
+    write /dev/cpuctl/top-app/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/background/cpu.uclamp.min 0
+    write /dev/cpuctl/background/cpu.uclamp.latency_sensitive 0
+
+# Memory bandwidth by screen state (mind_one, 09.09.2026).
+# The standard reset-to-minimum line was removed from boot_completed: hardware bandwidth voting
+# does not work on this device (the gpu/mm_disp/hrt_* nodes request 0), so "restore to how it was"
+# would have meant staying at 800 MHz out of 4266 forever. Details and measurements - F4082/F4083.
+on property:debug.tracing.screen_state=2
+    write /sys/class/devfreq/mtk-dvfsrc-devfreq/userspace/set_freq 4266000000
+
+on property:debug.tracing.screen_state=1
+    write /sys/class/devfreq/mtk-dvfsrc-devfreq/userspace/set_freq 0

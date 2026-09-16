@@ -1,0 +1,4 @@
+# mindone 09.09 (F4059): the fuel gauge NVRAM daemon reads the devicetree
+# description (/sys/firmware/devicetree/base/firmware/android/compatible), 4 denials per boot.
+allow fuelgauged_nvram sysfs_dt_firmware_android:dir search;
+allow fuelgauged_nvram sysfs_dt_firmware_android:file r_file_perms;

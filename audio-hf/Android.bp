@@ -1,0 +1,76 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// audio.primary.mindone -- legacy audio_hw_device_t HAL for iKKO MindOne
+// (MT6789 + MT6366 codec, tinyalsa-based, aw87xxx smart PA over I2C).
+//
+// v2 (13/14.09.2026 night) -- supersedes the v1 draft. No build-shape changes from
+// v1 (same sources list, same libs) -- only audio_hw.c and mixer_paths.xml changed; see
+// audio_hw.c's top-of-file comment and AUDIO-ROUTES-1309 for what and why.
+//
+// Loaded by the AOSP android.hardware.audio@7.0-impl passthrough we already
+// ship (device/ikko/mindone/device.mk) via hw_get_module_by_class(AUDIO_
+// HARDWARE_MODULE_ID, "primary", ...) -- no manifest/service changes needed,
+// see AUDIO-HAL-PLAN-1309 section 2 and 5.
+//
+// !! VERIFY BEFORE FIRST BUILD !!
+// - Module name below is "audio.primary.mindone" (installed alongside, not
+//   replacing, the stock "audio.primary.mt6789.so" blob during development --
+//   README-INTEGRATION.md section "Coexistence" explains how libhardware's
+//   variant-name search actually picks one or the other).
+// - audio_hw.c was written against the classic legacy audio_hw_device_t /
+//   audio_stream_out / audio_stream_in struct shape (hardware/libhardware/
+//   include/hardware/audio.h, HAL API 3.0/3.1, paired with the HIDL 7.0
+//   passthrough per audio_policy_configuration.xml's halVersion="7.0"...
+//   wait, module halVersion="3.0" -- that IS the legacy C struct version).
+//   It uses designated initializers for every hw_device_t/audio_hw_device
+//   function pointer specifically so a mismatched/missing optional field in
+//   the real header (create_audio_patch/get_audio_port etc, which vary by
+//   exact AOSP revision) fails to compile loudly instead of silently
+//   misordering the vtable -- if it doesn't compile as-is, that mismatch is
+//   the first thing to fix, not a reason to switch to positional init.
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_library_shared {
+    name: "audio.primary.mindone",
+    vendor: true,
+    relative_install_path: "hw",
+    // 13.09: the audio HAL service on this ROM was found to be 32-bit (it loads the MediaTek
+    // android.hardware.audio@7.0-impl-mediatek.so -> audio.primary.mt6789.so from /vendor/lib/hw,
+    // resolved through ro.board.platform=mt6789). BoardConfig now sets android_hardware_audio
+    // run_64bit=true and the 64-bit service has been built and ABI-checked
+    // (AUDIO-HAL-PLAN-1309 addendum "64-bit service built") -- until it is validated LIVE
+    // on the ROM, build both ABIs so the module loads either way.
+    compile_multilib: "both",
+    srcs: [
+        "audio_hw.c",
+    ],
+    shared_libs: [
+        "liblog",
+        "libcutils",
+        "libutils",
+        "libtinyalsa",
+        "libaudioroute",
+        "libaudioutils",
+    ],
+    header_libs: [
+        "libhardware_headers",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+        "-Werror",
+    ],
+}
+
+// mixer_paths.xml ships next to the .so under /vendor/etc, matching the
+// convention every audio_route-based legacy HAL uses (path is read at
+// adev_open() time -- see README-INTEGRATION.md for the exact
+// PRODUCT_COPY_FILES / prebuilt_etc entry, since this Android.bp module
+// only builds the shared library).

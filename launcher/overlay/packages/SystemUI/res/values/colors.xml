@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+  SystemUI palette for the keyguard, in the launcher's ink theme. See ../../../../systemui/KEYGUARD.md.
+
+  🔴 SKELETON — dropping this in changes nothing yet, on purpose.
+
+  The names below are OURS. Before this overlay does anything, each has to be renamed to the
+  resource SystemUI actually uses on Android 16, which nobody has read yet:
+
+      cd frameworks/base/packages/SystemUI
+      grep -rn "textColor\|background" res/layout/keyguard_pin_view.xml
+      grep -rn "num_pad\|numeric_key" res/values/colors.xml
+
+  Two rules for whoever finishes this:
+   1. An RRO can only override a name that exists in the target package. A new name here is ignored
+      silently — no build error, no effect. Check the result with
+      `adb shell cmd overlay dump` and by looking at the screen, not by a clean build.
+   2. If SystemUI declares <overlayable>, only the listed resources are overridable at all, and the
+      policy decides whether a vendor RRO qualifies. That check is item 4 in KEYGUARD.md §5.
+-->
+<resources>
+    <!-- Ground. True black is the point: the panel is AMOLED and the lock screen is the one
+         surface that is up for seconds at a time, many times a day. -->
+    <color name="launcher_keyguard_bg">#FF000000</color>
+    <color name="launcher_keyguard_surface">#FF0B0B0C</color>
+    <color name="launcher_keyguard_hairline">#FF232327</color>
+
+    <!-- Text. Digits at primary, the "type PIN to unlock" hint at secondary, the wrong-PIN
+         counter at muted — it should be readable, not alarming. -->
+    <color name="launcher_keyguard_text_primary">#FFECEAE3</color>
+    <color name="launcher_keyguard_text_secondary">#FF9A9A93</color>
+    <color name="launcher_keyguard_text_muted">#FF5F5F5A</color>
+
+    <!-- The single accent, and here it means exactly one thing: which key has keyboard focus.
+         Not the pressed state, not the error state. The MindOne has a hardware keyboard, so a
+         focus ring on the keypad is a real affordance rather than decoration. -->
+    <color name="launcher_keyguard_accent">#FFD9A441</color>
+
+    <!-- Material state layer: 10 % of the text colour, used for press and focus. -->
+    <color name="launcher_keyguard_state_layer">#1AECEAE3</color>
+</resources>

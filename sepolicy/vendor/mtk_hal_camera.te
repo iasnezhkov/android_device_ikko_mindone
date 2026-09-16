@@ -1,0 +1,11 @@
+# mindone 12.09 (F4136): camerahalserver tries to read the shared (generic, non-dedicated)
+# property context default_prop - 4 denials per boot (read/open/getattr/map), consistently
+# repeating on 09.11/09.12 (device/logs/catch-0911-185910, catch-0912-053819, exp-0911/exp9-selinux.txt).
+# default_prop is a platform type; vendor domain access to it is blocked by an AOSP neverallow -
+# the same class of restriction already hit on mtk_hal_c2/custom_version_prop and reverted because it
+# broke the build (see mtk_hal_c2.te, F3908). Cannot be worked around with allow.
+# The camera WORKS anyway (F1844 in the fact log) - the read is not functionally needed, it is
+# background noise (likely an attempt to read a specific property that has no dedicated context of
+# its own - see F4066, question open). dontaudit does not violate neverallow: it grants no
+# permission, it only suppresses the audit log entry, so it is safe even for enforcing.
+dontaudit mtk_hal_camera default_prop:file { read open getattr map };

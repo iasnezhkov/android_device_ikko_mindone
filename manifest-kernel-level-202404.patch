@@ -1,0 +1,9 @@
+--- a/device/ikko/mindone/manifest.xml	2026-09-01 21:27:05
++++ b/device/ikko/mindone/manifest.xml	2026-09-02 01:51:20
+@@ -502,5 +502,5 @@
+     <sepolicy>
+         <version>31.0</version>
+     </sepolicy>
+-    <kernel target-level="6"/>
++    <kernel target-level="202404"/>
+ </manifest>

@@ -1,0 +1,91 @@
+name: tree hygiene
+
+# This repository has one rule that cannot be relaxed: it must never contain a vendor blob.
+# ~1300 proprietary files are needed to build, every one of them extracted by the user from
+# their own device, and a single one committed by accident turns a publishable tree into a
+# redistribution of someone else's property. A person cannot check that by hand on every push.
+#
+# The rest is ordinary hygiene: no binaries, no absolute paths from anyone's machine, English
+# only. This deliberately does not build the ROM -- that needs a 250 GB checkout and hours.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: No proprietary file is committed
+        run: |
+          set -eu
+          fail=0
+          # Column 1 of proprietary-files.txt is the source path on the device; anything after
+          # ':' is where it is installed. Either spelling appearing as a real file here is a leak.
+          while IFS= read -r line; do
+            case "$line" in ''|'#'*) continue ;; esac
+            src=${line%%:*}
+            src=${src#-}
+            for p in "$src" "${line#*:}"; do
+              [ -n "$p" ] || continue
+              if [ -f "$p" ]; then
+                echo "proprietary file committed: $p"; fail=1
+              fi
+            done
+          done < proprietary-files.txt
+          [ "$fail" = 0 ] || { echo "blobs must never be committed -- see CONTRIBUTING.md"; exit 1; }
+
+      - name: No binaries
+        run: |
+          set -eu
+          fail=0
+          while IFS= read -r f; do
+            case "$f" in
+              *.apk|*.so|*.ko|*.img|*.bin|*.jar) echo "binary committed: $f"; fail=1; continue ;;
+            esac
+            case "$(file -b "$f")" in
+              *ELF*|*"ar archive"*|*"Zip archive"*) echo "binary committed: $f"; fail=1 ;;
+            esac
+          done < <(git ls-files)
+          [ "$fail" = 0 ] || exit 1
+
+      - name: No absolute paths from a developer machine
+        run: |
+          set -eu
+          if git grep -nIE '/(home|Users)/[^ /]+/' -- . ':!proprietary-files.txt' ':!*.patch'; then
+            echo "absolute paths from someone's machine do not belong in a published tree"
+            exit 1
+          fi
+
+      - name: English only
+        run: |
+          set -eu
+          if git grep -nIP '[\x{0400}-\x{04FF}]' -- .; then
+            echo "non-English text found -- code and comments here are English only"
+            exit 1
+          fi
+
+      - name: Every docs/ reference resolves to a file that is here
+        run: |
+          set -eu
+          fail=0
+          for ref in $(git grep -hoE 'docs/[A-Za-z0-9_-]+\.md' | sort -u); do
+            [ -f "$ref" ] || { echo "comment points at a file this repository does not contain: $ref"; fail=1; }
+          done
+          [ "$fail" = 0 ] || { echo "use a bare marker, not a path -- see CONTRIBUTING.md"; exit 1; }
+
+      - name: Every XML parses
+        run: |
+          set -eu
+          fail=0
+          for f in $(git ls-files '*.xml'); do
+            python3 -c "import sys,xml.etree.ElementTree as E; E.parse(sys.argv[1])" "$f" || {
+              echo "not well-formed: $f"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Python tools parse
+        run: |
+          for f in *.py; do python3 -m py_compile "$f"; done

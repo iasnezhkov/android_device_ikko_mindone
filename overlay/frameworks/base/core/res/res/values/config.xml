@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- mindone (06.09, F3837): the panel exposes a single 1080x1240 @ 96 Hz mode. Without this overlay the A16
+     framework caps the rate at 60 Hz, and SurfaceFlinger renders at a 96/2 = 48 fps divisor ("as if it were 60 or
+     less"). Peak 96, default 0 = the peak acts as the base rate (otherwise 60 again yields a 48 divisor). -->
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <integer name="config_defaultPeakRefreshRate">96</integer>
+    <integer name="config_defaultRefreshRate">0</integer>
+
+    <!-- 🔴 09.09 (F4013): config_biometric_sensors is NOT needed here and would be harmful.
+         It feeds the addHidlSensors() branch in AuthService, while our sensor arrives via the other
+         branch, addAidlSensors() from ServiceManager.getDeclaredInstances(IFingerprint.DESCRIPTOR), and
+         that one already works (in the log: "IFingerprint instance found, a.length=1"). Both branches
+         populate the SAME list, so an entry of 0:2:15 would add a SECOND sensor with the same id.
+         The real reason the fingerprint was not reaching the framework was an undeclared
+         android.hardware.fingerprint feature: SystemServer only starts FingerprintService
+         when hasFeatureFingerprint is true, hence "AuthService: Fingerprint configuration exists,
+         but FingerprintService is null". Fixed by the permissions file in device.mk. -->
+    <!-- MINDONE 12.09 (F4169): without this the framework assumes the device has hardware keys
+         (AOSP default is false), does not create the navigation bar, and the back gesture does not
+         work at all: EdgeBackGestureHandler mIsEnabled=false. Verified live via qemu.hw.mainkeys=0. -->
+    <bool name="config_showNavigationBar">true</bool>
+</resources>

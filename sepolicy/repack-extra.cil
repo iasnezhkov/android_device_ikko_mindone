@@ -1,0 +1,54 @@
+;; mindone - CIL equivalent of sepolicy/vendor/*.te for repackaging without soong (appended to the end
+;; of VENDOR/etc/selinux/vendor_sepolicy.cil; precompiled_sepolicy is removed, init compiles the CIL).
+(genfscon sysfs "/devices/platform/eta6965_chg/power_supply" (u object_r sysfs_batteryinfo ((s0) (s0))))
+; mindone 08.09 (F3975): the same class - the charger type detector (mtk_charger_type)
+(genfscon sysfs "/devices/platform/soc/10026000.pwrap/10026000.pwrap:mt6366/mtk-charger-detection/power_supply" (u object_r sysfs_batteryinfo ((s0) (s0))))
+(allow mtk_hal_c2 custom_version_prop (file (read open getattr map)))
+(allow vendor_init vendor_userdir_file (dir (write add_name create)))
+(typeattributeset proc_type (proc_battery_cmd))
+(allow hal_keymint_default tkcore_admin_device (chr_file (read write open ioctl)))
+(typeattributeset proc_type (proc_aed))
+(allow vendor_init mtk_radio_device (lnk_file (unlink)))
+(allow system_suspend sysfs_batteryinfo (file (read open getattr)))
+(allow system_suspend sysfs_batteryinfo (dir (read open search getattr)))
+(allow hal_gatekeeper_default hal_gatekeeper_hwservice (hwservice_manager (find)))
+(allow hal_fingerprint_default hal_fingerprint_hwservice (hwservice_manager (find)))
+; mindone 09.09 (F4059): the proximity sensor registered as a power supply - 69 hal_health_default denials
+(genfscon sysfs "/devices/virtual/hf_manager/hf_manager/sar_cali" (u object_r sysfs_batteryinfo ((s0) (s0))))
+; mindone 09.09 (F4059/F4063): rules that PASSED the AOSP neverallow check (secilc without -N).
+; Five "obvious" property-read rules did NOT pass the check and are not included here - see F4063.
+(typetransition hal_fingerprint_default vendor_data_file dir "silead" fingerprint_vendor_data_file)
+(allow hal_fingerprint_default vendor_data_file (dir (search write add_name)))
+(allow hal_fingerprint_default fingerprint_vendor_data_file (dir (create open read write search add_name remove_name getattr setattr rmdir)))
+(allow hal_fingerprint_default fingerprint_vendor_data_file (file (create open read write getattr setattr unlink rename append map lock ioctl)))
+(allow hal_fingerprint_default sysfs_batteryinfo (dir (search)))
+(allow hal_fingerprint_default sysfs_batteryinfo (file (read open getattr)))
+(allow system_server sysfs_vibrator (file (read open getattr)))
+(allow fuelgauged_nvram sysfs_dt_firmware_android (dir (search)))
+(allow fuelgauged_nvram sysfs_dt_firmware_android (file (read open getattr)))
+(allow init debugfs_bootreceiver_tracing (dir (write add_name)))
+
+; mindone 12.09 (F4136): mirror of the new sepolicy/vendor/*.te rules for fast repackaging
+; without a full ROM build (same intent as earlier in this file for older fixes).
+; dontaudit - generic platform contexts, allow is never granted to them anywhere (neverallow, F3908).
+(dontaudit mtk_hal_camera default_prop (file (read open getattr map)))
+(dontaudit mtk_hal_c2 misctrl_prop (file (read open getattr map)))
+(dontaudit mtk_hal_c2 logdr_socket (sock_file (write)))
+(dontaudit mediacodec default_prop (file (read open getattr map)))
+(dontaudit vpud_native default_prop (file (read open getattr map)))
+(dontaudit gmscore_app oem_unlock_prop (file (open getattr map)))
+(dontaudit gmscore_app vendor_default_prop (file (open getattr map)))
+(dontaudit gmscore_app adbd_prop (file (read open getattr map)))
+; vendor_default_prop / net_dns_prop are NOT platform types, allow here does not violate neverallow,
+; by the same reasoning as in audioserver.te/surfaceflinger.te/cameraserver.te/bip.te.
+; cameraserver has already been confirmed by a live experiment, F4068 (09.09, manual chcon + setenforce 1).
+(allow audioserver vendor_default_prop (file (read open getattr map)))
+(allow surfaceflinger vendor_default_prop (file (read open getattr map)))
+(allow cameraserver vendor_default_prop (file (read open getattr map)))
+(allow bip net_dns_prop (file (read open getattr map)))
+; hal_fingerprint_default: our own fingerprint property (Silead) - the type is declared right here, CIL
+; does not label file paths (file_contexts is separate; for a repackage it too will have to be chcon'd
+; by hand onto /vendor/bin/mindone-bootlog.sh and the property file - this .cil only patches the policy).
+(type vendor_silead_fp_prop)
+(typeattributeset property_type (vendor_silead_fp_prop))
+(allow hal_fingerprint_default vendor_silead_fp_prop (property_service (set)))

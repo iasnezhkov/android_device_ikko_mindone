@@ -1,0 +1,13 @@
+# mindone 12.09 (F4136): surfaceflinger reads a property under the generic vendor context
+# vendor_default_prop (open/getattr/map were recorded, read did not appear in the sample - likely
+# due to avc cache deduplication of an identical decision, see the methodology in the fact log). The same
+# class as audioserver.te - vendor_default_prop is not a platform type, allow does not violate an AOSP
+# neverallow (see the reasoning there). 🔴 Not verified by a build - see audioserver.te for the fallback to dontaudit.
+# 12.09: allow coredomain -> vendor_default_prop violates neverallow (an internal vendor
+# type); until a public property type exists, use dontaudit. Functionally unchanged in permissive.
+# 🔴 14.09 18:25: the Q17 "correction" (get_prop -> vendor_default_prop) FAILED the build:
+# 6 neverallow violations at system/sepolicy/{private,public}/property.te -- vendor_default_prop is a
+# vendor-INTERNAL type and coredomain must not read it (F4444). Reverted to dontaudit, which is what the
+# 12.09 note above already prescribed. This only silences the log line; the read itself was never needed
+# (F4068: enforcing worked without it).
+dontaudit surfaceflinger vendor_default_prop:file { read open getattr map };

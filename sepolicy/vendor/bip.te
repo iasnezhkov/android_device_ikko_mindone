@@ -1,0 +1,9 @@
+# mindone 12.09 (F4136): the bip daemon (MTK Bluetooth IP/tethering) reads the property net_dns_prop
+# (1 read/open/getattr/map denial per boot, device/logs/catch-0911-185910/dmesg.txt.gz) - likely
+# polling DNS for Bluetooth internet sharing. net_dns_prop is not on the list of platform
+# types blocked by neverallow (default_prop/misctrl_prop/custom_version_prop/oem_unlock_prop) -
+# a plain allow is appropriate here. 🔴 Not verified by a build - see audioserver.te for the fallback
+# to dontaudit if the next build fails on this rule.
+# 13.09: build failure - private/domain.te neverallows every domain but dumpstate/init/system_server/vendor_init
+# to read net_dns_prop (the property is being removed upstream). dontaudit is the only option left.
+dontaudit bip net_dns_prop:file { read open getattr map };

@@ -1,0 +1,4 @@
+service vendor.fingerprint-mindone /vendor/bin/hw/android.hardware.biometrics.fingerprint-service.mindone
+    class early_hal
+    user system
+    group system input

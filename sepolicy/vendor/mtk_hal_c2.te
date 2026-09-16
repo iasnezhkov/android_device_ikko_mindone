@@ -1,0 +1,29 @@
+# stock codec2 HAL reads the MTK custom version property (ROM #9 avc)
+# 🔴 07.09 (F3908): rule REMOVED - it violates an AOSP neverallow and breaks the build
+# (`libsepol.report_failure` -> `Error while expanding policy`). Cannot be restored:
+# neverallow is a platform restriction, not a gap on our part. If access is genuinely needed,
+# solve it via relabeling (our own label instead of the platform one), not an allow on top of a denial.
+# get_prop(mtk_hal_c2, custom_version_prop)
+
+# mindone 12.09 (F4136): the same story for two other generic platform contexts -
+# misctrl_prop (7-9 read/open/getattr/map denials per boot) and custom_version_prop above - both
+# visible in device/logs/catch-0911-185910, catch-0912-053819, exp-0911/exp9-selinux.txt. dontaudit,
+# unlike allow/get_prop, grants no permission and does not trip neverallow - safe even for
+# enforcing. The codec WORKS despite these denials (F3153/F3174 record a completely different cause
+# of video problems - VCP/IOMMU, not properties).
+# 13.09: misctrl_prop is a private platform type, unknown to vendor policy - rule dropped (build failure 07:23).
+
+# mindone 12.09 (F4136): mtk_hal_c2 tries to write directly to logd's log-reading socket
+# (4 write denials per boot, sock_file "logdr"). logdr_socket is not the channel a HAL
+# should use for logging (the normal path is liblog/__android_log_write, not a direct
+# connection to the dumpstate/logcat socket); there is no reason to think the HAL stops working
+# without this socket (c2@1.2-mediatek crashes, F4135, are explained by something else - a Scudo
+# misaligned pointer). dontaudit is safe for enforcing and does not create a new channel for apps
+# to read other apps' logs.
+dontaudit mtk_hal_c2 logdr_socket:sock_file write;
+# 14.09 (Q17): missing dontaudit lines restored from the denial inventory (SEPOLICY-ENFORCING-1409)
+# 🔴 14.09 19:00 removed (F4445): references an undefined type -- custom_version_prop is declared nowhere in this tree, checkpolicy fails the whole policy.
+# was: dontaudit mtk_hal_c2 custom_version_prop:file { read open getattr map };
+# 🔴 14.09 19:00 removed (F4445): references an undefined type -- misctrl_prop is declared nowhere in this tree, checkpolicy fails the whole policy.
+# was: dontaudit mtk_hal_c2 misctrl_prop:file { read open getattr map };
+dontaudit mtk_hal_c2 logd:unix_stream_socket connectto;

@@ -1,0 +1,4 @@
+service vendor.tetheroffload-mindone /vendor/bin/hw/android.hardware.tetheroffload-service.mindone
+    class hal
+    user system
+    group system

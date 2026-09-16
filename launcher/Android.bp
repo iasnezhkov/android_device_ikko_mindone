@@ -1,0 +1,41 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// Prebuilt integration for LineageOS 23.2 / AOSP 16. Build the APK with Gradle
+// (./gradlew :app:assembleSystemRelease), copy it here as Launcher.apk, then add
+// "Launcher" to PRODUCT_PACKAGES. See README.md.
+
+android_app_import {
+    name: "Launcher",
+    apk: "Launcher.apk",
+    privileged: true,
+    // Either keep the APK's own signature (presigned) or re-sign with the platform key
+    // (certificate: "platform") once we need signature-level permissions.
+    presigned: true,
+    dex_preopt: {
+        enabled: true,
+    },
+    system_ext_specific: true,
+    required: [
+        "privapp-permissions-app.launcher.xml",
+        "default-permissions-app.launcher.xml",
+    ],
+}
+
+prebuilt_etc {
+    name: "privapp-permissions-app.launcher.xml",
+    src: "permissions/privapp-permissions-app.launcher.xml",
+    sub_dir: "permissions",
+    filename_from_src: true,
+    system_ext_specific: true,
+}
+
+prebuilt_etc {
+    name: "default-permissions-app.launcher.xml",
+    src: "permissions/default-permissions-app.launcher.xml",
+    sub_dir: "default-permissions",
+    filename_from_src: true,
+    system_ext_specific: true,
+}

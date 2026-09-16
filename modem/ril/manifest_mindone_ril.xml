@@ -1,0 +1,37 @@
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- mind_one minimal RIL, phase 1 skeleton. See README-INTEGRATION.md and RIL-MINIMAL-1409.
+
+     Declares instance "slot1" at android.hardware.radio@1.6::IRadio - the version the
+     framework's own compatibility matrix requires for this exact instance
+     (compatibility_matrix.6.xml, target-level 6, matching this device's
+     manifest.xml <manifest target-level="6">: "1.5-6" for slot1/slot2/slot3) and the version the
+     stock librilfusion.so itself links (readelf -d shows android.hardware.radio@1.0.so through
+     @1.6.so as NEEDED). See RIL-MINIMAL-1409 "HAL version choice" for the full citation
+     trail, including the live-device confirmation that this ROM's telephony framework binds
+     legacy HIDL IRadio directly (no separate "radio-compat" AIDL-wrapper service is built or
+     declared for this device) - so no additional compat component is needed on our side.
+
+     IMPORTANT: this fragment is NOT additive. The device's real manifest.xml
+     (device/ikko/mindone/manifest.xml:148-171, not touched by this task) already declares
+     <instance>slot1</instance> under the SAME hal/version, backed by the stock blob
+     (librilfusion.so via mtkfusionrild). Two services cannot simultaneously own one HIDL
+     instance name - swapping this in for real integration means REPLACING that manifest
+     entry's backing service (or, for the A/B test in README-INTEGRATION.md, stopping the stock
+     service and starting ours in its place without touching the manifest at all, since the
+     interface/version/instance triple is identical). This file exists so the fragment's exact
+     shape is on record; it is not applied anywhere by this task. -->
+<manifest version="4.0" type="device" target-level="6">
+    <hal format="hidl">
+        <name>android.hardware.radio</name>
+        <transport>hwbinder</transport>
+        <version>1.6</version>
+        <interface>
+            <name>IRadio</name>
+            <instance>slot1</instance>
+        </interface>
+        <fqname>@1.6::IRadio/slot1</fqname>
+    </hal>
+</manifest>

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+  Gesture navigation bar geometry for our short screen (mind_one; 15.09 F4459, extended 15.09
+  evening).
+
+  WHY: a photo of the keyboard on the device shows a dead strip under it, holding only the gesture
+  pill. That strip is the navigation bar inset: the IME window is laid out above it, so the
+  keyboard can never reach the bottom edge. AOSP reserves 48dp for it
+  (frameworks/base/core/res/res/values/dimens.xml:62), and everything else follows:
+
+      navigation_bar_frame_height   -> @dimen/navigation_bar_height   (the inset windows resize around)
+      navigation_bar_gesture_height -> @dimen/navigation_bar_frame_height (bottom swipe start area)
+
+  48dp is a normal-phone figure. Our usable height is 523dp (480 x 551dp at density 360, minus the
+  status bar - measured in F4014, see the LatinIME overlay next door), so the stock bar eats 9.2% of
+  the screen for a handle that is drawn ~2dp thick.
+
+  FIRST PASS (15.09 day) set navigation_bar_height to 24dp. Because of the chain above that moved
+  all three numbers at once, which halved the dead strip but could not remove it: the inset and the
+  swipe area were still the same number, and the swipe area cannot go to zero.
+
+  SECOND PASS (15.09 evening, requirement: "remove the empty space under the keyboard, and the white bar
+  too"): break the chain and set the two independently.
+
+      navigation_bar_frame_height   = 0dp   -> no inset at all, so the keyboard and every app
+                                               reach the physical bottom edge
+      navigation_bar_gesture_height = 24dp  -> the bottom swipe START region is unchanged from the
+                                               first pass, so home/back gestures behave exactly as
+                                               they do today
+      navigation_bar_height         = 24dp  -> left alone; it is what three-button mode lays out
+                                               against, and that is the fallback if gestures ever
+                                               misbehave
+
+  The pill itself is removed separately and without touching geometry - see the SystemUI colors
+  overlay next door, which paints the handle transparent.
+
+  🔴 Not verified on the device before the build: resource overlays only take effect in a built
+  image, so this is the one change here that ships untested. If the home swipe stops working, the
+  way out needs no rebuild - Settings > System > Gestures > System navigation > three-button mode.
+  And the single number to raise is navigation_bar_gesture_height.
+-->
+<resources>
+    <dimen name="navigation_bar_height">24dp</dimen>
+    <dimen name="navigation_bar_height_landscape">24dp</dimen>
+
+    <!-- The inset apps and the IME are laid out above. Zero = no dead strip. -->
+    <dimen name="navigation_bar_frame_height">0dp</dimen>
+    <dimen name="navigation_bar_frame_height_landscape">0dp</dimen>
+
+    <!-- Explicit, because it would otherwise inherit the 0dp above and take the gestures with it. -->
+    <dimen name="navigation_bar_gesture_height">24dp</dimen>
+</resources>

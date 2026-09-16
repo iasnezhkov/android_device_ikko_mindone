@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+  🔴 08.09 (F3937): granting GMS the privileged permission WRITE_DEVICE_CONFIG.
+
+  The reasoning is functional, not "stock does the same". Measured on the live device: in a single
+  boot, PlatformConfigurator from GMS gets
+  "java.lang.SecurityException: Permission denial to mutate flag, must have root,
+  WRITE_DEVICE_CONFIG, or WRITE_ALLOWLISTED_DEVICE_CONFIG" 334 times, and logs
+  "setProperties failed with SecurityException" 167 times. So the standard configuration delivery
+  mechanism (Phenotype) does not work at all, not "works with warnings".
+
+  Verified that the cause really is the missing grant, not something else:
+    - `dumpsys package com.google.android.gms` shows the app DECLARES
+      android.permission.WRITE_DEVICE_CONFIG;
+    - in /product/etc/permissions/privapp-permissions-google-product.xml (a file from MindTheGapps)
+      com.google.android.gms is listed with 117 permissions, and WRITE_DEVICE_CONFIG is NOT among them
+      (grep over the whole file - 0 matches).
+
+  Why a separate file instead of editing the GApps file: Android's privapp-permissions is MERGED from
+  every file in the directory, so our addition does not require touching someone else's package and is
+  not lost when MindTheGapps is updated.
+-->
+<permissions>
+    <privapp-permissions package="com.google.android.gms">
+        <permission name="android.permission.WRITE_DEVICE_CONFIG"/>
+    </privapp-permissions>
+</permissions>

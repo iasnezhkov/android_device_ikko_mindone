@@ -1,0 +1,34 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// tetheroffload bridge: AIDL android.hardware.tetheroffload V1 (IOffload) over the stock HIDL
+// tetheroffloadservice (config@1.0 IOffloadConfig + control@1.1 IOffloadControl).
+// Bridge registry - BRIDGES-HIDL-AIDL.
+// Review 14.09 (BRIDGES-REVIEW-1409): +OffloadHidlConn.cpp (death/reconnect).
+cc_binary {
+    name: "android.hardware.tetheroffload-service.mindone",
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["android.hardware.tetheroffload-service.mindone.rc"],
+    vintf_fragments: ["android.hardware.tetheroffload-service.mindone.xml"],
+    srcs: [
+        "OffloadBridge.cpp",
+        "OffloadHidlConn.cpp",
+        "service.cpp",
+    ],
+    shared_libs: [
+        "android.hardware.tetheroffload-V1-ndk",
+        "android.hardware.tetheroffload.config@1.0",
+        "android.hardware.tetheroffload.control@1.0",
+        "android.hardware.tetheroffload.control@1.1",
+        "libbase",
+        "libbinder_ndk",
+        "libcutils",
+        "libhidlbase",
+        "liblog",
+        "libutils",
+    ],
+    cflags: ["-Wall", "-Werror"],
+}

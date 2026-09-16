@@ -1,0 +1,8 @@
+# vendor rc creates /data/vendor_de/* subdirectories (ROM №9 avc: write on vendor_userdir_file dir)
+# 🔴 07.09 (F3908): rule REMOVED - it violates an AOSP neverallow and breaks the build
+# (`libsepol.report_failure` -> `Error while expanding policy`). Cannot be restored:
+# neverallow is a platform restriction, not a gap on our part. If access is genuinely needed,
+# solve it via relabeling (our own label instead of the platform one), not an allow on top of a denial.
+# allow vendor_init vendor_userdir_file:dir { write add_name create };
+# vendor rc re-creates the modem pseudo-tty symlink /dev/radio/pttyims on restart (audit A16 §4.6)
+allow vendor_init mtk_radio_device:lnk_file unlink;

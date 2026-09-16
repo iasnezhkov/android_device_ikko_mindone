@@ -1,0 +1,15 @@
+# mindone 12.09 (F4136): cameraserver reads a property under the generic vendor context
+# vendor_default_prop (1 read/open denial per boot, device/logs/catch-0912-053819/logcat-all.txt).
+# The same class as audioserver.te/surfaceflinger.te - this was already analyzed live: F4068
+# (09.09, live enforcing experiment) recorded THIS SAME rule as the only real residual
+# denial ("cameraserver -> vendor_default_prop:file {read}, a single property read, F4066") after
+# switching the device to enforcing - meaning camera, audio, display, Wi-Fi, fingerprint and NFC all
+# worked without this access. This rule closes exactly that gap.
+# 12.09: allow coredomain -> vendor_default_prop violates neverallow (an internal vendor
+# type); until a public property type exists, use dontaudit. Functionally unchanged in permissive.
+# 🔴 14.09 18:25: the Q17 "correction" (get_prop -> vendor_default_prop) FAILED the build:
+# 6 neverallow violations at system/sepolicy/{private,public}/property.te -- vendor_default_prop is a
+# vendor-INTERNAL type and coredomain must not read it (F4444). Reverted to dontaudit, which is what the
+# 12.09 note above already prescribed. This only silences the log line; the read itself was never needed
+# (F4068: enforcing worked without it).
+dontaudit cameraserver vendor_default_prop:file { read open getattr map };

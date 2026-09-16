@@ -1,0 +1,39 @@
+# mindone vendor file contexts
+/vendor/bin/hw/android\.hardware\.gatekeeper-service\.mindone   u:object_r:hal_gatekeeper_default_exec:s0
+/vendor/bin/hw/android\.hardware\.biometrics\.fingerprint-service\.mindone   u:object_r:hal_fingerprint_default_exec:s0
+/vendor/bin/hw/android\.hardware\.secure_element-service\.mindone   u:object_r:hal_secure_element_default_exec:s0
+/vendor/bin/hw/android\.hardware\.tetheroffload-service\.mindone   u:object_r:hal_tetheroffload_default_exec:s0
+
+# mindone 08.09 (F3973-add): the fingerprint HIDL backend (the Silead blob) is installed under its own name
+# (...-service.silead), because the AOSP path is taken by the reference module and causes a kati collision.
+# The domain is the same as our AIDL bridge: the bridge is the HIDL client, the backend is the server, both hal_fingerprint_default.
+/vendor/bin/hw/android\.hardware\.biometrics\.fingerprint@2\.1-service\.silead   u:object_r:hal_fingerprint_default_exec:s0
+
+# mindone 09.09 (F4059): the fingerprint node. The MediaTek base labels /dev/goodix_fp, but we have
+# Silead, and our node keeps the GENERIC label device - hence 5 ioctl denials on hal_fingerprint_default.
+# The type fingerprint_device is already declared in the base (device.te), and the permission
+# `allow hal_fingerprint_default fingerprint_device:chr_file rw_file_perms` is right there too - only
+# the label was missing. Verified on the device: ls -Z /dev/silead_fp -> u:object_r:device:s0.
+/dev/silead_fp   u:object_r:fingerprint_device:s0
+# mindone 09.09 (F4059): the BIP service socket. The MediaTek base labels /dev/socket/bip, but our
+# stock startup file declares a socket named bip_socket - the pattern does not match, and it
+# gets the generic label socket_device (5 init denials on create/setattr/unlink).
+/dev/socket/bip_socket   u:object_r:bip_socket:s0
+# mindone 09.09 (F4059): fingerprint data, its own type (see file.te)
+/data/vendor/silead(/.*)?   u:object_r:fingerprint_vendor_data_file:s0
+
+# mindone 12.09 (F4136): a dedicated type for the boot log collector (see init_extra.te) -
+# without it init cannot execute it without violating the neverallow on executing the generic vendor_file.
+/vendor/bin/mindone-bootlog\.sh   u:object_r:mindone_bootlog_exec:s0
+
+# 13.09: our AIDL sensors HAL runs in the MTK hal_sensors_default domain (it already owns /dev/hf_manager)
+/vendor/bin/hw/android\.hardware\.sensors-service\.mindone   u:object_r:hal_sensors_default_exec:s0
+
+# Open modem userspace pieces (modem/): they take the stock exec labels so the existing
+# MediaTek/AOSP domains (rild, gsm0710muxd, ccci_mdinit/fsd/rpcd in device/mediatek/sepolicy_vndr)
+# apply unchanged -- same device nodes, same properties, same sockets (14.09, RIL-MINIMAL-1409).
+/vendor/bin/hw/android\.hardware\.radio@1\.6-service\.mindone   u:object_r:rild_exec:s0
+/vendor/bin/mindone_mux         u:object_r:gsm0710muxd_exec:s0
+/vendor/bin/mindone_mdinit      u:object_r:ccci_mdinit_exec:s0
+/vendor/bin/mindone_fsd         u:object_r:ccci_fsd_exec:s0
+/vendor/bin/mindone_rpcd        u:object_r:ccci_rpcd_exec:s0

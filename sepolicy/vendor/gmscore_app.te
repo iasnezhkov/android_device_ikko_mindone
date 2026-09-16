@@ -1,0 +1,10 @@
+# mindone 12.09 (F4136, low priority): GMS Core tries to read three generic
+# platform/service property contexts - oem_unlock_prop (bootloader unlock check),
+# vendor_default_prop, adbd_prop (device/logs/catch-0911-185910, catch-0912-053819). This is standard
+# Google Play Services behavior on any device, not a defect of ours (an app domain, not a HAL);
+# oem_unlock_prop is explicitly documented elsewhere as a platform type under neverallow - no allow goes here.
+# dontaudit only suppresses background noise in the log before switching to enforcing, it changes
+# nothing functionally (GMS tolerates the denial anyway).
+dontaudit gmscore_app oem_unlock_prop:file { open getattr map };
+dontaudit gmscore_app vendor_default_prop:file { open getattr map };
+# 13.09: adbd_prop private platform type(s), unknown to vendor policy (checkpolicy: unknown type) - dropped.

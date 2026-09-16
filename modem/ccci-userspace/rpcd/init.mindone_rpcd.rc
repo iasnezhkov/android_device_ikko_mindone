@@ -1,0 +1,10 @@
+# mindone_rpcd init service -- identical to the existing stock
+# init.cccirpcd.rc stanza (build environment: vendor/etc/init/init.cccirpcd.rc),
+# reproduced here verbatim since replacing the binary at
+# /vendor/bin/ccci_rpcd needs no init.rc change at all.
+
+service vendor.ccci_rpcd /vendor/bin/ccci_rpcd 0
+    user radio
+    group radio system
+    class core
+    oneshot

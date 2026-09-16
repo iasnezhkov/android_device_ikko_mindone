@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!-- MINDONE 15.09: remove the keyboard's own bottom padding (requirement: "take the emptiness below
+     the keyboard away").
+
+     Two separate gaps sit under the bottom key row, and both had to go:
+       1. the navigation bar inset - handled in the framework dimens overlay, which sets
+          navigation_bar_frame_height to 0 while keeping the gesture area;
+       2. this one, LatinIME's own padding, applied through themes-common.xml as
+          keyboardBottomPadding -> @fraction/config_keyboard_bottom_padding_holo.
+
+     Stock is 4.669%p of the keyboard height. On our 150dp keyboard that is ~7dp of dead space
+     under the last row - small on a normal phone, but this screen only has 523dp of usable
+     height (F4014), so it is worth reclaiming. Zero puts the bottom row against the screen edge,
+     which is exactly the intent.
+
+     If the bottom row ever feels too easy to mis-hit at the very edge, 1-2%p is the middle
+     ground; the keyboard height itself is next door in dimens.xml.
+-->
+<resources>
+    <fraction name="config_keyboard_bottom_padding_holo">0%p</fraction>
+</resources>

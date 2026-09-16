@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Mon, 07 Sep 2026 12:00:00 +0300
+Subject: [PATCH] mindone: soong_build honours GOMEMLIMIT (bounded analysis memory in the 24 GB guest)
+
+Regenerated 13.09 from the LineageOS working tree (the earlier plain diff no longer matched).
+---
+diff --git a/bootstrap/bootstrap.go b/bootstrap/bootstrap.go
+index 72dc538..08e6037 100644
+--- a/bootstrap/bootstrap.go
++++ b/bootstrap/bootstrap.go
+@@ -139,7 +139,7 @@ var (
+ 			Command: `cd "$$(dirname "$builder")" && ` +
+ 				`BUILDER="$$PWD/$$(basename "$builder")" && ` +
+ 				`cd / && ` +
+-				`env -i $env "$$BUILDER" ` +
++				`env -i GOMEMLIMIT=9GiB GOGC=50 $env "$$BUILDER" ` +   // mindone (F3828): env -i otherwise leaves soong_build's Go heap unbounded
+ 				`    --top "$$TOP" ` +
+ 				`    --soong_out "$soongOutDir" ` +
+ 				`    --out "$outDir" ` +
+-- 
+2.43.0

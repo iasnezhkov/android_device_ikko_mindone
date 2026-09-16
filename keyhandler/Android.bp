@@ -1,0 +1,37 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+//
+// mindone: device key handler for the flip-camera module's hall switch (F4296).
+// See CAMERA-FLIP-PLAN-1309.
+//
+// R8 MUST be disabled: CameraFlipKeyHandler is instantiated by PhoneWindowManager through
+// reflection (PathClassLoader + Class.getConstructor(Context.class)), not called from any code in
+// this module. For a privileged/platform android_app the default IS shrinking, so R8 stripped BOTH
+// classes as dead code -> the APK had no classes.dex -> dex2oat/dexpreopt failed
+// ("Failed to find entry 'classes'", F4441). An explicit optimize{enabled:false} keeps the code.
+//
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+android_app {
+    name: "MindOneKeyHandler",
+
+    srcs: ["java/**/*.java"],
+    manifest: "AndroidManifest.xml",
+
+    optimize: {
+        enabled: false,
+    },
+
+    platform_apis: true,
+    // Must match packages/apps/Aperture's certificate (see the Aperture patch) so the
+    // "signature" permission gating the camera-flip broadcast is granted to it.
+    certificate: "platform",
+    system_ext_specific: true,
+    privileged: true,
+}

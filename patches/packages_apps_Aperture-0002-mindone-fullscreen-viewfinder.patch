@@ -1,0 +1,65 @@
+From d0e359c446467147e1af7fc084a7ed9f1310fe97 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Sun, 13 Sep 2026 18:03:59 +0300
+Subject: [PATCH] mindone: full-screen viewfinder on the near-square display
+
+The 1080x1240 panel is almost square; the 4:3 preview did not fit it in height and was letterboxed,
+and three stacked bottom panels ate more than 200 dp of it. The PreviewView now spans the whole
+screen and uses fillCenter: the viewfinder is cropped (centered), the captured frame is untouched.
+The three bottom panels sit over the picture with a light 20% black tint so the white controls stay
+readable on bright scenes while the picture stays clearly visible; the quick-settings bar is
+trimmed from 72 to 56 dp.
+
+Change-Id: I3273aea60e71d3df42683ca6f73eff7c5f0c482e
+---
+ app/src/main/res/layout/activity_camera.xml | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/app/src/main/res/layout/activity_camera.xml b/app/src/main/res/layout/activity_camera.xml
+index d5f291f..7b53e01 100644
+--- a/app/src/main/res/layout/activity_camera.xml
++++ b/app/src/main/res/layout/activity_camera.xml
+@@ -18,11 +18,11 @@
+         android:layout_width="0dp"
+         android:layout_height="0dp"
+         android:soundEffectsEnabled="false"
+-        app:layout_constraintBottom_toTopOf="@+id/secondaryBottomBarLayout"
++        app:layout_constraintBottom_toBottomOf="parent"
+         app:layout_constraintEnd_toEndOf="parent"
+         app:layout_constraintStart_toStartOf="parent"
+         app:layout_constraintTop_toTopOf="parent"
+-        app:scaleType="fitCenter" />
++        app:scaleType="fillCenter" />
+ 
+     <org.lineageos.aperture.ui.views.PreviewBlurView
+         android:id="@+id/previewBlurView"
+@@ -209,8 +209,9 @@
+ 
+     <androidx.constraintlayout.widget.ConstraintLayout
+         android:id="@+id/secondaryBottomBarLayout"
++        android:background="#33000000"
+         android:layout_width="0dp"
+-        android:layout_height="72dp"
++        android:layout_height="56dp"
+         app:layout_constraintBottom_toTopOf="@+id/primaryBarLayout"
+         app:layout_constraintEnd_toEndOf="parent"
+         app:layout_constraintStart_toStartOf="parent">
+@@ -268,6 +269,7 @@
+ 
+     <androidx.constraintlayout.widget.ConstraintLayout
+         android:id="@+id/primaryBarLayout"
++        android:background="#33000000"
+         android:layout_width="0dp"
+         android:layout_height="wrap_content"
+         android:paddingTop="16dp"
+@@ -355,6 +357,7 @@
+ 
+     <org.lineageos.aperture.ui.views.CameraModeSelectorLayout
+         android:id="@+id/cameraModeSelectorLayout"
++        android:background="#33000000"
+         android:layout_width="0dp"
+         android:layout_height="wrap_content"
+         app:layout_constraintBottom_toBottomOf="parent"
+-- 
+2.43.0
+

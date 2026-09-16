@@ -1,0 +1,11 @@
+# mindone (F4406): the stock init_connectivity.rc starts wmt_launcher with "-o 1" ("Power on MTK WCN
+# chip while boot up"), which sets the driver's always-power-on flag (wmt_dbg 28 1). With that flag the
+# connsys chip is never powered off when every function (Wi-Fi/BT/GPS/FM) is off, its MCU never sleeps and
+# it wakes the AP immediately at every suspend entry (104 592 cycles, -44 % per night). Start the launcher
+# without "-o": the chip is powered on demand (Wi-Fi on -> CONSYS PWR-ON, off -> PWR-OFF, verified live
+# 14.09) and the AP sleeps with the radios off.
+service wmt_launcher /vendor/bin/wmt_launcher -p /vendor/firmware/
+    override
+    class early_hal
+    user system
+    group system

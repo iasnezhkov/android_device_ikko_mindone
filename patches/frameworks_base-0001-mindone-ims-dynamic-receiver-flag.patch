@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Mon, 07 Sep 2026 12:00:00 +0300
+Subject: [PATCH] mindone: IMS dynamic receiver flag (BroadcastController)
+
+Regenerated 13.09 from the LineageOS working tree in git-am format.
+---
+diff --git a/services/core/java/com/android/server/am/BroadcastController.java b/services/core/java/com/android/server/am/BroadcastController.java
+index 31cc49ddf974..6cb9f6762f1e 100644
+--- a/services/core/java/com/android/server/am/BroadcastController.java
++++ b/services/core/java/com/android/server/am/BroadcastController.java
+@@ -458,6 +458,12 @@ class BroadcastController {
+         // not be used generally, so we will be marking them as exported by default
+         boolean requireExplicitFlagForDynamicReceivers = CompatChanges.isChangeEnabled(
+                 DYNAMIC_RECEIVER_EXPLICIT_EXPORT_REQUIRED, callingUid);
++        // MINDONE (F3818/K13): the stock MediaTek ImsService (targetSdk 35, vendor-signed) registers
++        // dynamic receivers without an export flag; the MTK framework tolerates it, AOSP throws and
++        // the IMS app crash-loops. Keep the legacy default (exported) for that package only.
++        if (requireExplicitFlagForDynamicReceivers && "com.mediatek.ims".equals(callerPackage)) {
++            requireExplicitFlagForDynamicReceivers = false;
++        }
+ 
+         // A receiver that is visible to instant apps must also be exported.
+         final boolean unexportedReceiverVisibleToInstantApps =
+-- 
+2.43.0

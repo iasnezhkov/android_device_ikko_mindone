@@ -1,0 +1,14 @@
+# mindone 09.09 (F4059): init writes to the boot receiver's debug tracing directory (2 denials).
+allow init debugfs_bootreceiver_tracing:dir { write add_name };
+
+# mindone 12.09 (F4136): a dedicated type for /vendor/bin/mindone-bootlog.sh (labeled in file_contexts) -
+# see the allow rule below.
+type mindone_bootlog_exec, file_type, vendor_file_type, exec_type;
+
+# mindone 12.09 (F4136): init executes our own boot log collector
+# (rootdir/etc/init.mindone_bootlog.rc, seclabel u:r:su:s0) - 1 execute denial on the generic label
+# vendor_file (device/logs/catch-0911-185910/dmesg.txt.gz). We give a separate type only to this
+# file (file_contexts) instead of allow init vendor_file:file execute - a blanket execute for init
+# over all of vendor_file is very likely to trip another AOSP neverallow (a ban on init executing
+# arbitrary vendor binaries), so we narrowed it to a single file.
+allow init mindone_bootlog_exec:file execute;

@@ -1,0 +1,238 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mind_one
+Date: Sun, 13 Sep 2026 00:00:00 +0000
+Subject: [PATCH] mindone: react to the flip-camera module's hall switch (P131/F4296)
+
+Automatically switch the active CameraX selector between the front and back
+logical camera when org.mindone.keyhandler.CameraFlipKeyHandler reports that
+the flip-camera module's hall switch changed position, both at startup (from
+the Settings.System position left by the last flip) and live while the app is
+running (via a signature-permission-gated broadcast). The manual flip button
+keeps working unchanged.
+
+Also pins Aperture's signing certificate to "platform" so it shares a
+certificate with the device tree's key handler component and is granted the
+signature-level permission gating the broadcast.
+
+See CAMERA-FLIP-PLAN-1309 (mind_one project) for the full design and
+the device-tree side of this feature.
+
+Change-Id: I131f4296000000000000000000000000000mind1
+---
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 639a85e..1e41af2 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -26,6 +26,11 @@
+         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+         android:maxSdkVersion="28" />
+ 
++    <!-- mindone: required to receive the flip-module position broadcast sent by
++         org.mindone.keyhandler.CameraFlipKeyHandler (signature-level permission, see
++         CAMERA-FLIP-PLAN-1309). -->
++    <uses-permission android:name="org.mindone.permission.RECEIVE_CAMERA_FLIP_STATE" />
++
+     <queries>
+         <package android:name="com.google.android.apps.googlecamera.fishfood" />
+         <package android:name="com.google.android.googlequicksearchbox" />
+diff --git a/app/Android.bp b/app/Android.bp
+index b24f014..307e037 100644
+--- a/app/Android.bp
++++ b/app/Android.bp
+@@ -17,6 +17,12 @@ android_app {
+     sdk_version: "36",
+     product_specific: true,
+ 
++    // mindone: must match org.mindone.keyhandler.MindOneKeyHandler's certificate so
++    // the "signature" permission gating the camera-flip broadcast is granted to Aperture (it was
++    // otherwise unsigned/testkey by default here, which does not match "platform"). See
++    // CAMERA-FLIP-PLAN-1309 for why signatureOrSystem was not used instead.
++    certificate: "platform",
++
+     overrides: ["Camera2"],
+ 
+     use_embedded_native_libs: true,
+diff --git a/app/src/main/java/org/lineageos/aperture/CameraActivity.kt b/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
+index edae6e0..e38057a 100644
+--- a/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
++++ b/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
+@@ -8,6 +8,7 @@ package org.lineageos.aperture
+ import android.animation.ValueAnimator
+ import android.app.KeyguardManager
+ import android.content.ClipData
++import android.content.Context
+ import android.content.Intent
+ import android.content.pm.ActivityInfo
+ import android.graphics.BitmapFactory
+@@ -149,6 +150,10 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
+     // View models
+     private val viewModel by viewModels<CameraViewModel>()
+ 
++    // mindone: switches the active camera when the flip-camera module's hall
++    // switch fires while the app is running. See CAMERA-FLIP-PLAN-1309.
++    private val cameraFlipReceiver = MindOneCameraFlip.Receiver { viewModel.setCameraFacing(it) }
++
+     // Views
+     private val aspectRatioButton by lazy { findViewById<Button>(R.id.aspectRatioButton) }
+     private val cameraModeSelectorLayout by lazy { findViewById<CameraModeSelectorLayout>(R.id.cameraModeSelectorLayout) }
+@@ -396,6 +401,21 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
+             viewModel.initialCameraMode = it
+         }
+ 
++        // mindone: default to the flip-camera module's last known physical
++        // position, before any explicit intent/shortcut below can override it. Left untouched
++        // (null) if the module has not been flipped since boot and the kernel does not expose
++        // the boot-time hall level yet - see CAMERA-FLIP-PLAN-1309.
++        MindOneCameraFlip.currentPosition(this)?.let {
++            viewModel.initialCameraFacing = it
++        }
++        registerReceiver(
++            cameraFlipReceiver,
++            MindOneCameraFlip.intentFilter(),
++            MindOneCameraFlip.PERMISSION_RECEIVE,
++            null,
++            Context.RECEIVER_EXPORTED,
++        )
++
+         // Handle intent
+         intent.action?.let {
+             intentActions[it]?.invoke()
+@@ -633,6 +653,9 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
+     }
+ 
+     override fun onDestroy() {
++        // mindone
++        unregisterReceiver(cameraFlipReceiver)
++
+         // Detach CameraController from ScreenFlashView
+         screenFlashView.setController(null)
+ 
+diff --git a/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt b/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
+index 9a59c3c..5f75828 100644
+--- a/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
++++ b/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
+@@ -1269,6 +1269,43 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
+         )
+     }
+ 
++    /**
++     * Switch to the given [cameraFacing] directly, instead of cycling through [flipCamera].
++     *
++     * mindone: used by [org.lineageos.aperture.CameraActivity] to react to the
++     * flip-camera module's hall switch (org.mindone.keyhandler.CameraFlipKeyHandler) while the
++     * app is running. A no-op if [cameraFacing] is already active or no camera provides it -
++     * this is expected to happen briefly around every switch, since the broadcast that reports
++     * the *new* facing and the app's own [flipCamera] both target the same configuration.
++     */
++    fun setCameraFacing(
++        cameraFacing: CameraFacing,
++    ) = viewModelScope.launch {
++        updateConfiguration<CameraConfiguration> { cameraConfiguration ->
++            if (cameraConfiguration.camera.cameraFacing == cameraFacing) {
++                return@updateConfiguration cameraConfiguration
++            }
++
++            val camera = when (cameraFacing) {
++                CameraFacing.FRONT -> cameraRepository.mainFrontCamera
++                CameraFacing.BACK -> cameraRepository.mainBackCamera
++                CameraFacing.UNKNOWN, CameraFacing.EXTERNAL -> null
++            } ?: run {
++                Log.e(LOG_TAG, "No camera available for requested facing $cameraFacing")
++                return@updateConfiguration cameraConfiguration
++            }
++
++            preferencesRepository.lastCameraFacing.value = camera.cameraFacing
++
++            emitEvent(Event.FlipCameraAnimation)
++
++            createInitialCameraConfiguration(
++                camera = camera,
++                cameraMode = cameraConfiguration.cameraMode,
++            )
++        }
++    }
++
+     fun setCameraMode(
+         cameraMode: CameraMode,
+     ) = viewModelScope.launch {
+diff --git a/app/src/main/java/org/lineageos/aperture/MindOneCameraFlip.kt b/app/src/main/java/org/lineageos/aperture/MindOneCameraFlip.kt
+new file mode 100644
+index 0000000..1318bbd
+--- /dev/null
++++ b/app/src/main/java/org/lineageos/aperture/MindOneCameraFlip.kt
+@@ -0,0 +1,75 @@
++/*
++ * SPDX-FileCopyrightText: The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package org.lineageos.aperture
++
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.content.IntentFilter
++import android.provider.Settings
++import org.lineageos.aperture.models.CameraFacing
++
++/**
++ * Bridge to org.mindone.keyhandler.CameraFlipKeyHandler (device tree): the phone
++ * has a single physical camera module that the user flips by hand between a "back" and a
++ * "front" position, tracked by a hall switch. The key handler turns the two kernel key events
++ * from that switch into:
++ *  - a Settings.System integer, [SETTING_CAMERA_FLIPPED], holding the last known position; and
++ *  - a broadcast, [ACTION_CAMERA_FLIPPED], sent every time the position changes.
++ *
++ * The constants below are a literal copy of the contract defined in
++ * device/ikko/mindone/keyhandler/java/org/mindone/keyhandler/CameraFlipContract.java, not a
++ * shared library - Aperture cannot depend on a device-tree-local system component at build
++ * time, and the alternative (a separate small AOSP-wide library module just for five string/int
++ * constants) was judged not worth the extra build surface for a single device. Keep the two
++ * files in sync; see CAMERA-FLIP-PLAN-1309 for the full design.
++ */
++object MindOneCameraFlip {
++    private const val SETTING_CAMERA_FLIPPED = "mindone_camera_flipped"
++    private const val POSITION_BACK = 0
++    private const val POSITION_FRONT = 1
++    private const val POSITION_UNKNOWN = -1
++
++    const val ACTION_CAMERA_FLIPPED = "org.mindone.intent.action.CAMERA_FLIPPED"
++    const val EXTRA_POSITION = "org.mindone.intent.extra.POSITION"
++    const val PERMISSION_RECEIVE = "org.mindone.permission.RECEIVE_CAMERA_FLIP_STATE"
++
++    fun intentFilter() = IntentFilter(ACTION_CAMERA_FLIPPED)
++
++    /**
++     * The position recorded by the key handler as of the last flip, or null if unknown (the
++     * module has not been flipped since this boot and the kernel does not expose the boot-time
++     * hall level yet - see the kernel follow-up in CAMERA-FLIP-PLAN-1309). Falls back to
++     * whatever was last written before the current boot, which may be stale if the module was
++     * flipped while the phone was off; that limitation goes away once the follow-up lands.
++     */
++    fun currentPosition(context: Context): CameraFacing? = toCameraFacing(
++        Settings.System.getInt(context.contentResolver, SETTING_CAMERA_FLIPPED, POSITION_UNKNOWN)
++    )
++
++    private fun positionFromIntent(intent: Intent): CameraFacing? =
++        toCameraFacing(intent.getIntExtra(EXTRA_POSITION, POSITION_UNKNOWN))
++
++    private fun toCameraFacing(position: Int) = when (position) {
++        POSITION_BACK -> CameraFacing.BACK
++        POSITION_FRONT -> CameraFacing.FRONT
++        else -> null
++    }
++
++    /**
++     * Calls [onPositionChanged] with the new facing every time [ACTION_CAMERA_FLIPPED] is
++     * received. Register with [intentFilter] and [PERMISSION_RECEIVE] (the sender is a
++     * different, platform-signed process, so the receiver must be exported) while the activity
++     * is alive, and unregister in onDestroy.
++     */
++    class Receiver(
++        private val onPositionChanged: (CameraFacing) -> Unit,
++    ) : BroadcastReceiver() {
++        override fun onReceive(context: Context, intent: Intent) {
++            positionFromIntent(intent)?.let(onPositionChanged)
++        }
++    }
++}

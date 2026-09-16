@@ -1,0 +1,18 @@
+# mind_one custom sensors HAL (/ F4290 / F4292 boot-race fix).
+#
+# No special "wait for /dev/hf_manager" trigger is needed here: hf_manager.ko
+# creates the node at subsys_initcall (hf_manager.c:2214), which runs far
+# earlier than this "hal" class service starts - long before SCP itself is
+# up. The actual ~27s SCP-readiness wait happens INSIDE the HAL process
+# (HfManagerClient::waitUntilReady(), blocking inside getSensorsList()/
+# initialize()), not at the init.rc level - see
+# SENSORS-HAL-PLAN-1309.
+#
+# Keep rootdir/etc/init.sensor_2_0.rc's `chmod 0660` / `chown system system`
+# on /dev/hf_manager (post-fs-data) - this service still needs that DAC
+# permission regardless of which binary owns the sensors HAL.
+service vendor.sensors-mindone /vendor/bin/hw/android.hardware.sensors-service.mindone
+    class hal
+    user system
+    group system
+    rlimit rtprio 10 10

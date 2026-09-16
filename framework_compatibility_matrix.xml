@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<!--
+    Device-specific framework compatibility matrix.
+
+    The stock vendor partition ships four HALs that are not part of AOSP and therefore have
+    no entry in any framework compatibility matrix. Without this file assemble_vintf fails the
+    build with "The following instances are in the device manifest but not specified in
+    framework compatibility matrix" and marks the target INCOMPATIBLE, which stops the OTA
+    packaging step.
+
+    All four are declared optional: the framework does not require them, it merely tolerates
+    their presence. That is exactly what the checker's own "Suggested fix" item 4 prescribes
+    for device-specific HALs.
+-->
+<compatibility-matrix version="1.0" type="framework">
+    <!-- NXP secure element / NFC, present in the stock vendor image -->
+    <hal format="hidl" optional="true">
+        <name>vendor.nxp.nxpese</name>
+        <version>1.0</version>
+        <interface>
+            <name>INxpEse</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="hidl" optional="true">
+        <name>vendor.nxp.nxpnfc</name>
+        <version>2.0</version>
+        <interface>
+            <name>INxpNfc</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <!-- Skyroam (eSIM/connectivity vendor service of this device) -->
+    <hal format="hidl" optional="true">
+        <name>vendor.skyroam.hardware.file</name>
+        <version>1.0</version>
+        <interface>
+            <name>IFile</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="hidl" optional="true">
+        <name>vendor.skyroam.hardware.socket</name>
+        <version>1.0</version>
+        <interface>
+            <name>ISocket</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+</compatibility-matrix>

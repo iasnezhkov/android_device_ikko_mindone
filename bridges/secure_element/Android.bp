@@ -1,0 +1,31 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// secure_element bridge: AIDL android.hardware.secure_element V1 (NDK) over the stock HIDL
+// android.hardware.secure_element@1.2 (mtk_secure_element_hal_service, instance SIM1).
+// Bridge registry and verification order - BRIDGES-HIDL-AIDL.
+cc_binary {
+    name: "android.hardware.secure_element-service.mindone",
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["android.hardware.secure_element-service.mindone.rc"],
+    vintf_fragments: ["android.hardware.secure_element-service.mindone.xml"],
+    srcs: [
+        "SecureElementBridge.cpp",
+        "service.cpp",
+    ],
+    shared_libs: [
+        "android.hardware.secure_element-V1-ndk",
+        "android.hardware.secure_element@1.0",
+        "android.hardware.secure_element@1.1",
+        "android.hardware.secure_element@1.2",
+        "libbase",
+        "libbinder_ndk",
+        "libhidlbase",
+        "liblog",
+        "libutils",
+    ],
+    cflags: ["-Wall", "-Werror"],
+}
