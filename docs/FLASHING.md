@@ -36,21 +36,42 @@ gzip-compressed, and `pstore` was empty afterwards, so the refusal happens below
 **The cause is not known.** It is an open defect, not a solved one. Separately, the super
 metadata this tree produces sizes every `_b` partition at zero: there is no system there to boot.
 
-**Recovery.** It cannot be entered. This bootloader puts `androidboot.force_normal_boot=1` on the
-kernel command line **unconditionally** and never reads the `boot-recovery` command out of the
-BCB, so `adb reboot recovery` simply returns to the normal system. Measured: after such a reboot
-`/proc/cmdline` carries `force_normal_boot="1"` and the BCB is empty.
+**Recovery works -- with a `vendor_boot` built from this tree after 19.09.2026** -- but it does not
+help with installing: its "Apply update" and `adb sideload` write the other slot, exactly like the
+Updater above.
 
-🔴 This is not a packaging problem, and adding recovery resources does not fix it. Unpacking the
-`vendor_boot` off a running device shows `system/bin/recovery`, `adbd`, `recovery.fstab` and
-`ro.adb.secure=0` present the whole time. What is missing is the *entrance*, not the contents.
-`fastboot reboot recovery` is a different mechanism and has not been tried -- if you try it,
-that result is worth an issue.
+How this bootloader picks recovery: it never reads the BCB. It boots recovery when the watchdog's
+non-reset register (RGU `NONRST2`, `0x10007024`, low nibble) holds 2, and only then leaves
+`androidboot.force_normal_boot=1` off the command line. The kernel's `syscon-reboot-mode` writes
+that value on `reboot recovery`; the bootloader's `fastboot reboot recovery` and its key menu do
+the same. Recovery then boots the same `boot` and `vendor_boot` as the system, and first-stage init
+loads `modules.load.recovery` **instead of** `modules.load`. That list is what used to be broken:
+it had lost the display, USB and reboot-mode modules, so recovery did start, with a dark screen and
+no USB, cleared the BCB and rebooted two minutes later -- which looked exactly like "recovery cannot
+be entered". An earlier version of this page said so; it was wrong.
+
+Ways in, each verified on the device:
+
+- `adb reboot recovery`;
+- from the bootloader's fastboot, `fastboot reboot recovery`;
+- Settings → System → Developer options → *Advanced restart*, then Restart → Recovery in the power menu;
+- keys, powered off with the cable out: hold the **top-left key** (the stock "iKKO OS" switch) and
+  Power until "Select Boot Mode" appears. `[Recovery Mode]` is the first item and already selected;
+  Volume Down confirms, the top-left key moves between items (`[Fastboot Mode]` is the second).
+  Volume Up + Power does nothing here: the volume keys go through the keypad controller, while the
+  menu reads the PMIC HOME key. Do not hold Volume Down while powering on -- that is factory mode.
+
+From recovery, `adb reboot bootloader` reaches the bootloader's fastboot and `adb reboot fastboot`
+reaches fastbootd (userspace fastboot, USB `18d1:4ee0`).
+
+🔴 In recovery adb is root and asks for no authorization (`ro.adb.secure=0` in a userdebug build).
+Anyone with a cable gets a root shell on a locked phone -- `/data` stays encrypted, the rest does
+not. Build `user`, or change that, before the phone leaves your hands.
 
 **`fastboot flash` from a macOS host.** Every write hangs the USB endpoint, and so does `getvar`.
 Read-only commands are fine. Write from a Linux host, or from a VM with real USB passthrough --
-that is what the flashing path above assumes. `adb reboot fastboot` lands in the preloader;
-`adb reboot bootloader` is the one that reaches the bootloader's fastboot.
+that is what the flashing path above assumes. `adb reboot bootloader` reaches the bootloader's
+fastboot, which is what that path uses; `adb reboot fastboot` goes to fastbootd inside recovery.
 
 ## The one thing that matters
 
@@ -78,8 +99,8 @@ Consequences:
 ## Before you start
 
 🔴 Take a full dump of the stock partitions **including the partition table**. Without the table
-there is nothing to restore the layout from, and no recovery image will help -- especially here,
-where recovery cannot be entered at all.
+there is nothing to restore the layout from, and no recovery image will help: recovery here boots
+from the same `boot` and `vendor_boot` as the system and repartitions nothing.
 
 ## Write the whole set, or do not write
 
@@ -217,7 +238,7 @@ whiteouts (character devices marking deletions).
 | what you see | what to do |
 |---|---|
 | no adb, only a hub or a USB billboard on the bus | force a re-enumeration: on a hub that can switch its downstream data lines, cycle the port. This does **not** power-cycle the phone -- it only clears a stuck enumeration on the host side |
-| `0e8d:2000` on the bus, appearing and disappearing | preloader, cycling: the device is trying to boot and failing |
+| `0e8d:2000` on the bus, appearing and disappearing | preloader, cycling: the device is trying to boot and failing. Enter the bootloader's fastboot by keys (top-left + Power from power-off, then `[Fastboot Mode]` -- see "Recovery") and write known-good images |
 | `0e8d:2000` on the bus **continuously** | preloader stuck; the same data-line cycle gets it out |
 | `0e8d:201c` on the bus | the bootloader's fastboot -- write from here, or `fastboot reboot` |
 | nothing on the bus at all | the device is not bringing up a USB gadget. Re-enumeration cannot help; hold Power ~12 s, then reconnect the cable |
@@ -245,6 +266,8 @@ Being explicit, because a procedure nobody has executed is a guess with formatti
 | Writing `boot`/`vendor_boot`/`dtbo`/`vbmeta`/`vbmeta_system`/`vbmeta_vendor` into the active slot | **Run** |
 | Reading all twelve written partitions back and comparing | **Run.** All twelve matched |
 | Completeness check of the ten unwritten firmwares | **Run.** All ten matched the device |
-| `adb reboot recovery` | **Run, and it does not work** -- see "What does not work here" |
-| `fastboot reboot recovery` | **Not tried** |
+| `adb reboot recovery` | **Run.** Works with a `vendor_boot` built after 19.09.2026; before that recovery came up dark and without USB |
+| `fastboot reboot recovery` | **Run.** Works |
+| Key menu (top-left + Power) into recovery and fastboot | **Run.** Works |
+| fastbootd (`adb reboot fastboot`) | **Run.** Reachable; writing logical partitions from it not tried |
 | VTS / CTS | **Not run** |

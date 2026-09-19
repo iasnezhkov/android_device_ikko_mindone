@@ -178,8 +178,13 @@ TARGET_KERNEL_ARCH := arm64
 #   modules.load.ramdisk  — 1st stage, vendor_boot ramdisk (244 modules, the image's modules.load)
 #   modules.load          — 2nd stage, vendor_dlkm (38: mcupm, fhctl, cpufreq-hw, LPM, ...; order matters,
 #                           F3505: cpufreq-hw after mcupm)
-#   modules.load.recovery — recovery ramdisk subset (122; the 20 stock-5.10 names that do not exist in
-#                           our 6.1 set are built into the Image or renamed)
+#   modules.load.recovery — what first-stage init loads INSTEAD of modules.load when the bootloader
+#                           starts recovery. 19.09: stock recovery list with '-' read as '_', cut to
+#                           our set, in modules.load.ramdisk order (135). Minus clk_disable_unused and
+#                           mtk_pm_domain_disable_unused (fewer drivers in recovery = more "unused"
+#                           clocks/domains cut) and cfg80211/mac80211 (no Wi-Fi driver there). Before
+#                           that it lacked display, USB and reboot-mode (mediatek_drm, mtk_iommu, musb_*,
+#                           syscon_reboot_mode): dash-named stock entries lost when matched to our names.
 # kernel/modules/*.ko is the union of both stages from the kernel tree<tag> (build
 # products, .gitignore'd like Image/dtb/dtbo.img — the public device tree will take them from a
 # kernel-prebuilt repo, REPO-LAYOUT-PLAN-0902 D0).
@@ -270,15 +275,15 @@ BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT := true
 #      included -- system/bin/recovery, adbd, recovery.fstab, with ro.adb.secure=0. Unpacking
 #      the vendor_boot off the device proved it.
 #
-#   2. It was set to make `adb reboot recovery` work. It cannot. This bootloader puts
-#      androidboot.force_normal_boot=1 on the kernel command line unconditionally and never
-#      reads the boot-recovery command out of the BCB, so the request is dropped before any
-#      ramdisk is chosen. Measured: after `adb reboot recovery` the device comes back up in the
-#      normal system with force_normal_boot="1" in /proc/cmdline and an empty BCB.
+#   2. It was set to make `adb reboot recovery` work. The fragment layout has nothing to do with
+#      that: this LK loads the whole vendor ramdisk whatever the fragment types. LK does not read
+#      the BCB at all; it picks recovery from the RGU register NONRST2 (0x10007024, low nibble 2),
+#      written by syscon-reboot-mode on `reboot recovery`, by `fastboot reboot recovery`, or by the
+#      key menu (top-left key + Power from power-off, first item). Only in that mode does it leave out
+#      androidboot.force_normal_boot=1 (IDA on our lk: boot_linux_fdt, mode 2 skips the append).
 #
 # What it did do is split one fragment into two, which is a layout this device has never been
-# booted with. Leave it off: the flashing procedure goes through fastboot (see docs/FLASHING.md),
-# not recovery.
+# booted with. Leave it off.
 TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/rootdir/etc/fstab.mt8781
 TARGET_RECOVERY_PIXEL_FORMAT := BGRA_8888
 TARGET_USERIMAGES_USE_F2FS := true
