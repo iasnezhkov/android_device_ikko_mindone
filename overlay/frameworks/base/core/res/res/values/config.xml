@@ -23,4 +23,8 @@
          (AOSP default is false), does not create the navigation bar, and the back gesture does not
          work at all: EdgeBackGestureHandler mIsEnabled=false. Verified live via qemu.hw.mainkeys=0. -->
     <bool name="config_showNavigationBar">true</bool>
+    <!-- MINDONE 19.09 (BACKLOG O56): wake the screen when the cable goes in or out. The framework default is
+         false and LineageOS takes its "Wake on plug" default from it (wake_when_plugged_or_unplugged was 0);
+         checked live with the setting at 1: dumpsys battery unplug / reset woke the screen both times. -->
+    <bool name="config_unplugTurnsOnScreen">true</bool>
 </resources>

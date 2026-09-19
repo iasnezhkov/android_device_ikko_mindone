@@ -19,8 +19,13 @@ on post-fs-data
     # legacy jank 39-54 %) and cold starts (Chrome 2108-2435 ms) versus the vendor sugov_ext
     # (9/11 ms, 6-11 %, 1456-1735 ms). Keep sugov_ext until schedutil is tuned for MTK's
     # non-linear OPP capacity (rate limits / uclamp); EAS stays off for now (P35).
-    # write /sys/devices/system/cpu/cpufreq/policy0/scaling_governor schedutil
-    # write /sys/devices/system/cpu/cpufreq/policy6/scaling_governor schedutil
+    # 19.09 (BACKLOG O06): "keep sugov_ext" was never written anywhere - the 6.12 kernel's default
+    # governor is schedutil (CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y), so the ROM ran schedutil with
+    # cpufreq_sugov_ext loaded and unused. Alternating A/B on B8, trace.sh scenario, n=4 scrolls:
+    # frame p50/p90/worst sugov_ext 15.3/21.7/29.8 ms vs schedutil 16.7/26.7/36.6 ms; cold starts n=2:
+    # Settings 463/444 vs 526/530 ms, calendar 348/367 vs 405/388, camera 395/374 vs 312/365.
+    write /sys/devices/system/cpu/cpufreq/policy0/scaling_governor sugov_ext
+    write /sys/devices/system/cpu/cpufreq/policy6/scaling_governor sugov_ext
     write /proc/sys/kernel/sched_util_clamp_min_rt_default 0
 
     # boot perf. tune
@@ -60,12 +65,11 @@ on property:sys.boot_completed=1
     write /dev/cpuctl/background/cpu.uclamp.min 0
     write /dev/cpuctl/background/cpu.uclamp.latency_sensitive 0
 
-# Memory bandwidth by screen state (mind_one, 09.09.2026).
-# The standard reset-to-minimum line was removed from boot_completed: hardware bandwidth voting
-# does not work on this device (the gpu/mm_disp/hrt_* nodes request 0), so "restore to how it was"
-# would have meant staying at 800 MHz out of 4266 forever. Details and measurements - F4082/F4083.
-on property:debug.tracing.screen_state=2
-    write /sys/class/devfreq/mtk-dvfsrc-devfreq/userspace/set_freq 4266000000
-
+# Memory bandwidth by screen state. 09.09 (F4082/F4083, 6.1): hardware bandwidth voting did not work,
+# so the screen-on state pinned DDR at 4266 MHz. 19.09 (6.12, B8, BACKLOG P125): voting works - with
+# the screen on, cm_mgr (SW_REQ2) and the display HRT (ISP_HRT 184) hold 3200 MHz with bursts to 4266,
+# and the pin only kept it at 4266 all the time (SW_REQ3 0x6030). Without the pin a Settings scroll gave
+# the same frames (746/746, worst 28.8 vs 33.8 ms) and no display underflow. So no pin on screen on;
+# the screen-off reset stays (it is where the boot-time early-init value 5500000000 is dropped).
 on property:debug.tracing.screen_state=1
     write /sys/class/devfreq/mtk-dvfsrc-devfreq/userspace/set_freq 0

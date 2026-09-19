@@ -28,13 +28,15 @@ One reboot, no intermediate state the device is ever asked to boot.
 ## What does not work here, and why
 
 **`adb sideload`, `update_engine`, and the LineageOS Updater app.** These are one mechanism: the
-Updater only hands the package to the engine. The engine writes the *other* slot, and slot `_b`
-does not boot on this device -- the package applies cleanly, `_b` is marked active with six
-tries, the bootloader spends all six and returns to `_a`. Verified three times. `boot_b`,
-`vendor_boot_b` and `vbmeta_b` were byte-for-byte correct each time, the kernel inside was
-gzip-compressed, and `pstore` was empty afterwards, so the refusal happens below the kernel.
-**The cause is not known.** It is an open defect, not a solved one. Separately, the super
-metadata this tree produces sizes every `_b` partition at zero: there is no system there to boot.
+Updater only hands the package to the engine. The engine writes the *other* slot, and slot `_b` has
+not booted on this device yet -- the package applies cleanly, `_b` is marked active with six tries,
+the bootloader spends all six and returns to `_a`. Seen three times, all with one package whose
+`vendor_boot` carried the device tree twice (the first trap under "Traps that have actually
+bitten"); that same image did not boot on `_a` either, and the images in `_b` were byte-for-byte
+what the package held. So the failure is explained by the image, not by the slot, but an install of
+a correct package into `_b` has not been done yet: until it has, treat this path as unproven.
+Separately, the super metadata this tree produces sizes every `_b` partition at zero after a
+fastboot install: there is no system there until an OTA lays one out.
 
 **Recovery works -- with a `vendor_boot` built from this tree after 19.09.2026** -- but it does not
 help with installing: its "Apply update" and `adb sideload` write the other slot, exactly like the
@@ -218,7 +220,8 @@ in that directory. Copy a new blob in under a different name without removing th
 build silently produces a `vendor_boot` carrying the DTB twice, with no warning anywhere. The
 device then does not boot: no adb, a preloader window every ~33 s. Check the size -- if the
 `dtb` inside `vendor_boot` is an exact multiple of the blob you built, that is what happened.
-The directory is a build product and is `.gitignore`d, so a clean clone does not protect you.
+The directory is a build product and is `.gitignore`d, so a clean clone does not protect you;
+`BoardConfig.mk` now refuses to build with more than one blob there.
 
 **`grep -q` at the end of a pipeline.** With `set -o pipefail`, `grep -q` closes the pipe on its
 first match, the stage before it dies of SIGPIPE with 141, and the pipeline reports 141 -- a

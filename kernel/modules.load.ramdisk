@@ -215,8 +215,6 @@ mtk_sp_spk_amp.ko
 snd_soc_mtk_common.ko
 snd_soc_mt6789_afe.ko
 mt6789_mt6366.ko
-mtk_vow.ko
-mtk_scp_vow.ko
 archcounter_timesync.ko
 cam_qos.ko
 camera_isp.ko
