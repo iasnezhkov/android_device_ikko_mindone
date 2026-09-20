@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone_mdinit init service -- replaces the stock ccci_mdinit blob in
 # place. Same binary name/path/args as init.cccimdinit.rc's existing
 # "service ccci_mdinit /vendor/bin/ccci_mdinit 0" stanza (see

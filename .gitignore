@@ -5,6 +5,7 @@
 kernel/Image
 kernel/dtbo.img
 kernel/dtb/
+kernel/attic/
 kernel/modules/
 *.ko
 *.img

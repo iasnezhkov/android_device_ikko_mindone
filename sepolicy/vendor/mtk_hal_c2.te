@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # stock codec2 HAL reads the MTK custom version property (ROM #9 avc)
 # 🔴 07.09 (F3908): rule REMOVED - it violates an AOSP neverallow and breaks the build
 # (`libsepol.report_failure` -> `Error while expanding policy`). Cannot be restored:

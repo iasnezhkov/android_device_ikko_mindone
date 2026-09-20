@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone_rpcd init service -- identical to the existing stock
 # init.cccirpcd.rc stanza (build environment: vendor/etc/init/init.cccirpcd.rc),
 # reproduced here verbatim since replacing the binary at

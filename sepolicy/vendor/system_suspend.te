@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # system_suspend enumerates wakeup sources; the charger's power_supply/usb/wakeupN nodes carry the stock
 # sysfs_batteryinfo label (genfscon /devices/platform/charger, stock policy) — grant read (audit A16 §4.8)
 # 🔴 07.09 (F3908): rule REMOVED - it violates an AOSP neverallow and breaks the build

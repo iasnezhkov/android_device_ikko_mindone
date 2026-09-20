@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 12.09 (F4136): the bip daemon (MTK Bluetooth IP/tethering) reads the property net_dns_prop
 # (1 read/open/getattr/map denial per boot, device/logs/catch-0911-185910/dmesg.txt.gz) - likely
 # polling DNS for Bluetooth internet sharing. net_dns_prop is not on the list of platform

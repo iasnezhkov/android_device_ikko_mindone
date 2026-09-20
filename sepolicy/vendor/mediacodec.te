@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 12.09 (F4136): android.hardware.media.c2@1.2-mediatek (domain mediacodec) reads
 # the generic PLATFORM context default_prop (1 read/open/getattr/map denial per boot,
 # device/logs/catch-0911-185910/dmesg.txt.gz) - the same class of restriction as mtk_hal_camera.te/

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mind_one minimal RIL, phase 1 skeleton. See README-INTEGRATION.md and RIL-MINIMAL-1409.
 #
 # Disabled by default -- this is a design/skeleton deliverable, not validated on a live device

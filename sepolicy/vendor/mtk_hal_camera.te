@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 12.09 (F4136): camerahalserver tries to read the shared (generic, non-dedicated)
 # property context default_prop - 4 denials per boot (read/open/getattr/map), consistently
 # repeating on 09.11/09.12 (device/logs/catch-0911-185910, catch-0912-053819, exp-0911/exp9-selinux.txt).

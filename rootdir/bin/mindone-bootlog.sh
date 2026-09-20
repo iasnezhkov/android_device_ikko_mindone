@@ -1,4 +1,5 @@
 #!/vendor/bin/sh
+# SPDX-License-Identifier: Apache-2.0
 # Collect boot evidence into /metadata/mindone (survives reboot), then reboot if boot never completed.
 # 05.09 (F3758): runs from the VENDOR shell — system tools are NOT on PATH ("logcat: not found"), and
 # `reboot` never fired; use absolute /system/bin paths, bounded by timeout, and reboot through init

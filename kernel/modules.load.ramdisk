@@ -272,7 +272,6 @@ ufs_mtk_rpmb.ko
 rpmb_mtk.ko
 sileadfp.ko
 sub2af.ko
-ntty_restore.ko
 mtk_lpm.ko
 mtk_lpm_dbg_common_v1.ko
 mtk_lpm_plat_v1.ko

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone - intentionally empty.
 #
 # 07.09: there used to be two lines here, `typeattribute proc_battery_cmd proc_type;` and `typeattribute proc_aed

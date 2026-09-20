@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # vendor rc creates /data/vendor_de/* subdirectories (ROM №9 avc: write on vendor_userdir_file dir)
 # 🔴 07.09 (F3908): rule REMOVED - it violates an AOSP neverallow and breaks the build
 # (`libsepol.report_failure` -> `Error while expanding policy`). Cannot be restored:

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 service vendor.gatekeeper-mindone /vendor/bin/hw/android.hardware.gatekeeper-service.mindone
     class early_hal
     user system

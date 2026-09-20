@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 name: tree hygiene
 
 # This repository has one rule that cannot be relaxed: it must never contain a vendor blob.

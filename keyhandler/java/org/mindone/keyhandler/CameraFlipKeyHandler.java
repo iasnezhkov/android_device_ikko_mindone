@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /*
  * mindone: device key handler for the flip-camera module's hall switch (F4296).
  * See CAMERA-FLIP-PLAN-1309 for the full design.

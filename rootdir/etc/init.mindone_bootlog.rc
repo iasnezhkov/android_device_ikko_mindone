@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # Boot evidence collector for bring-up: without adb/USB/display the only way to get logs out of a
 # boot that never completes is to write them to a partition that survives a reboot. /metadata is
 # mounted by first-stage init, is not encrypted and is small but sufficient for one logcat dump.

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 09.09 (F4059): init writes to the boot receiver's debug tracing directory (2 denials).
 allow init debugfs_bootreceiver_tracing:dir { write add_name };
 

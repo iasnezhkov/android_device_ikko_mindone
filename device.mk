@@ -525,6 +525,9 @@ PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.rc=/vendor/etc/init/hw/ \
     ro.vendor.init.sensor.rc=init.sensor_2_0.rc
 
+PRODUCT_VENDOR_PROPERTIES += \
+    persist.vendor.enable.thermal.genl=true
+
 # F3807: allowlist for stock MTK ImsService priv-app; enforcement relaxed to log for other stock priv-apps
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/permissions/privapp-permissions-mediatek-ims.xml:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/permissions/privapp-permissions-mediatek-ims.xml \

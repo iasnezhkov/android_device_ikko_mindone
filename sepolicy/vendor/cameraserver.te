@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 12.09 (F4136): cameraserver reads a property under the generic vendor context
 # vendor_default_prop (1 read/open denial per boot, device/logs/catch-0912-053819/logcat-all.txt).
 # The same class as audioserver.te/surfaceflinger.te - this was already analyzed live: F4068

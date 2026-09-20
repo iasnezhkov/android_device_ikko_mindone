@@ -128,7 +128,7 @@ source build/envsetup.sh && breakfast mindone && mka bacon
 | 🚧 Unfinished | |
 |---|---|
 | **RPMB** | hardware-backed key storage fails its MAC check; falls back safely, boot unaffected |
-| **Slot `_b`** | not currently bootable: this device's `super` gives both slots the same physical region, and the recommended install writes only the active slot, so the other slot's partition metadata goes stale (`EXT4-fs: bad geometry`). Not a hardware fault — a consequence of how installs are done today, fixable by rewriting that slot's metadata before using it |
+| **Slot `_b`** | not currently bootable: this device's `super` gives both slots the same physical region, and the recommended install writes only the active slot, so the other slot's partition metadata goes stale (`EXT4-fs: bad geometry`). Not a hardware fault — the metadata can be rewritten. That makes `_b` boot; it does **not** make it a spare copy, because both slots describe the same bytes. See [docs/FLASHING.md](docs/FLASHING.md) — «The one thing that matters» |
 | **vSIM** | parked deliberately |
 | **Our RIL** | 27 of 201 methods; not shipped |
 | **Audio HAL** | in use, but not finished: Bluetooth SCO media and headset mic are implemented and not yet verified on hardware, calls over SCO are not wired, and an external keyboard with its own DAC and headphone jack is coming — the HAL will be finished against it |

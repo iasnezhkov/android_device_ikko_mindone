@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mind_one custom sensors HAL (/ F4290 / F4292 boot-race fix).
 #
 # No special "wait for /dev/hf_manager" trigger is needed here: hf_manager.ko

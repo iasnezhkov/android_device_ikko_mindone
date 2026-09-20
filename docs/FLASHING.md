@@ -97,6 +97,9 @@ Consequences:
   `EXT4-fs: bad geometry ... exceeds size of device`. That is expected, not a kernel bug.
 - `vendor_dlkm_a` and `vendor_dlkm_b` are the same extent. Switching slots without rewriting that
   region gives a black screen with a live adb.
+- The stale metadata on the other slot is a separate, fixable matter, and the README says so. Fixing
+  it makes that slot mount and boot. It still does not give you a second system to fall back on:
+  what boots from either slot is the same copy.
 
 ## Before you start
 

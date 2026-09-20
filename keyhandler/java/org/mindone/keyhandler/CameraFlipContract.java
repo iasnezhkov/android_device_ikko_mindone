@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+
 /*
  * mindone: contract constants for the flip-camera module position (F4296).
  * See CAMERA-FLIP-PLAN-1309.

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 12.09 (F4136, low priority): GMS Core tries to read three generic
 # platform/service property contexts - oem_unlock_prop (bootloader unlock check),
 # vendor_default_prop, adbd_prop (device/logs/catch-0911-185910, catch-0912-053819). This is standard

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone (06.09): AIDL fingerprint V4 -> HIDL fingerprint@2.1 bridge - the AIDL server and HIDL client share one domain
 hal_client_domain(hal_fingerprint_default, hal_fingerprint)
 

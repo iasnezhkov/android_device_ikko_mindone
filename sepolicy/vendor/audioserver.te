@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 12.09 (F4136): audioserver reads a property under the generic (non-dedicated) vendor
 # context vendor_default_prop - 1 read/open/getattr/map denial per boot
 # (device/logs/catch-0911-185910/dmesg.txt.gz). Unlike default_prop/misctrl_prop/

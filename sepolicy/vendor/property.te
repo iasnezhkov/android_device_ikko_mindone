@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 12.09 (F4136): a dedicated property type for the fingerprint HAL (Silead) - see
 # property_contexts and hal_fingerprint_default.te. Without a dedicated type, the property
 # vendor.silead.fp.ext.enable falls under the generic platform default_prop, and vendor domains are

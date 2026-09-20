@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone (F4406): the stock init_connectivity.rc starts wmt_launcher with "-o 1" ("Power on MTK WCN
 # chip while boot up"), which sets the driver's always-power-on flag (wmt_dbg 28 1). With that flag the
 # connsys chip is never powered off when every function (Wi-Fi/BT/GPS/FM) is off, its MCU never sleeps and

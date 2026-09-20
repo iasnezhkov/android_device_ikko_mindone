@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # mindone 09.09 (F4059): the framework reads the vibrator motor node (max_* in /sys/.../leds/vibrator).
 # 3 denials per boot. The node is already labeled sysfs_vibrator by our genfs_contexts.
 # Verified: the rule passes the AOSP neverallow check.
