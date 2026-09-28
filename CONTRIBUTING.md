@@ -5,7 +5,7 @@ to act on.
 
 ## The one rule that matters most
 
-🔴 **Never commit proprietary files.** `proprietary-files.txt` lists ~1300 vendor blobs this
+🔴 **Never commit proprietary files.** `proprietary-files.txt` lists ~960 vendor blobs this
 build needs. They are *not* in this repository and must never be: they belong to MediaTek and
 iKKO, and every user extracts them from their own device with `extract-files.py`. CI rejects any
 push that adds a file named in that list, and any ELF, archive, `.apk` or `.so`.
@@ -41,19 +41,6 @@ For a device that boots to a black screen with adb alive, `dmesg` and the output
 - Do not add a value taken from another device's tree without checking it against this hardware.
   That mistake has already been made here twice, and both times it produced an image that built
   cleanly and did not boot.
-
-## Markers you will see in comments
-
-Two kinds of reference appear throughout the code:
-
-- `F1234` — an entry in the project's engineering log, where a finding was recorded with the
-  measurement that established it.
-- `SOMETHING-IN-CAPS` — a longer internal note on one subsystem.
-
-Neither is in this repository: the log is a working record, largely of dead ends, and publishing
-it would add volume rather than information. The markers are kept because they make a claim
-traceable if you ask about it, and because the comment next to them is written to stand on its
-own. If a comment ever fails to, that is a defect worth reporting.
 
 ## What this project will not take
 

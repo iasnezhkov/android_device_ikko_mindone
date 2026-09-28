@@ -1,0 +1,186 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 27 Sep 2026 19:27:15 +0300
+Subject: [PATCH 20/27] v4l2: disable MDP replay after 3 consecutive failures
+
+MdpReplayEngine::Replay() had no backoff: if a shape's recorded CMDQ job
+started failing (translate_fd -22 or any other ASYNC_EXEC/ASYNC_WAIT ioctl
+error), convertMM21ToNV12() fell back to a full per-frame DpBlitStream pass
+for that one frame, but the next frame tried Replay() again from scratch,
+forever, paying the failed-ioctl cost on top of the fallback on every single
+frame a bad shape was hit.
+
+MdpReplayEngine now counts consecutive ASYNC_EXEC/ASYNC_WAIT failures; after
+kMaxConsecutiveReplayFailures (3), it marks itself permanentlyDisabled_,
+drops ready_, and MdpImageConverter stops trying BeginRecord/EndRecord for
+that shape too, going straight to the plain DpBlitStream path (slower, but it
+re-establishes attach/map from scratch every call instead of trusting a
+capture that keeps failing). A later successful Replay() resets the failure
+counter, so a transient run of failures does not permanently disable a shape
+that recovers on its own; only permanentlyDisabled_ is a one-way trip, since
+recording a fresh capture (BeginRecord) is skipped once disabled.
+
+This is defence in depth on top of the plane-geometry caching in the
+previous commit, which should remove most translate_fd -22 bursts by
+removing the per-frame gralloc import/free churn. Whatever residual cause
+remains (or any other unrelated cause of a bad shape), this bounds the
+damage to 3 failed frames instead of flapping for the rest of the stream.
+
+Not device-verified this session (device off the cable).
+
+Change-Id: I9dae813228afe124fd0a4d801f1c870dd5cd6c21
+---
+ v4l2/MdpImageConverter.cpp                | 20 +++++++++++++-------
+ v4l2/MdpReplay.cpp                        | 20 +++++++++++++++++++-
+ v4l2/include/v4l2_codec2/v4l2/MdpReplay.h |  5 +++++
+ 3 files changed, 37 insertions(+), 8 deletions(-)
+
+diff --git a/v4l2/MdpImageConverter.cpp b/v4l2/MdpImageConverter.cpp
+index 020889e..8a3c108 100644
+--- a/v4l2/MdpImageConverter.cpp
++++ b/v4l2/MdpImageConverter.cpp
+@@ -108,7 +108,8 @@ bool MdpImageConverter::convertMM21ToNV12(const TiledMM21Image& src, const NV12W
+     cfg.dstPlaneSize0 = dstPlaneSizes[0];
+     cfg.dstPlaneSize1 = dstPlaneSizes[1];
+ 
+-    if (mEngine.configMatches(cfg) && mEngine.Replay(src.dmaBufFd, dst.dmaBufFd)) {
++    if (!mEngine.permanentlyDisabled() && mEngine.configMatches(cfg) &&
++        mEngine.Replay(src.dmaBufFd, dst.dmaBufFd)) {
+         return true;
+     }
+ 
+@@ -135,13 +136,18 @@ bool MdpImageConverter::convertMM21ToNV12(const TiledMM21Image& src, const NV12W
+         return false;
+     }
+ 
+-    mEngine.BeginRecord(cfg, src.dmaBufFd, dst.dmaBufFd);
+-    rc = stream->invalidate(nullptr);
+-    char reason[mdpreplay::kReasonBufSize];
+-    if (!mEngine.EndRecord(cfg, src.dmaBufFd, dst.dmaBufFd, rc == 0, reason, sizeof(reason))) {
+-        ALOGI("MDP replay capture not armed for %dx%d: %s", width, height, reason);
++    if (mEngine.permanentlyDisabled()) {
++        rc = stream->invalidate(nullptr);
+     } else {
+-        ALOGI("MDP replay capture armed for %dx%d, %d job(s)", width, height, mEngine.jobCount());
++        mEngine.BeginRecord(cfg, src.dmaBufFd, dst.dmaBufFd);
++        rc = stream->invalidate(nullptr);
++        char reason[mdpreplay::kReasonBufSize];
++        if (!mEngine.EndRecord(cfg, src.dmaBufFd, dst.dmaBufFd, rc == 0, reason, sizeof(reason))) {
++            ALOGI("MDP replay capture not armed for %dx%d: %s", width, height, reason);
++        } else {
++            ALOGI("MDP replay capture armed for %dx%d, %d job(s)", width, height,
++                  mEngine.jobCount());
++        }
+     }
+ 
+     if (rc != 0) {
+diff --git a/v4l2/MdpReplay.cpp b/v4l2/MdpReplay.cpp
+index 84cff32..71b11ea 100644
+--- a/v4l2/MdpReplay.cpp
++++ b/v4l2/MdpReplay.cpp
+@@ -8,6 +8,8 @@
+ #include <sys/syscall.h>
+ #include <unistd.h>
+ 
++#include <log/log.h>
++
+ namespace mdpreplay {
+ 
+ namespace {
+@@ -38,6 +40,8 @@ void MdpReplayEngine::BeginRecord(const Config &cfg, int srcFd, int dstFd) {
+     jobOverflow_ = false;
+     waitSeen_ = 0;
+     mdpFdSeen_ = -1;
++    consecutiveReplayFailures_ = 0;
++    permanentlyDisabled_ = false;
+     recordSrcFd_ = srcFd;
+     recordDstFd_ = dstFd;
+     ready_ = false;
+@@ -219,7 +223,7 @@ bool MdpReplayEngine::EndRecord(const Config &cfg, int srcFd, int dstFd, bool in
+ }
+ 
+ bool MdpReplayEngine::Replay(int srcFd, int dstFd) {
+-    if (!ready_) {
++    if (!ready_ || permanentlyDisabled_) {
+         return false;
+     }
+ 
+@@ -251,6 +255,7 @@ bool MdpReplayEngine::Replay(int srcFd, int dstFd) {
+ 
+         long rc = syscall(__NR_ioctl, mdpFd_, kCmdqIoctlAsyncExec, &submit);
+         if (rc < 0) {
++            onReplayFailure("ASYNC_EXEC");
+             return false;
+         }
+         jobIds[j] = submit.job_id;
+@@ -262,10 +267,12 @@ bool MdpReplayEngine::Replay(int srcFd, int dstFd) {
+         wait.job_id = jobIds[j];
+         long rc = syscall(__NR_ioctl, mdpFd_, kCmdqIoctlAsyncWait, &wait);
+         if (rc < 0) {
++            onReplayFailure("ASYNC_WAIT");
+             return false;
+         }
+     }
+ 
++    consecutiveReplayFailures_ = 0;
+     trackFd(srcFd);
+     trackFd(dstFd);
+     return true;
+@@ -287,6 +294,17 @@ void MdpReplayEngine::trackFd(int fd) {
+     trackedFds_[kMaxTrackedFds - 1] = fd;
+ }
+ 
++void MdpReplayEngine::onReplayFailure(const char *step) {
++    consecutiveReplayFailures_++;
++    if (consecutiveReplayFailures_ >= kMaxConsecutiveReplayFailures && !permanentlyDisabled_) {
++        permanentlyDisabled_ = true;
++        ready_ = false;
++        ALOGW("MdpReplayEngine: %d consecutive %s failures, disabling replay for this shape "
++              "(falling back to per-frame DpBlitStream)",
++              consecutiveReplayFailures_, step);
++    }
++}
++
+ void MdpReplayEngine::teardown() {
+     if (!deviceOpened_) {
+         return;
+diff --git a/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h b/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
+index 480fcbf..3a35530 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
++++ b/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
+@@ -197,6 +197,7 @@ constexpr int kMaxMetasPerJob = 512;
+ constexpr int kMaxHwMeta = 64;
+ constexpr int kMaxTrackedFds = 16;
+ constexpr size_t kReasonBufSize = 256;
++constexpr int kMaxConsecutiveReplayFailures = 3;
+ 
+ struct Config {
+     int width = 0;
+@@ -232,6 +233,7 @@ public:
+     bool Replay(int srcFd, int dstFd);
+ 
+     bool ready() const { return ready_; }
++    bool permanentlyDisabled() const { return permanentlyDisabled_; }
+     bool configMatches(const Config &cfg) const { return ready_ && cfg_ == cfg; }
+     bool iovaCacheEnabled() const { return cacheEnabled_; }
+     bool iovaUnmapSupported() const { return iovaUnmapSupported_; }
+@@ -254,6 +256,7 @@ private:
+     bool ensureDevice(char *reason, size_t reasonLen);
+     void classifyRoles(int srcFd, int dstFd);
+     bool validateCapture(char *reason, size_t reasonLen);
++    void onReplayFailure(const char *step);
+     void trackFd(int fd);
+     void teardown();
+ 
+@@ -273,6 +276,8 @@ private:
+ 
+     Config cfg_{};
+     bool ready_ = false;
++    int consecutiveReplayFailures_ = 0;
++    bool permanentlyDisabled_ = false;
+ 
+     int trackedFds_[kMaxTrackedFds];
+     int trackedFdCount_ = 0;
+-- 
+2.43.0
+

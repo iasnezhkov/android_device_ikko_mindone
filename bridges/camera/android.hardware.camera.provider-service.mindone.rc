@@ -1,0 +1,5 @@
+service vendor.camera-provider-mindone /vendor/bin/hw/android.hardware.camera.provider@2.6-service.mindone
+    class main
+    user cameraserver
+    group audio camera input drmrpc sdcard_rw system media graphics
+    interface android.hardware.camera.provider@2.6::ICameraProvider internal/0

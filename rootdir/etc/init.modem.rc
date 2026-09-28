@@ -38,5 +38,20 @@ on post-fs-data
 # Encrypt phone function
     setprop vold.post_fs_data_done 1
 
+on property:vendor.volte_md_status=ready
+    start vendor.bip_ap
+
+on property:vendor.volte_md_status=reset
+    stop vendor.bip_ap
+
+on property:vendor.volte_md_status=stop
+    stop vendor.bip_ap
+
+on property:vendor.volte_md_status=flightmode
+    stop vendor.bip_ap
+
+on property:vendor.volte_md_status=exception
+    stop vendor.bip_ap
+
 
 

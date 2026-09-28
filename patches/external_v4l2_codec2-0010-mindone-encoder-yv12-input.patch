@@ -1,0 +1,431 @@
+From 9d0e50e4f3719c1e9b801356d4f0238e0de22c61 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Fri, 25 Sep 2026 15:16:43 +0300
+Subject: [PATCH] v4l2: encode camera surface YV12 natively, drop the I420 hack
+
+Camera recording through the AIDL GraphicBufferSource input surface
+(debug.stagefright.c2inputsurface=-1) feeds c2.v4l2.avc/hevc.encoder
+with MTK gralloc buffers allocated for HAL_PIXEL_FORMAT_IMPLEMENTATION_
+DEFINED + GRALLOC_USAGE_HW_VIDEO_ENCODER, which MTK gralloc resolves to
+YV12 at 2560x1440 (device log: "[checkPlaneSize] [YV12:2] sizeInBytes:
+925440 != 1280 x 720"). The encoder always failed to queue that frame:
+"V4L2Encoder: Failed to queue input buffer using QueueDMABuf", "Failed
+to enqueue input frame", then "EncodeComponent: Trying to queue work
+item while component is not running" once the component tripped into
+ERROR.
+
+Root cause was in EncodeComponent::getVideoFrameLayout(). For a
+Y/Cr/Cb-ordered planar buffer (crcb == true, !semiplanar, i.e. real
+YV12) it forced the reported VideoPixelFormat to I420 ("HACK: pretend
+YV12 is I420 now since VEA only accepts I420", a leftover from the old
+VideoEncodeAccelerator wrapper this HAL no longer uses). The plane
+offsets/strides it returns are already in physical memory order (Y,
+then whichever chroma plane comes second, then the last one), so for
+a real YV12 buffer that vector is [Y, V, U] mislabeled as I420's
+[Y, U, V] - swapped chroma. V4L2Encoder was also always initialized
+with a fixed NV12 OUTPUT format (VideoEncoder::kInputPixelFormat) and
+never looked at the buffer's actual layout again, so
+EncodeComponent::queueTask() only ever had one way to bridge a format
+mismatch: spin up a CPU FormatConverter. mtk-vcodec-enc.c's OUTPUT
+queue_setup/buf_prepare already natively accepts YUV420(M), YVU420(M),
+NV12(M) and NV21(M) (see queue_setup: "if (*nplanes != q_data->fmt->
+num_planes) return -EINVAL", vb2ops_venc_buf_prepare same check), so
+none of that conversion is needed for YV12/NV12/NV21 camera buffers.
+
+Fix:
+- getVideoFrameLayout() now reports VideoPixelFormat::YV12 (not I420)
+  for a real Y/V/U planar buffer, matching the plane order it already
+  returns.
+- VideoEncoder/V4L2Encoder gain reconfigureInputFormat(format, planes).
+  On the first real frame, if it doesn't match the V4L2 device's
+  current (NV12-default) input format, EncodeComponent now first tries
+  V4L2Encoder::reconfigureInputFormat() before falling back to the CPU
+  FormatConverter. It destroys the input buffers, re-runs
+  configureInputFormat() with the requested format and the buffer's
+  own plane[0] stride (so the multi-planar Fourcc - YM21/NM12/NM21 -
+  is tried first, matching mtk-vcodec-enc.c's per-plane bytesperline
+  path), and only accepts the result if the negotiated format, plane
+  count and Y stride all match what the buffer actually has;
+  mtk-vcodec-enc.c's vidioc_try_fmt() recomputes OUTPUT bytesperline
+  from the aligned width and ignores what userspace asked for, so this
+  check is what catches a silent stride mismatch instead of shipping
+  a torn/skewed frame. On any mismatch it reverts to the previous
+  format and buffer count and returns false so the existing CPU
+  conversion path still runs, e.g. for RGB IMPLEMENTATION_DEFINED
+  buffers this driver cannot take directly.
+- enqueueInputBuffer() duplicates the frame's single dma-buf fd across
+  all V4L2 memory planes when a multi-planar format (YVU420M etc.) is
+  used with a single-fd gralloc buffer. V4L2WritableBufferRef::
+  queueDMABuf() indexes fds[0..numPlanes) unconditionally
+  (V4L2Device.cpp) with no bounds check, so a 3-plane format fed a
+  1-fd vector (the normal case for both the camera's YV12 buffer and
+  most gralloc NV12 buffers, which are one allocation with internal
+  plane offsets, not one dma-buf per plane) was an out-of-bounds
+  vector read producing a garbage fd for planes 1/2 - independently
+  enough to make QueueDMABuf fail with EBADF on its own.
+- V4L2Device::v4L2ProfileToC2Profile() was missing
+  V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10 (value 5) in its H.264 switch,
+  logging "Unknown profile: 5" whenever the driver's H264_PROFILE
+  control menu includes it; c2ProfileToV4L2H264Profile() already maps
+  PROFILE_AVC_HIGH_10 back to it, so this was a one-sided gap in the
+  reverse direction. Added the missing case.
+
+Verified so far: static read-through against mtk-vcodec-enc.c's
+vidioc_try_fmt/vb2ops_venc_queue_setup/vb2ops_venc_buf_prepare
+(kernel612-common, mindone/modules/mtk_vcodec_enc_v1) and against
+V4L2Device.cpp's Fourcc/plane-layout helpers to confirm YM21/NM12/NM21
+negotiate the multi-planar path these buffers need and that the
+existing offset/stride plumbing (EncodeHelpers.cpp
+getGraphicBlockInfo(), already Y-relative) needed no changes. Not yet
+run on-device. To verify: record video through the camera app (input
+surface path) at 2560x1440 and confirm no "Failed to queue input
+buffer using QueueDMABuf" / "Failed to enqueue input frame" /
+"Trying to queue work item while component is not running"; expect
+one "Reconfiguring V4L2 input format from NV12 to YV12" followed by
+"Reconfigured V4L2 input format to YV12, no conversion needed" instead
+of "Creating input format convertor"; confirm the recorded video has
+correct colors (would show as a green/purple chroma swap if the
+plane-order assumption were wrong) and no tearing (would show as
+diagonal chroma smear if the stride check above were wrong); and
+capture-preview/non-surface encode paths (already NV12) are unaffected.
+
+Device run (25.09) found a second, independent bug past the one above:
+reconfiguration itself worked exactly as designed - "Reconfiguring V4L2
+input format from NV12 to YV12 to match the actual buffer layout", the
+driver accepted it (vidioc_try_fmt w/h (2560,1440) sizeimage[3686400,
+921600,921600], 3 planes allocated) - but then "(OUTPUT_MPLANE)VIDIOC_QBUF
+failed", and with videobuf2 debug on the kernel side gave the real reason:
+"__prepare_dmabuf: invalid dmabuf fd for plane 0" / "__buf_prepare: buffer
+preparation failed: -22". createInputFrame() (this file) read
+block.handle()->data[0..numFds) unconditionally, assuming every
+C2ConstGraphicBlock is backed by a plain C2Handle/native_handle_t whose
+data[] entries are dma-buf fds. On this Android 16 build, GraphicBufferSource
+hands the input surface's frames to the Codec2 client as IGBA/AHardwareBuffer
+-backed blocks (_C2BlockPoolData::TYPE_AHWBUFFER), whose C2Handle is an
+opaque IGBA handle, not a native_handle_t of fds - block.handle()->data[0]
+was some other integer, so a garbage value went to the kernel as a dma-buf
+fd. The camera's own MTK gralloc YV12 buffer underneath is unaffected by
+this - the pixel data and padded (925440-byte) chroma planes are exactly
+what the format-detection and stride-match work above already handles;
+only the fd this file extracted from the wrapping C2 block was wrong.
+
+Fixed by adding getInputBlockFds(), which asks
+_C2BlockFactory::GetGraphicBlockPoolData(block) (codec2_vndk's own
+internal accessor, already reachable here through the libcodec2_internal
+header_libs dependency this target already has) for the block's pool
+data; if its getType() is TYPE_AHWBUFFER, it gets the real AHardwareBuffer
+via _C2BlockFactory::GetAHardwareBuffer() (the same VNDK helper this
+repo's own VideoFramePool.cpp already uses for its IGBA case) and reads
+the dma-buf fd(s) from AHardwareBuffer_getNativeHandle()'s native_handle_t
+instead - a plain, already-imported native_handle_t with the identical
+numFds/data[] fd convention, so the existing per-plane loop is reused
+unchanged. Anything not TYPE_AHWBUFFER (a plain gralloc/bufferqueue block,
+the pre-existing case) still goes through block.handle() as before. No fd
+is duplicated: the fetched AHardwareBuffer's native handle is owned by the
+block's own pool data for as long as the C2ConstGraphicBlock is alive
+(_C2BlockFactory::GetGraphicBlockPoolData() returns the block's own
+poolData() member, not a newly constructed object), and the block itself
+is kept alive by the C2Work sitting in EncodeComponent::mWorkQueue until
+onInputBufferDone() releases it - the same lifetime window the
+pre-existing, never-duplicated gralloc-fd path already relied on. Needed
+no Android.bp change: components/Android.bp already lists
+libcodec2_internal in header_libs (for C2BlockInternal.h) and
+libnativewindow in shared_libs (for vndk/hardware_buffer.h's
+AHardwareBuffer_getNativeHandle), both confirmed against the real
+Android.bp in this tree.
+
+Verified on device (25.09): the format/stride-reconfiguration logic above
+is now confirmed correct against a real MTK gralloc YV12 camera buffer at
+2560x1440 (driver-side vidioc_try_fmt log matches the requested layout, 3
+planes negotiated) - only the fd-extraction bug fixed in this amendment
+blocked it from queueing. Not yet re-run after this fix. To verify: repeat
+the same 2560x1440 camera-surface recording; expect no "invalid dmabuf fd
+for plane" / "VIDIOC_QBUF failed" / buffer preparation failed: -22 from
+the kernel, a clean encoded stream, correct colors and no chroma tearing
+(both already called out above); and that the plain-gralloc (non-surface,
+byte-buffer) encode path, which never carries an AHWBUFFER-backed block
+and so never hit this bug, is unaffected.
+
+Device run (25.09, evening) showed the AHWBUFFER branch was not the case
+that mattered: the camera and screenrecord frames reach the encoder as
+plain gralloc blocks (no pool data), and a temporary log of their handle
+gave numFds=3, numInts=85 with data[0] -> anon_inode:gralloc_extra (MTK
+gralloc metadata), data[1] -> /dmabuf:2560x1440-YV12-halbuf (the buffer)
+and data[2] -> an ashmem region. The kernel rejected data[0]
+("__prepare_dmabuf: invalid dmabuf fd for plane 0"). getInputBlockFds()
+now keeps only the fds that are dma-bufs, recognised the way
+libdmabufinfo does it, by the /proc/self/fd link starting with
+"/dmabuf". fstatfs() with DMA_BUF_MAGIC was tried first, but the c2
+service domain has no filesystem getattr on the dmabuf and anon_inodefs
+superblocks (avc denied, unlabeled) and granting that would be wrong,
+while reading the links of its own fds needs nothing new.
+
+Verified on the device (2509-K5, ROM 0925c, this service bind-mounted):
+CamRig video 2560x1440 AVC 24 Mbit/s for 10 s -> "Reconfiguring V4L2
+input format from NV12 to YV12", no QBUF error, 290 frames in 9.79 s =
+29.52 fps, largest gap 66.7 ms, 23.7 Mbit/s, 29 MB MP4 (ffprobe: h264
+2560x1440 yuv420p, 290 frames); an extracted frame shows correct colours
+and no chroma skew.
+
+Change-Id: Id86133789d341b3c8d706913b0f6a601e53a5393
+---
+ components/EncodeComponent.cpp                | 85 ++++++++++++++-----
+ .../v4l2_codec2/components/VideoEncoder.h     |  3 +
+ v4l2/V4L2Device.cpp                           |  2 +
+ v4l2/V4L2Encoder.cpp                          | 44 +++++++++-
+ v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h   |  3 +
+ 5 files changed, 116 insertions(+), 21 deletions(-)
+
+diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
+index 65de283..cf6a679 100644
+--- a/components/EncodeComponent.cpp
++++ b/components/EncodeComponent.cpp
+@@ -9,11 +9,15 @@
+ #include <v4l2_codec2/components/EncodeComponent.h>
+ 
+ #include <inttypes.h>
++#include <stdio.h>
++#include <string.h>
++#include <unistd.h>
+ 
+ #include <algorithm>
+ #include <utility>
+ 
+ #include <C2AllocatorGralloc.h>
++#include <C2BlockInternal.h>
+ #include <C2PlatformSupport.h>
+ #include <C2Work.h>
+ #include <android/hardware/graphics/common/1.0/types.h>
+@@ -24,6 +28,7 @@
+ #include <ui/GraphicBuffer.h>
+ #include <ui/Size.h>
+ #include <utils/Trace.h>
++#include <vndk/hardware_buffer.h>
+ 
+ #include <v4l2_codec2/common/EncodeHelpers.h>
+ #include <v4l2_codec2/common/FormatConverter.h>
+@@ -37,14 +42,51 @@ using android::hardware::graphics::common::V1_0::BufferUsage;
+ namespace android {
+ 
+ namespace {
++
++bool isDmaBufFd(int fd) {
++    char path[32];
++    char link[64];
++    snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
++    ssize_t n = readlink(path, link, sizeof(link));
++    return n >= 7 && strncmp(link, "/dmabuf", 7) == 0;
++}
++
++std::vector<int> getInputBlockFds(const C2ConstGraphicBlock& block) {
++    std::vector<int> fds;
++    std::shared_ptr<_C2BlockPoolData> poolData = _C2BlockFactory::GetGraphicBlockPoolData(block);
++    const native_handle_t* handle = nullptr;
++    if (poolData && poolData->getType() == _C2BlockPoolData::TYPE_AHWBUFFER) {
++        AHardwareBuffer* ahwb = nullptr;
++        if (!_C2BlockFactory::GetAHardwareBuffer(poolData, &ahwb) || !ahwb) {
++            ALOGE("Failed to get the AHardwareBuffer of an AHWBUFFER-backed input block");
++            return fds;
++        }
++        handle = AHardwareBuffer_getNativeHandle(ahwb);
++    } else {
++        handle = block.handle();
++    }
++    if (!handle) {
++        ALOGE("Input block has no native handle");
++        return fds;
++    }
++    for (int i = 0; i < handle->numFds; i++) {
++        if (isDmaBufFd(handle->data[i])) {
++            fds.emplace_back(handle->data[i]);
++        }
++    }
++    if (fds.empty()) {
++        ALOGE("Input block has no dma-buf among its %d fds", handle->numFds);
++    }
++    return fds;
++}
++
+ // Create an input frame from the specified graphic block.
+ std::unique_ptr<VideoEncoder::InputFrame> createInputFrame(
+         const C2ConstGraphicBlock& block, VideoPixelFormat format,
+         const std::vector<VideoFramePlane>& planes, uint64_t index, int64_t timestamp) {
+-    std::vector<int> fds;
+-    const C2Handle* const handle = block.handle();
+-    for (int i = 0; i < handle->numFds; i++) {
+-        fds.emplace_back(handle->data[i]);
++    std::vector<int> fds = getInputBlockFds(block);
++    if (fds.empty()) {
++        return nullptr;
+     }
+ 
+     return std::make_unique<VideoEncoder::InputFrame>(std::move(fds), planes, format, index,
+@@ -113,11 +155,7 @@ std::optional<std::vector<VideoFramePlane>> getVideoFrameLayout(const C2ConstGra
+         } else if (!crcb && semiplanar) {
+             *format = VideoPixelFormat::NV12;
+         } else if (crcb && !semiplanar) {
+-            // HACK: pretend YV12 is I420 now since VEA only accepts I420. (YV12 will be used
+-            //       for input byte-buffer mode).
+-            // TODO(dstaessens): Is this hack still necessary now we're not using the VEA directly?
+-            //format = VideoPixelFormat::YV12;
+-            *format = VideoPixelFormat::I420;
++            *format = VideoPixelFormat::YV12;
+         } else {
+             *format = VideoPixelFormat::NV21;
+         }
+@@ -462,24 +500,31 @@ void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+     // If this is the first input frame, create an input format converter if the V4L2 device doesn't
+     // support the requested input format.
+     if ((mInputPixelFormat == VideoPixelFormat::UNKNOWN) && !work->input.buffers.empty()) {
++        const C2ConstGraphicBlock block =
++                work->input.buffers.front()->data().graphicBlocks().front();
+         VideoPixelFormat format = VideoPixelFormat::UNKNOWN;
+-        if (!getVideoFrameLayout(work->input.buffers.front()->data().graphicBlocks().front(),
+-                                 &format)) {
++        std::optional<std::vector<VideoFramePlane>> layout = getVideoFrameLayout(block, &format);
++        if (!layout) {
+             ALOGE("Failed to get input block's layout");
+             reportError(C2_CORRUPTED);
+             return;
+         }
+         if (mEncoder->inputFormat() != format) {
+             ALOG_ASSERT(!mInputFormatConverter);
+-            ALOGV("Creating input format convertor (%s)",
+-                  videoPixelFormatToString(mEncoder->inputFormat()).c_str());
+-            mInputFormatConverter =
+-                    FormatConverter::create(mEncoder->inputFormat(), mEncoder->visibleSize(),
+-                                            VideoEncoder::kInputBufferCount, mEncoder->codedSize());
+-            if (!mInputFormatConverter) {
+-                ALOGE("Failed to created input format convertor");
+-                reportError(C2_CORRUPTED);
+-                return;
++            if (mEncoder->reconfigureInputFormat(format, *layout)) {
++                ALOGV("Reconfigured V4L2 input format to %s, no conversion needed",
++                      videoPixelFormatToString(format).c_str());
++            } else {
++                ALOGV("Creating input format convertor (%s)",
++                      videoPixelFormatToString(mEncoder->inputFormat()).c_str());
++                mInputFormatConverter = FormatConverter::create(
++                        mEncoder->inputFormat(), mEncoder->visibleSize(),
++                        VideoEncoder::kInputBufferCount, mEncoder->codedSize());
++                if (!mInputFormatConverter) {
++                    ALOGE("Failed to created input format convertor");
++                    reportError(C2_CORRUPTED);
++                    return;
++                }
+             }
+         }
+     }
+diff --git a/components/include/v4l2_codec2/components/VideoEncoder.h b/components/include/v4l2_codec2/components/VideoEncoder.h
+index eeb63c2..e967f51 100644
+--- a/components/include/v4l2_codec2/components/VideoEncoder.h
++++ b/components/include/v4l2_codec2/components/VideoEncoder.h
+@@ -83,6 +83,9 @@ public:
+     // Request the next frame encoded to be a key frame, will affect the next non-processed frame.
+     virtual void requestKeyframe() = 0;
+ 
++    virtual bool reconfigureInputFormat(VideoPixelFormat format,
++                                        const std::vector<VideoFramePlane>& planes) = 0;
++
+     virtual VideoPixelFormat inputFormat() const = 0;
+     virtual const ui::Size& visibleSize() const = 0;
+     virtual const ui::Size& codedSize() const = 0;
+diff --git a/v4l2/V4L2Device.cpp b/v4l2/V4L2Device.cpp
+index de47313..33824b9 100644
+--- a/v4l2/V4L2Device.cpp
++++ b/v4l2/V4L2Device.cpp
+@@ -1523,6 +1523,8 @@ C2Config::profile_t V4L2Device::v4L2ProfileToC2Profile(VideoCodec codec, uint32_
+             return C2Config::PROFILE_AVC_HIGH;
+         case V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH:
+             return C2Config::PROFILE_AVC_CONSTRAINED_HIGH;
++        case V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_10:
++            return C2Config::PROFILE_AVC_HIGH_10;
+         }
+         break;
+     case VideoCodec::VP8:
+diff --git a/v4l2/V4L2Encoder.cpp b/v4l2/V4L2Encoder.cpp
+index 730827c..b22460a 100644
+--- a/v4l2/V4L2Encoder.cpp
++++ b/v4l2/V4L2Encoder.cpp
+@@ -460,7 +460,7 @@ void V4L2Encoder::onDrainDone(bool done) {
+ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t stride) {
+     ALOGV("%s()", __func__);
+     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+-    ALOG_ASSERT(mState == State::UNINITIALIZED);
++    ALOG_ASSERT(mState == State::UNINITIALIZED || mState == State::WAITING_FOR_INPUT_FRAME);
+     ALOG_ASSERT(!mInputQueue->isStreaming());
+     ALOG_ASSERT(!isEmpty(mVisibleSize));
+ 
+@@ -566,6 +566,44 @@ bool V4L2Encoder::configureInputFormat(VideoPixelFormat inputFormat, uint32_t st
+     return true;
+ }
+ 
++bool V4L2Encoder::reconfigureInputFormat(VideoPixelFormat format,
++                                         const std::vector<VideoFramePlane>& planes) {
++    ALOGV("%s()", __func__);
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++    ALOG_ASSERT(!mInputQueue->isStreaming());
++
++    if (mInputLayout && mInputLayout->mFormat == format) {
++        return true;
++    }
++    if (planes.empty()) {
++        return false;
++    }
++
++    VideoPixelFormat previousFormat =
++            mInputLayout ? mInputLayout->mFormat : VideoPixelFormat::UNKNOWN;
++    uint32_t previousStride =
++            (mInputLayout && !mInputLayout->mPlanes.empty()) ? mInputLayout->mPlanes[0].mStride : 0;
++
++    ALOGI("Reconfiguring V4L2 input format from %s to %s to match the actual buffer layout",
++          videoPixelFormatToString(previousFormat).c_str(), videoPixelFormatToString(format).c_str());
++
++    destroyInputBuffers();
++
++    if (configureInputFormat(format, planes[0].mStride) && mInputLayout &&
++        mInputLayout->mFormat == format && mInputLayout->mPlanes.size() == planes.size() &&
++        mInputLayout->mPlanes[0].mStride == planes[0].mStride && createInputBuffers()) {
++        return true;
++    }
++
++    ALOGW("V4L2 device doesn't accept input format %s directly, reverting to %s",
++          videoPixelFormatToString(format).c_str(), videoPixelFormatToString(previousFormat).c_str());
++    if (previousFormat == VideoPixelFormat::UNKNOWN ||
++        !configureInputFormat(previousFormat, previousStride) || !createInputBuffers()) {
++        onError();
++    }
++    return false;
++}
++
+ bool V4L2Encoder::configureOutputFormat(C2Config::profile_t outputProfile) {
+     ALOGV("%s()", __func__);
+     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+@@ -769,6 +807,10 @@ bool V4L2Encoder::enqueueInputBuffer(std::unique_ptr<InputFrame> frame) {
+ 
+     std::vector<int> fds = frame->fds();
+     if (mInputLayout->mMultiPlanar) {
++        if (fds.size() < planes.size()) {
++            ALOG_ASSERT(fds.size() == 1);
++            fds.resize(planes.size(), fds[0]);
++        }
+         // If the input format is multi-planar, then we need to submit one memory plane per color
+         // plane of our input frames.
+         for (size_t i = 0; i < planes.size(); ++i) {
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h
+index d1eb656..0f9617d 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Encoder.h
+@@ -45,6 +45,9 @@ public:
+     bool setFramerate(uint32_t framerate) override;
+     void requestKeyframe() override;
+ 
++    bool reconfigureInputFormat(VideoPixelFormat format,
++                                const std::vector<VideoFramePlane>& planes) override;
++
+     VideoPixelFormat inputFormat() const override;
+     const ui::Size& visibleSize() const override { return mVisibleSize; }
+     const ui::Size& codedSize() const override { return mInputCodedSize; }
+-- 
+2.43.0
+

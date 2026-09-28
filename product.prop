@@ -1,5 +1,3 @@
-# FM Radio — MT6631/6635 chip family, confirmed on this device
-# (fmradio_drv_mt6631_6635.ko loads live, F3308).
 ro.fm.chip=0x6631
 ro.fm.band=1
 ro.fm.low_band=875
@@ -17,5 +15,4 @@ ro.fm.fake_chan_1=960 -152
 ro.fm.fake_chan_2=1040 -152
 ro.fm.fake_chan_3=1075 -205
 
-# 13.09 log flood (LOG-REVIEW-1309): per-UID socket teardown accounting, ~650/min at D level
 log.tag.InetDiagMessage=SILENT

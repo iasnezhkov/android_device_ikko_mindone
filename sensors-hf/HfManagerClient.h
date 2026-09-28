@@ -2,17 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-/*
- * Thin, direct wrapper around the single shared /dev/hf_manager fd this HAL
- * process opens once. One hf_client (kernel side, hf_manager.c:1246
- * hf_client_create()) is created per open() call/process, so this class is
- * meant to be instantiated exactly once by Sensors (one process = one
- * kernel client = one event FIFO shared by every activated sensor).
- *
- * Every ioctl/read/write here is a direct, undecorated translation of the
- * hf_manager ABI in hf_manager_uapi.h - see SENSORS-HAL-PLAN-1309.md for the
- * full protocol writeup with kernel file:line citations.
- */
 
 #ifndef MINDONE_HF_MANAGER_CLIENT_H_
 #define MINDONE_HF_MANAGER_CLIENT_H_

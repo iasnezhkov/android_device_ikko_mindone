@@ -2,106 +2,12 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-/*
- * audio.primary.mindone -- legacy tinyalsa audio HAL for iKKO MindOne
- * (MT6789 SoC + MT6366 codec, aw87xxx smart PA over I2C).
- *
- * v2 (13/14.09.2026 night) -- supersedes the v1 draft. Full route derivation
- * and every control-name citation is in AUDIO-ROUTES-1309; the HAL-level design rationale
- * is in AUDIO-HAL-PLAN-1309. Both are working notes outside this tree; the comments here are
- * written to stand without them.
- *
- * WHAT CHANGED FROM v1 (functional fixes, found by cross-checking v1 against
- * AUDIO-ROUTES-1309's source-verified route map):
- *
- *   1. AFE crossbar switches (AUDIO-ROUTES-1309 section 5, F4308). v1 only ever applied
- *      the codec-side device mux paths ("speaker"/"headphone"/"mic") and never touched the
- *      separate hardware summing-mixer layer between the DL/UL memifs and ADDA
- *      ("ADDA_DL_CH1 DL1_CH1", "UL1_CH1 ADDA_UL_CH1", ...). Without these, v1 would have opened
- *      PCM successfully and produced no audible output/input at all. Fixed here: every output
- *      stream now also applies/tears down a "dlN-adda" crossbar path keyed to its own PCM device
- *      (independent of, and orthogonal to, the speaker/headphone device-selection path -- see
- *      apply_dl_crossbar()/teardown_dl_crossbar()); the capture crossbar is folded directly into
- *      mixer_paths.xml's mic/mic-back/headset-mic paths since v2 only ever opens one capture PCM
- *      device (UL1) regardless of which mic source is selected.
- *   2. Wired headset mic (AUDIO-ROUTES-1309 section 2.5). v1 had no input-device
- *      selection logic at all -- in_set_parameters() stored the requested device mask but never
- *      acted on it, so a capture stream always used the "mic" (main, AIN0) path regardless of what
- *      AudioFlinger asked for. Fixed here: input_device_from_mask() now recognizes
- *      AUDIO_DEVICE_IN_WIRED_HEADSET and routes to the new "headset-mic" (AIN1) mixer path;
- *      in_set_parameters() now re-routes a running capture stream on a device change, mirroring
- *      what out_set_parameters() already did for output. NOTE: this path is currently
- *      unreachable through Android's audio policy on this product (F4309, no
- *      AUDIO_DEVICE_IN_WIRED_HEADSET devicePort in this device's audio_policy_configuration.xml)
- *      -- implemented anyway as correct, faithful plumbing rather than left as a silent no-op, in
- *      case policy is ever extended.
- *
- * v1 scope, unchanged (AUDIO-HAL-PLAN-1309 section 3):
- *   - media playback to speaker / headphone
- *   - mic capture: main mic (AIN0) and, new in v2, wired headset mic (AIN1) -- back mic (AIN2)
- *     mixer path exists in mixer_paths.xml but is not wired into device selection here (physical
- *     presence of a second mic pad on this board is unconfirmed, AUDIO-ROUTES-1309
- *     section 2.4)
- *   - routing switch on device change
- *   - volume via the codec's own hardware gain kcontrols
- *   - standby that closes the PCM and cuts this stream's AFE crossbar; the speaker amp and
- *     the codec-side device path are shared and go down only with the last stream (F4535)
- *   - VOICE CALLS (new 15.09): the modem "PCM 2" backend crossbar, earpiece/speaker selection,
- *     call volume on the endpoint's hardware gain, real mic mute by cutting the uplink, and echo
- *     reference for the speakerphone case. Driven entirely from adev_set_mode(): AUDIO_MODE_IN_CALL
- *     brings the route up, anything else tears it down. No MD/CCCI/IPI command is sent - the modem
- *     streams on its own once the crossbar is connected; if a measurement ever shows it needs an
- *     explicit kick, voice_route_enable() is the one place to add it.
- *
- *   - BT SCO (15.09, made real 16.09): the kernel btcvsd transport on PCM 46 and mute through
- *     "BTCVSD Tx Mute Switch". It sits beside the AFE, not on its crossbar, so a SCO stream skips
- *     both the dlN-adda crossbar and the endpoint paths. btcvsd carries mono S16 at the SCO band
- *     rate (8 kHz CVSD, 16 kHz mSBC) in 60-byte packets (mtk_btcvsd.c: BTCVSD_TX_PACKET_SIZE, and
- *     a write that is not a multiple of it is refused), while the framework hands this HAL 48 kHz
- *     stereo. So a stream routed to SCO opens PCM 46 with the band's own config and converts in
- *     software: downmix + decimation on the way out (sco_out_convert()), interpolation on the way
- *     in (in_read()). The band follows the bt_wbs / bt_swb parameters the Bluetooth stack sets,
- *     NB until told otherwise as HFP requires. A device change between SCO and anything else
- *     needs a different PCM device and config, so it restarts the stream (reopen_pending)
- *     instead of re-routing it in place.
- *     KNOWN GAP: a VOICE CALL over SCO. On this SoC the modem's speech does not reach Bluetooth by
- *     itself; the stock HAL runs a copy loop between the modem memif ("PCM 2") and btcvsd in both
- *     directions. That loop is not written yet, so voice_route_enable() keeps such a call on the
- *     earpiece and says so in the log, rather than routing it into silence.
- *   - audio patches / ports (new 15.09): create/release_audio_patch drive routing from the
- *     framework's port graph instead of a parsed set_parameters string, reusing the same
- *     apply_output_route()/apply_input_route() so the two cannot drift apart. A device change
- *     mid-call moves the whole voice route, because the echo reference depends on the endpoint.
- *   - effects: accepted as a no-op. Effects here are software, owned by the effects HAL and
- *     applied before the buffer reaches us; there is no hardware effect block on mt6789.
- *
- * Explicitly NOT implemented, with the reason:
- *   - FM: there is no FM hardware exposed on this board - zero mixer controls matching "fm",
- *     no tuner in audio_policy_configuration.xml, no kernel module (checked on device 15.09).
- *     Writing an FM path would be dead code.
- *   - DSP/SCP compressed offload: a power optimisation, not a function. Without it AudioFlinger
- *     decodes in software and everything still plays; wiring it needs the SCP/ADSP IPI protocol,
- *     which is a separate piece of work.
- *
- * PCM device numbers, memif roles and every mixer control name/value here are cited in
- * AUDIO-ROUTES-1309 against our own compiled kernel sources
- * (the kernel tree's mindone/modules/) and cross-checked against the stock firmware's
- * audio_device.xml routing table. Anywhere that cross-check was NOT possible
- * (source and stock config could not agree, or stock config was silent, or the path is not
- * reachable from Android policy at all on this product) is marked VERIFY-ON-DEVICE or NOTE below,
- * with the read-only command/caveat to confirm.
- *
- * !! VERIFY BEFORE FIRST BUILD !! This is written against the classic legacy audio_hw_device_t /
- * audio_stream_out / audio_stream_in struct shape (hardware/libhardware/include/hardware/audio.h).
- * Designated initializers are used everywhere specifically so that a field this tree's exact
- * header revision doesn't have (or expects in a different shape) fails the build loudly instead
- * of silently misordering the vtable. If it doesn't compile as shipped, fix the struct-literal
- * mismatch against the real header -- do not switch to positional init.
- */
 
 #define LOG_TAG "audio_hw_mindone"
 
+#include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <malloc.h>
 #include <math.h>
@@ -109,6 +15,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #include <log/log.h>
 #include <cutils/str_parms.h>
@@ -120,34 +29,21 @@
 #include <tinyalsa/asoundlib.h>
 #include <audio_route/audio_route.h>
 
-/* ---- Card / PCM device numbers -------------------------------------------
- * From the device's /proc/asound (card 0, "mt6789-mt6366") and the FE
- * dai_link -> memif decode in AUDIO-ROUTES-1309 section 1.
- */
 #define PCM_CARD                0
 
 #define PCM_DEVICE_PRIMARY      0   /* Playback_1 / DL1  -- MT6789_PRIMARY_MEMIF */
 #define PCM_DEVICE_FAST         2   /* Playback_2 / DL2  -- MT6789_FAST_MEMIF    */
 #define PCM_DEVICE_DEEP_BUFFER  3   /* Playback_3 / DL3  -- MT6789_DEEP_MEMIF    */
 #define PCM_DEVICE_CAPTURE_MAIN 9   /* Capture_1  / UL1  -- MT6789_RECORD_MEMIF  */
-/* 15.09: BT SCO. Verified on the live device: "00-46: BTCVSD snd-soc-dummy-dai-46, playback 1,
- * capture 1", module mtk_btcvsd loaded. This is a kernel voice de/encoder, NOT a memif on the AFE
- * crossbar (AUDIO-ROUTES-1309 section 4) - so a SCO stream deliberately skips both the
- * dlN-adda crossbar and the speaker/headphone endpoint paths. */
 #define PCM_DEVICE_BTCVSD       46
 #define SCO_RATE_NB             8000
 #define SCO_RATE_WB             16000
+#define PCM_DEVICE_SPEECH_HOSTLESS  22
+#define SPEECH_HOSTLESS_RATE        8000
+#define SPEECH_HOSTLESS_CHANNELS    2
+#define SPEECH_HOSTLESS_PERIOD_SIZE (SPEECH_HOSTLESS_RATE / 50)
+#define SPEECH_HOSTLESS_PERIOD_COUNT 4
 
-/* Rates/formats per AUDIO-ROUTES-1309 section 1.1
- * (mt6789-afe-pcm.c: MTK_PCM_RATES / MTK_PCM_FORMATS). v2 opens everything at a single
- * conservative operating point rather than the full range the AFE advertises -- AudioFlinger
- * resamples above/below this in software.
- *
- * VERIFY-ON-DEVICE: period_size/period_count below are still NOT decoded from source (would need
- * the platform hw_params constraint logic in mt6789-afe-pcm.c's memif ops, not read in this pass
- * either) -- they are the typical MTK reference default. Confirm against actual xrun behavior
- * with tinyplay before trusting this for anything latency-sensitive.
- */
 #define OUT_SAMPLING_RATE   48000
 #define OUT_PERIOD_SIZE     960
 #define OUT_PERIOD_COUNT    4
@@ -208,7 +104,7 @@ enum output_device {
 enum input_device {
     IN_DEVICE_NONE = 0,
     IN_DEVICE_MAIN_MIC,
-    IN_DEVICE_HEADSET_MIC,      /* new in v2: AIN1 pad, AUDIO-ROUTES-1309 section 2.5 */
+    IN_DEVICE_HEADSET_MIC,
     IN_DEVICE_BT_SCO,           /* 16.09: btcvsd capture on PCM 46, no codec path at all */
 };
 
@@ -232,19 +128,14 @@ struct mindone_audio_device {
     /* Voice call state (15.09). in_call is what actually gates the modem crossbar: the framework
      * can call set_voice_volume()/set_mic_mute() outside a call, and those must not touch it. */
     bool in_call;
+    bool speech_on;
     enum output_device voice_out_device;
+    struct pcm *speech_hostless_out;
+    struct pcm *speech_hostless_in;
 
     struct mindone_stream_out *active_out;
     struct mindone_stream_in *active_in;
 
-    /* How many non-standby streams currently use each output endpoint ("speaker",
-     * "headphone", ...). AudioFlinger keeps several output streams open on the same device at
-     * once -- primary, fast and deep_buffer -- and each of them enters standby on its own clock.
-     * The codec-side path (LOL Mux, the aw87xxx amp, RCV Mux) is shared by all of them, so it
-     * may only be torn down when the LAST user leaves. Before this count existed, a 3-second UI
-     * sound going to standby applied "speaker-off" underneath a deep_buffer stream that was still
-     * playing: the DMA kept running into an open codec mux and the phone went silent until the
-     * next short sound re-applied "speaker" -- for exactly one standby period (F4535). */
     int out_ep_users[OUT_DEVICE_COUNT];
 
     /* Every open output stream, so a device change (audio patch) can move all of them rather
@@ -333,11 +224,6 @@ struct mindone_stream_in {
     size_t downmix_frames;
 };
 
-/* ---- Routing helpers ------------------------------------------------------
- * Path names below match mixer_paths.xml next to this file exactly (see that file and
- * AUDIO-ROUTES-1309 for the mixer control names/values and their kernel-source
- * citations).
- */
 
 static enum output_device output_device_from_mask(audio_devices_t device)
 {
@@ -441,12 +327,6 @@ static void teardown_output_route(struct mindone_audio_device *adev,
     endpoint_release(adev, device);
 }
 
-/* ---- AFE crossbar (new in v2) ----------------------------------------------
- * AUDIO-ROUTES-1309 section 5 / F4308: separate from device selection above. Every DL
- * memif needs its own "ADDA_DL_CHn DLx_CHn" switches turned on before its samples reach ADDA,
- * regardless of which physical output device (speaker/headphone) is currently selected. These
- * three paths touch disjoint control names, so they compose safely if more than one output
- * stream is open at once. */
 static const char *dl_crossbar_path_name(int pcm_device)
 {
     switch (pcm_device) {
@@ -487,13 +367,6 @@ static void teardown_dl_crossbar(struct mindone_audio_device *adev,
     out->crossbar_on = false;
 }
 
-/* ---- Input routing (rewritten in v2) ---------------------------------------
- * v1's apply_input_route()/teardown_input_route() only ever knew about IN_DEVICE_MAIN_MIC and
- * were never actually called from in_set_parameters() -- a running capture stream could not be
- * re-routed on a device change. Fixed to mirror the output side exactly. The capture-side AFE
- * crossbar ("UL1_CHn ADDA_UL_CHn") is folded directly into mixer_paths.xml's mic/mic-back/
- * headset-mic paths (unlike the DL side) since v2 only ever opens one capture PCM device (UL1)
- * regardless of which mic source is selected -- see AUDIO-ROUTES-1309 section 5.1. */
 
 static enum input_device input_device_from_mask(audio_devices_t device)
 {
@@ -513,9 +386,6 @@ static enum input_device input_device_from_mask(audio_devices_t device)
         return IN_DEVICE_BT_SCO;
     if (type & (AUDIO_DEVICE_IN_WIRED_HEADSET & ~AUDIO_DEVICE_BIT_IN))
         return IN_DEVICE_HEADSET_MIC;
-    /* Built-in back mic (AIN2) is deliberately not selected here: physical presence of a second
-     * mic pad on this board is unconfirmed (AUDIO-ROUTES-1309 section 2.4) -- main mic
-     * (AIN0) is the safe default, matching v1's scope. */
     return IN_DEVICE_MAIN_MIC;
 }
 
@@ -568,13 +438,6 @@ static void teardown_input_route(struct mindone_audio_device *adev,
     audio_route_update_mixer(adev->route);
 }
 
-/* ---- Hardware volume ------------------------------------------------------
- * v1/v2 use the codec's own gain kcontrols rather than a software multiplier, per
- * AUDIO-HAL-PLAN-1309 section 3 ("matches battery-first: no extra DSP/CPU gain stage").
- * "Headset Volume"/"Lineout Volume" are double (L/R) TLV controls (mt6358.c:729-734); read the
- * live range instead of hardcoding it, since the exact max index (0x12 in source) could differ
- * from what the running kernel reports.
- */
 static void set_hw_output_volume(struct mindone_audio_device *adev,
                                   enum output_device device, float vol)
 {
@@ -667,18 +530,410 @@ static int output_pcm_device(const struct mindone_stream_out *out, enum output_d
     return (dev == OUT_DEVICE_BT_SCO) ? PCM_DEVICE_BTCVSD : out->pcm_device;
 }
 
-/* ---- Voice call --------------------------------------------------------------
- * 15.09. The AFE side of a call is nothing but crossbar switches: the modem streams over the
- * "PCM 2" backend on its own, so the HAL's whole job is to connect it to the codec, pick the
- * endpoint, set the gain, and undo all of that on hang-up. Control names in mixer_paths.xml were
- * each verified to exist on the live device before being used (AUDIO-ROUTES-1309 sec. 3).
- *
- * Deliberately NOT done here: no MD/CCCI/IPI command is sent. The modem brings its own audio up
- * when the call connects; if a future measurement shows it needs an explicit kick, that is the
- * one place to add it - not a reason to re-route anything below.
- *
- * Caller must hold adev->lock.
- */
+#define CCCI_AUD_NODE "/dev/ccci_aud"
+
+#define SPH_MSG_ID_SPEECH_ON 12064
+#define SPH_MSG_ID_SPEECH_OFF 12065
+#define SPH_MSG_ID_SET_SPEECH_MODE 12075
+
+#define SPH_APP_NORMAL_CALL 0
+
+#define SPH_CCCI_CHANNEL 5
+#define SPH_CCCI_PAYLOAD_MAGIC 0xA522
+#define SPH_TASK_SPEECH_ON 25
+
+#define SPH_INFO_PAYLOAD_SIZE 128
+#define SPH_INFO_OFF_APP 0
+#define SPH_INFO_OFF_BT 1
+#define SPH_INFO_OFF_RATE_ENUM 2
+#define SPH_INFO_OFF_OPENDSP 3
+#define SPH_INFO_OFF_PATH 4
+#define SPH_INFO_OFF_PARAM_EMI_VALID 5
+#define SPH_INFO_OFF_EMI_PARAM_SIZE 20
+#define SPH_INFO_OFF_EMI_PARAM_OFFSET 24
+#define SPH_INFO_OFF_SMARTPA_CONFIG 84
+#define SPH_INFO_PATH_SHM_CCCI 0
+#define SPH_INFO_EMI_EMPTY_VALID 2
+#define SPH_INFO_EMI_REAL_VALID 1
+#define SPH_INFO_SMARTPA_SINGLE 1
+
+#define PROP_SPH_PARAM_ENABLE "vendor.audio.mindone.sph_param"
+
+#define CCCI_RAW_AUDIO_NODE "/dev/ccci_raw_audio"
+#define SPEECHPARSER_LIB "/vendor/lib64/libspeechparser_vendor.so"
+
+#define CCCI_IOC_MAGIC 'C'
+#define CCCI_IOC_SMEM_BASE _IOR(CCCI_IOC_MAGIC, 48, unsigned int)
+#define CCCI_IOC_SMEM_LEN _IOR(CCCI_IOC_MAGIC, 49, unsigned int)
+
+#define SPH_SHM_SIZE 53248
+#define SPH_SHM_OFF_AP_FLAG 32
+#define SPH_SHM_OFF_SPH_PARAM_OFFSET 40
+#define SPH_SHM_OFF_SPH_PARAM_SIZE 44
+#define SPH_SHM_OFF_SPH_PARAM_WIDX 52
+#define SPH_SHM_OFF_MD_VERSION 120
+
+#define SPH_SHM_SPH_PARAM_OFFSET 128
+#define SPH_SHM_SPH_PARAM_SIZE 12288
+
+#define SP_MDVERSION_PROVEN_FALLBACK 0x3000u
+#define SP_PARAM_BUF_CAPACITY 49152u
+#define SP_IDX_VOLUME_DEFAULT 3u
+
+struct sp_input_attr {
+    uint32_t inputDevice;
+    uint32_t outputDevice;
+    uint32_t idxVolume;
+    uint32_t scenario;
+    uint32_t featureOn;
+    uint16_t ttyMode;
+    uint8_t custType;
+    uint8_t ipcPath;
+    uint8_t extraMode;
+    uint8_t memoryIdx;
+    uint8_t pad[2];
+} __attribute__((packed));
+
+struct sp_out_buf {
+    uint32_t memorySize;
+    uint32_t dataSize;
+    void *bufferAddr;
+} __attribute__((packed));
+
+struct sp_kv {
+    uint64_t reserved0;
+    char *stringAddr;
+};
+
+typedef void *(*sp_handle_get_instance_fn)(void);
+typedef int (*sp_handle_init_fn)(void *);
+typedef int (*sp_get_param_buffer_fn)(void *, const struct sp_input_attr *, struct sp_out_buf *);
+typedef int (*sp_key_value_fn)(void *, struct sp_kv *);
+
+struct ccci_sph_mailbox {
+    int32_t reserved0;
+    uint16_t param16;
+    uint16_t msg_id;
+    uint32_t channel;
+    uint32_t param32;
+} __attribute__((packed));
+
+struct ccci_sph_payload_hdr {
+    int32_t reserved0;
+    uint32_t len_a;
+    uint32_t channel;
+    uint16_t len_b;
+    uint16_t msg_id;
+    uint16_t magic;
+    uint16_t task;
+    uint16_t payload_size;
+} __attribute__((packed));
+
+static void build_sph_info(unsigned char *out, bool wb)
+{
+    memset(out, 0, SPH_INFO_PAYLOAD_SIZE);
+    out[SPH_INFO_OFF_APP] = SPH_APP_NORMAL_CALL;
+    out[SPH_INFO_OFF_RATE_ENUM] = wb ? 1 : 0;
+    out[SPH_INFO_OFF_PATH] = SPH_INFO_PATH_SHM_CCCI;
+    out[SPH_INFO_OFF_PARAM_EMI_VALID] = SPH_INFO_EMI_EMPTY_VALID;
+    out[SPH_INFO_OFF_SMARTPA_CONFIG] = SPH_INFO_SMARTPA_SINGLE;
+}
+
+static void sph_put_u32_le(unsigned char *out, int off, uint32_t v)
+{
+    out[off] = (unsigned char)(v & 0xff);
+    out[off + 1] = (unsigned char)((v >> 8) & 0xff);
+    out[off + 2] = (unsigned char)((v >> 16) & 0xff);
+    out[off + 3] = (unsigned char)((v >> 24) & 0xff);
+}
+
+static uint32_t sph_get_u32_le(const unsigned char *in, int off)
+{
+    return (uint32_t)in[off] | ((uint32_t)in[off + 1] << 8) | ((uint32_t)in[off + 2] << 16) |
+           ((uint32_t)in[off + 3] << 24);
+}
+
+static void sph_info_set_real_params(unsigned char *info, uint32_t size, uint32_t offset)
+{
+    info[SPH_INFO_OFF_PARAM_EMI_VALID] = SPH_INFO_EMI_REAL_VALID;
+    sph_put_u32_le(info, SPH_INFO_OFF_EMI_PARAM_SIZE, size);
+    sph_put_u32_le(info, SPH_INFO_OFF_EMI_PARAM_OFFSET, offset);
+}
+
+static void sph_input_attr_for_route(enum output_device out, struct sp_input_attr *attr)
+{
+    memset(attr, 0, sizeof(*attr));
+    attr->idxVolume = SP_IDX_VOLUME_DEFAULT;
+    attr->scenario = SPH_APP_NORMAL_CALL;
+
+    switch (out) {
+    case OUT_DEVICE_SPEAKER:
+        attr->outputDevice = AUDIO_DEVICE_OUT_SPEAKER;
+        attr->inputDevice = AUDIO_DEVICE_IN_BUILTIN_MIC;
+        break;
+    case OUT_DEVICE_HEADPHONE:
+        attr->outputDevice = AUDIO_DEVICE_OUT_WIRED_HEADSET;
+        attr->inputDevice = AUDIO_DEVICE_IN_WIRED_HEADSET;
+        break;
+    case OUT_DEVICE_BT_SCO:
+        attr->outputDevice = AUDIO_DEVICE_OUT_BLUETOOTH_SCO;
+        attr->inputDevice = AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET;
+        break;
+    case OUT_DEVICE_EARPIECE:
+    default:
+        attr->outputDevice = AUDIO_DEVICE_OUT_EARPIECE;
+        attr->inputDevice = AUDIO_DEVICE_IN_BUILTIN_MIC;
+        break;
+    }
+}
+
+static unsigned char *sph_smem_open(int *out_fd, unsigned int *out_len)
+{
+    int fd;
+    unsigned int base = 0;
+    unsigned int len = 0;
+    void *map;
+
+    fd = open(CCCI_RAW_AUDIO_NODE, O_RDWR);
+    if (fd < 0) {
+        ALOGE("%s: open(%s) failed: %s", __func__, CCCI_RAW_AUDIO_NODE, strerror(errno));
+        return NULL;
+    }
+    if (ioctl(fd, CCCI_IOC_SMEM_BASE, &base) < 0) {
+        ALOGE("%s: CCCI_IOC_SMEM_BASE failed: %s", __func__, strerror(errno));
+        close(fd);
+        return NULL;
+    }
+    if (ioctl(fd, CCCI_IOC_SMEM_LEN, &len) < 0 || len < SPH_SHM_SIZE) {
+        ALOGE("%s: CCCI_IOC_SMEM_LEN failed or too small (%u): %s", __func__, len,
+              strerror(errno));
+        close(fd);
+        return NULL;
+    }
+    map = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED) {
+        ALOGE("%s: mmap failed: %s", __func__, strerror(errno));
+        close(fd);
+        return NULL;
+    }
+    *out_fd = fd;
+    *out_len = len;
+    return (unsigned char *)map;
+}
+
+static bool sph_param_fetch_real(enum output_device out, unsigned char *info)
+{
+    void *lib, *handle = NULL;
+    sp_handle_get_instance_fn get_instance = NULL;
+    sp_handle_init_fn init_fn = NULL;
+    sp_get_param_buffer_fn get_param = NULL;
+    sp_key_value_fn set_kv = NULL;
+    struct sp_input_attr attr;
+    struct sp_out_buf out_buf;
+    static unsigned char param_buf[SP_PARAM_BUF_CAPACITY];
+    unsigned char *shm;
+    int smem_fd = -1;
+    unsigned int smem_len = 0;
+    unsigned int md_version;
+    bool ok = false;
+
+    shm = sph_smem_open(&smem_fd, &smem_len);
+    if (!shm)
+        return false;
+
+    md_version = sph_get_u32_le(shm, SPH_SHM_OFF_MD_VERSION) & 0xffffu;
+    if (!md_version)
+        md_version = SP_MDVERSION_PROVEN_FALLBACK;
+
+    lib = dlopen(SPEECHPARSER_LIB, RTLD_NOW);
+    if (!lib) {
+        ALOGE("%s: dlopen(%s) failed: %s", __func__, SPEECHPARSER_LIB, dlerror());
+        munmap(shm, smem_len);
+        close(smem_fd);
+        return false;
+    }
+
+    get_instance = (sp_handle_get_instance_fn)dlsym(lib, "spHandleGetInstance");
+    init_fn = (sp_handle_init_fn)dlsym(lib, "spHandleInit");
+    get_param = (sp_get_param_buffer_fn)dlsym(lib, "getParamBuffer");
+    set_kv = (sp_key_value_fn)dlsym(lib, "setKeyValuePair");
+    if (!get_instance || !get_param || !set_kv) {
+        ALOGE("%s: dlsym failed on %s", __func__, SPEECHPARSER_LIB);
+        goto out_dlclose;
+    }
+
+    handle = get_instance();
+    if (!handle) {
+        ALOGE("%s: spHandleGetInstance() returned NULL", __func__);
+        goto out_dlclose;
+    }
+    if (init_fn)
+        init_fn(handle);
+
+    {
+        char query[64];
+        struct sp_kv kv;
+
+        snprintf(query, sizeof(query), "SPEECH_PARSER_SET_PARAM,MDVERSION=%u", md_version);
+        kv.reserved0 = 0;
+        kv.stringAddr = query;
+        set_kv(handle, &kv);
+    }
+
+    sph_input_attr_for_route(out, &attr);
+
+    memset(param_buf, 0, sizeof(param_buf));
+    memset(&out_buf, 0, sizeof(out_buf));
+    out_buf.memorySize = sizeof(param_buf);
+    out_buf.bufferAddr = param_buf;
+
+    if (get_param(handle, &attr, &out_buf) != 0 || out_buf.dataSize == 0 ||
+        out_buf.dataSize > sizeof(param_buf) || out_buf.dataSize > SPH_SHM_SPH_PARAM_SIZE - 16) {
+        ALOGE("%s: getParamBuffer failed or blob does not fit the %u-byte ring (dataSize=%u)",
+              __func__, (unsigned int)(SPH_SHM_SPH_PARAM_SIZE - 16), out_buf.dataSize);
+        goto out_dlclose;
+    }
+
+    sph_put_u32_le(shm, SPH_SHM_OFF_AP_FLAG, 1);
+    sph_put_u32_le(shm, SPH_SHM_OFF_SPH_PARAM_OFFSET, SPH_SHM_SPH_PARAM_OFFSET);
+    sph_put_u32_le(shm, SPH_SHM_OFF_SPH_PARAM_SIZE, SPH_SHM_SPH_PARAM_SIZE);
+    memcpy(shm + SPH_SHM_SPH_PARAM_OFFSET, param_buf, out_buf.dataSize);
+    sph_put_u32_le(shm, SPH_SHM_OFF_SPH_PARAM_WIDX, out_buf.dataSize);
+
+    sph_info_set_real_params(info, out_buf.dataSize, 0);
+    ok = true;
+
+out_dlclose:
+    dlclose(lib);
+    munmap(shm, smem_len);
+    close(smem_fd);
+    return ok;
+}
+
+static int ccci_send_mailbox(int fd, uint16_t msg_id, uint16_t param16, uint32_t param32)
+{
+    struct ccci_sph_mailbox m;
+
+    memset(&m, 0, sizeof(m));
+    m.reserved0 = -1;
+    m.param16 = param16;
+    m.msg_id = msg_id;
+    m.channel = SPH_CCCI_CHANNEL;
+    m.param32 = param32;
+    return write(fd, &m, sizeof(m)) == (ssize_t)sizeof(m) ? 0 : -1;
+}
+
+static int ccci_send_payload(int fd, uint16_t msg_id, const void *payload, uint16_t payload_size)
+{
+    unsigned char buf[sizeof(struct ccci_sph_payload_hdr) + SPH_INFO_PAYLOAD_SIZE];
+    struct ccci_sph_payload_hdr hdr;
+    size_t total = sizeof(hdr) + payload_size;
+
+    if (total > sizeof(buf))
+        return -1;
+    memset(&hdr, 0, sizeof(hdr));
+    hdr.len_a = (uint32_t)payload_size + 6;
+    hdr.channel = SPH_CCCI_CHANNEL;
+    hdr.len_b = (uint16_t)(payload_size + 6);
+    hdr.msg_id = msg_id;
+    hdr.magic = SPH_CCCI_PAYLOAD_MAGIC;
+    hdr.task = SPH_TASK_SPEECH_ON;
+    hdr.payload_size = payload_size;
+    memcpy(buf, &hdr, sizeof(hdr));
+    memcpy(buf + sizeof(hdr), payload, payload_size);
+    return write(fd, buf, total) == (ssize_t)total ? 0 : -1;
+}
+
+static void speech_ccci_on(enum output_device out, bool wb)
+{
+    unsigned char info[SPH_INFO_PAYLOAD_SIZE];
+    int fd;
+
+    build_sph_info(info, wb);
+    if (property_get_bool(PROP_SPH_PARAM_ENABLE, false)) {
+        if (sph_param_fetch_real(out, info))
+            ALOGI("%s: real speech params loaded for %s", __func__,
+                  output_path_name(out) ? output_path_name(out) : "bt-sco");
+        else
+            ALOGW("%s: real speech params unavailable, sending param_emi_valid=%d", __func__,
+                  SPH_INFO_EMI_EMPTY_VALID);
+    }
+
+    fd = open(CCCI_AUD_NODE, O_RDWR);
+    if (fd < 0) {
+        ALOGE("%s: open(%s) failed: %s", __func__, CCCI_AUD_NODE, strerror(errno));
+        return;
+    }
+    if (ccci_send_payload(fd, SPH_MSG_ID_SET_SPEECH_MODE, info, SPH_INFO_PAYLOAD_SIZE))
+        ALOGE("%s: SetSpeechMode write failed: %s", __func__, strerror(errno));
+    if (ccci_send_payload(fd, SPH_MSG_ID_SPEECH_ON, info, SPH_INFO_PAYLOAD_SIZE))
+        ALOGE("%s: SpeechOn write failed: %s", __func__, strerror(errno));
+    close(fd);
+}
+
+static void speech_ccci_off(void)
+{
+    int fd = open(CCCI_AUD_NODE, O_RDWR);
+
+    if (fd < 0) {
+        ALOGE("%s: open(%s) failed: %s", __func__, CCCI_AUD_NODE, strerror(errno));
+        return;
+    }
+    if (ccci_send_mailbox(fd, SPH_MSG_ID_SPEECH_OFF, 0, 0))
+        ALOGE("%s: SpeechOff write failed: %s", __func__, strerror(errno));
+    close(fd);
+}
+
+static struct pcm *speech_hostless_pcm_open(bool capture)
+{
+    struct pcm_config c;
+    struct pcm *pcm;
+
+    memset(&c, 0, sizeof(c));
+    c.channels = SPEECH_HOSTLESS_CHANNELS;
+    c.rate = SPEECH_HOSTLESS_RATE;
+    c.format = PCM_FORMAT_S16_LE;
+    c.period_size = SPEECH_HOSTLESS_PERIOD_SIZE;
+    c.period_count = SPEECH_HOSTLESS_PERIOD_COUNT;
+    pcm = pcm_open(PCM_CARD, PCM_DEVICE_SPEECH_HOSTLESS, capture ? PCM_IN : PCM_OUT, &c);
+    if (!pcm || !pcm_is_ready(pcm)) {
+        ALOGE("%s: pcm_open(device=%d, capture=%d) failed: %s", __func__,
+              PCM_DEVICE_SPEECH_HOSTLESS, capture, pcm ? pcm_get_error(pcm) : "unknown");
+        if (pcm) {
+            pcm_close(pcm);
+            pcm = NULL;
+        }
+        return NULL;
+    }
+    if (pcm_start(pcm)) {
+        ALOGE("%s: pcm_start(device=%d, capture=%d) failed: %s", __func__,
+              PCM_DEVICE_SPEECH_HOSTLESS, capture, pcm_get_error(pcm));
+        pcm_close(pcm);
+        return NULL;
+    }
+    return pcm;
+}
+
+static void speech_hostless_open(struct mindone_audio_device *adev)
+{
+    if (adev->speech_hostless_out || adev->speech_hostless_in)
+        return;
+    adev->speech_hostless_out = speech_hostless_pcm_open(false);
+    adev->speech_hostless_in = speech_hostless_pcm_open(true);
+}
+
+static void speech_hostless_close(struct mindone_audio_device *adev)
+{
+    if (adev->speech_hostless_out) {
+        pcm_close(adev->speech_hostless_out);
+        adev->speech_hostless_out = NULL;
+    }
+    if (adev->speech_hostless_in) {
+        pcm_close(adev->speech_hostless_in);
+        adev->speech_hostless_in = NULL;
+    }
+}
+
 static void voice_route_enable(struct mindone_audio_device *adev, enum output_device out)
 {
     if (adev->in_call)
@@ -711,13 +966,19 @@ static void voice_route_enable(struct mindone_audio_device *adev, enum output_de
         audio_route_apply_path(adev->route, "voice-echo-ref");
 
     audio_route_update_mixer(adev->route);
+
+    if (!adev->speech_on) {
+        speech_hostless_open(adev);
+        speech_ccci_on(out, false);
+        adev->speech_on = true;
+    }
     adev->in_call = true;
 
     set_hw_output_volume(adev, out, adev->voice_volume);
     ALOGI("%s: voice route up on %s", __func__, output_path_name(out) ? output_path_name(out) : "bt-sco");
 }
 
-static void voice_route_disable(struct mindone_audio_device *adev)
+static void voice_route_disable(struct mindone_audio_device *adev, bool speech_off)
 {
     if (!adev->in_call)
         return;
@@ -727,6 +988,13 @@ static void voice_route_disable(struct mindone_audio_device *adev)
     audio_route_apply_path(adev->route, "voice-downlink-off");
     audio_route_apply_path(adev->route, "mic-off");
     audio_route_update_mixer(adev->route);
+
+    if (speech_off && adev->speech_on) {
+        speech_ccci_off();
+        speech_hostless_close(adev);
+        adev->speech_on = false;
+    }
+
     /* The call held the endpoint like any other user; a media stream still routed there keeps
      * it up. Done after the modem paths are down so the far end never hears the transition. */
     endpoint_release(adev, adev->voice_out_device);
@@ -785,11 +1053,6 @@ static int out_set_format(struct audio_stream *stream, audio_format_t format)
     return (format == AUDIO_FORMAT_PCM_16_BIT) ? 0 : -ENOSYS;
 }
 
-/* Cuts the PCM, the AFE crossbar and the amp -- the concrete "standby/idle" behavior
- * AUDIO-HAL-PLAN-1309 section 3 calls for: closing pcm_close() stops the digital path,
- * tearing down the crossbar (new in v2) stops this memif's samples from being summed into ADDA at
- * all, and tearing down the device route drops "Ext_Speaker_Amp Switch" back to 0, which is what
- * actually removes the aw87xxx's supply current -- not just muting digital gain. */
 static int do_out_standby(struct mindone_stream_out *out)
 {
     struct mindone_audio_device *adev = out->dev;
@@ -954,26 +1217,6 @@ static int start_output_stream(struct mindone_stream_out *out)
     return 0;
 }
 
-/* ---- Speaker conditioning -------------------------------------------------
- * This device has one small bottom speaker (plus the earpiece used as the stereo left channel,
- * F4438), and a transducer that size has two practical limits worth handling in software,
- * because there is no DSP block in the AFE between DL and the codec to do it in hardware:
- *
- *   1. It cannot reproduce low bass at all. Feeding it anyway costs excursion and headroom and
- *      comes back as distortion on everything else, so the content below ~180 Hz is removed with
- *      a second-order high-pass rather than left to the speaker to fail at.
- *
- *   2. Peaks clip long before the average level is loud. A limiter with a fast attack and a slow
- *      release holds the peaks just under full scale, which lets the average sit higher without
- *      the harshness that clipping produces - the usual reason a small speaker sounds strained
- *      rather than loud.
- *
- * Both run in float over the interleaved S16 frames. The cost is a few operations per sample at
- * 48 kHz stereo, which is nothing next to the codec path itself, and the state is per stream so
- * two concurrent outputs cannot disturb each other.
- *
- * Deliberately NOT applied to headphones or Bluetooth: those have their own transducers and
- * their own idea of loudness, and a limiter in front of them would only remove dynamics. */
 #define SPK_HPF_HZ          180.0f
 #define SPK_LIMIT_CEILING   0.89f    /* ~-1 dBFS, leaves room for the HPF's transient overshoot */
 #define SPK_LIM_ATTACK      0.002f   /* per-sample gain step down: full duck in ~10 ms at 48 kHz */
@@ -1687,9 +1930,6 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         return -ENOMEM;
     out->io_handle = handle;
 
-    /* PCM device selection per AUDIO-ROUTES-1309 section 1:
-     * DL3 = MT6789_DEEP_MEMIF (deep_buffer -- the screen-off/low-power path), DL2 =
-     * MT6789_FAST_MEMIF, DL1 = MT6789_PRIMARY_MEMIF default. */
     if (flags & AUDIO_OUTPUT_FLAG_DEEP_BUFFER) {
         out->pcm_device = PCM_DEVICE_DEEP_BUFFER;
     } else if (flags & AUDIO_OUTPUT_FLAG_FAST) {
@@ -1981,7 +2221,7 @@ static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
     if (want_call)
         voice_route_enable(adev, voice_output_device(adev));
     else
-        voice_route_disable(adev);
+        voice_route_disable(adev, true);
 
     pthread_mutex_unlock(&adev->lock);
     return 0;
@@ -2076,7 +2316,7 @@ static int adev_create_audio_patch(struct audio_hw_device *dev,
         if (adev->in_call) {
             /* A device change mid-call (earpiece -> speakerphone) has to move the whole voice
              * route, not just the endpoint, because the echo reference depends on it. */
-            voice_route_disable(adev);
+            voice_route_disable(adev, false);
             voice_route_enable(adev, d);
         } else {
             /* One patch per output thread: the source mix port names it by the io handle we

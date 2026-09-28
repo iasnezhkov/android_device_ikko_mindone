@@ -15,11 +15,6 @@
 ** See the License for the specific language governing permissions and
 ** limitations under the License.
 */
-/*
- * mind_one note (RIL-MINIMAL-1409): copied verbatim, unmodified, from
- * hardware/ril/reference-ril/at_tok.c present read-only in the LineageOS tree. No
- * project-specific changes. Apache-2.0, original AOSP copyright preserved above.
- */
 
 #include "at_tok.h"
 #include <string.h>

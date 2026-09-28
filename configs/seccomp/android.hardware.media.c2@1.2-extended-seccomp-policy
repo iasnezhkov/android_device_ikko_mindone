@@ -40,9 +40,6 @@ newfstatat: 1
 fstat: 1
 fstatfs: 1
 flock: 1
-# MINDONE (06.09, F3817): Android 16 userspace on the stock A15 codec2 HAL — the service was killed by SIGSYS
-# at start. Names below come from A16's own mediaswcodec/crash_dump policies and modern bionic (rseq/clone3/…);
-# all are known to the A15 vendor libminijail table (kernel 6.6 uapi), so the policy still parses.
 clone3: 1
 close_range: 1
 epoll_pwait2: 1

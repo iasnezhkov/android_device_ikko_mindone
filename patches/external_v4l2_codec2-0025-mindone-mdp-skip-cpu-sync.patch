@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Mon, 28 Sep 2026 04:26:38 +0300
+Subject: [PATCH 25/27] v4l2: skip the dma-buf CPU sync when the MDP hardware
+ path is taken
+
+decodedTiled->syncStartRead()/syncEndRead() bracket the whole
+serviceDeviceTask detile step since the original CPU-only libyuv
+path (before MDP existed): they call DMA_BUF_IOCTL_SYNC(START|READ)
+and (END|READ) on the ~3 MiB tiled VDEC output buffer so the CPU
+sees the hardware decoders writes before libyuv reads them with
+its own pointer.
+
+MdpImageConverter::convertMM21ToNV12 never touches TiledMM21Image::y
+or ::uv, only ::dmaBufFd: MDP is a second hardware DMA engine, not
+the CPU, reading the same buffer the VDEC wrote. Device-to-device
+coherency for that transfer is established by the kernels own
+dma_buf_attach()/dma_buf_map_attachment() inside translate_fd(),
+independent of this ioctl, which exists solely for CPU access.
+e2ea453 (23.09, first MDP convereter) kept the pre-existing sync
+call wrapping the new combined primary+fallback call without
+reconsidering it, so every MDP-converted frame has been paying for
+a CPU cache invalidate+flush pass over the whole tiled buffer that
+no one reads.
+
+serviceDeviceTask now tries the MDP path first with fallbackConverter
+= nullptr and no surrounding sync; only if that returns false
+(mMdpImageConverter absent, permanently disabled, or a real runtime
+failure) does it sync and retry through the CPU/libyuv path, same as
+before. detileFrom/detileFrom10 themselves are unchanged.
+
+Does not touch the two remaining open items on i-yxpnata4lxwr: the
+V4L2 CAPTURE pool needs 25 buffers for 1920x1088 (driver-reported,
+not something this HAL controls) which combined with the surface
+BufferQueues own slot count touches 46 distinct dma_bufs per 150
+frame session per dmesg (mdp_ioctl_free_iova_cache_by_node), so a
+real fraction of frames still pay a cold iova-cache miss in
+translate_fd regardless of this patch; and serviceDeviceTask runs
+decode dequeue and convert on the same SequencedTaskRunner with no
+overlap between decoding frame N+1 and converting frame N. Both need
+a device measurement to size.
+---
+ v4l2/V4L2Decoder.cpp | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
+index 7dab6b2..4e19229 100644
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -697,10 +697,10 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
+                 return;
+             }
+ 
+-            decodedTiled->syncStartRead();
+             bool detiled;
+             bool primaryFailed = false;
+             if (mCaptureIsMt10) {
++                decodedTiled->syncStartRead();
+                 TiledMT10Image tiledImage;
+                 tiledImage.data = decodedTiled->data();
+                 tiledImage.strideY = mCaptureStrideY;
+@@ -709,6 +709,7 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
+                 tiledImage.dmaBufSize = decodedTiled->size();
+                 detiled = frame->detileFrom10(mImageConverter.get(), tiledImage,
+                                               mCodedSize.width, mCodedSize.height);
++                decodedTiled->syncEndRead();
+             } else {
+                 TiledMM21Image tiledImage;
+                 tiledImage.y = decodedTiled->data();
+@@ -720,10 +721,16 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
+                 tiledImage.dmaBufSize = decodedTiled->size();
+                 ImageConverter* const primaryConverter =
+                         (mMdpImageConverter && !mMdpFailed) ? mMdpImageConverter.get() : nullptr;
+-                detiled = frame->detileFrom(primaryConverter, mImageConverter.get(), tiledImage,
++                detiled = primaryConverter &&
++                          frame->detileFrom(primaryConverter, nullptr, tiledImage,
+                                             mCodedSize.width, mCodedSize.height, &primaryFailed);
++                if (!detiled) {
++                    decodedTiled->syncStartRead();
++                    detiled = frame->detileFrom(nullptr, mImageConverter.get(), tiledImage,
++                                                mCodedSize.width, mCodedSize.height, nullptr);
++                    decodedTiled->syncEndRead();
++                }
+             }
+-            decodedTiled->syncEndRead();
+ 
+             if (primaryFailed && !mMdpFailed) {
+                 mMdpFailed = true;
+-- 
+2.43.0
+

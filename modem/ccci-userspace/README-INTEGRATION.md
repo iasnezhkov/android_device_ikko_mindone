@@ -81,8 +81,7 @@ whence, length, file_handle}`); the field *order/widths* in
 packet is hex-dumped at `LOGI` before parsing specifically so a live
 capture can correct this without guesswork.
 
-Deliberately stubbed, per NVRAM-LID-1409 S5/S8's own
-recommendation: `FS_CCCI_OP_BIN_REGION_ACCESS` answers `FS_NO_FEATURE` and
+Deliberately stubbed: `FS_CCCI_OP_BIN_REGION_ACCESS` answers `FS_NO_FEATURE` and
 logs loudly rather than calling `NVM_RestoreFromBinRegion_OneFile` against
 an unverified wire-decoded path.
 
@@ -115,12 +114,10 @@ proven (by `strings` on the actual guest binary) to open gsm0710muxd's own
 `/dev/gsmttyN`, and that RIL is closed-source, so its naming expectation
 cannot be changed. The recommended path -- reimplementing gsm0710muxd's own
 userspace 07.10 framing (real prior art: Tuukka Karvonen's 2003 `gsmMuxd`,
-the proven common ancestor of MediaTek's own mux, per
-MODEM-STACK-1409 S6.5) -- was not implemented as code in this
+the proven common ancestor of MediaTek's own mux) -- was not implemented as code in this
 pass (out of the time budget for this task); the design and full rationale
 are in the source-file header comment of `n_gsm_ldisc_setup.c` and
-duplicated in this section for visibility. the fact log F3207/F3208/
-F3210 already proved the classic userspace-mux shape works end-to-end
+duplicated in this section for visibility. Earlier tests already proved the classic userspace-mux shape works end-to-end
 against this exact vendor RIL/MD firmware once the (already-fixed)
 ldisc-hijack bug is out of the way.
 
@@ -128,7 +125,7 @@ ldisc-hijack bug is out of the way.
 
 | Item | Risk | Mitigation in this deliverable |
 |---|---|---|
-| `NVM_RestoreFromBinRegion_OneFile` (mdinit) | Silent IMEI/calibration corruption if signature/target wrong -- the single highest-consequence function in the whole libnvram surface (NVRAM-LID-1409 S5) | Implemented but **compiled out by default**; when enabled, failure is logged and non-fatal (kernel does not gate boot on it, MODEM-STACK-1409 S3, proven by exhaustive negative grep) |
+| `NVM_RestoreFromBinRegion_OneFile` (mdinit) | Silent IMEI/calibration corruption if signature/target wrong -- the single highest-consequence function in the whole libnvram surface | Implemented but **compiled out by default**; when enabled, failure is logged and non-fatal (kernel does not gate boot on it, proven by exhaustive negative grep) |
 | `ccci_fsd` wire struct | Live MD firmware requests silently misparsed -> broken SIM/calibration file access | Every packet hex-dumped before parsing; path sandboxed to confirmed real roots regardless of parse correctness; bin-region op hard-stubbed |
 | `FS_CCCI_OP_BIN_REGION_ACCESS` (fsd) | Same class as above, reached via the live MD wire path (worse: parser-decoded target, not our own fixed string) | Never calls `NVM_RestoreFromBinRegion_OneFile`; answers `FS_NO_FEATURE` |
 | MD_SBP NVRAM read (mdinit) | Low -- confirmed (disassembly) to target Sales/Branding code, not IMEI | Read-only; failure falls back to `sbp=0`, matching kernel's own no-gate behavior |
@@ -176,7 +173,7 @@ ldisc-hijack bug is out of the way.
 14.09: closed by labels -- `sepolicy/vendor/file_contexts` gives `mindone_mdinit`/`mindone_fsd`/`mindone_rpcd`
 the stock exec types (`ccci_mdinit_exec`/`ccci_fsd_exec`/`ccci_rpcd_exec`, defined in
 `device/mediatek/sepolicy_vndr/base/vendor/ccci_*.te`), so the stock domains and their rules apply as-is.
-Note F4418: on B39 the stock file service runs inside `ccci_mdinit` (no `ccci_fsd` process), so the A/B
+Note: on an earlier build the stock file service runs inside `ccci_mdinit` (no `ccci_fsd` process), so the A/B
 swaps the trio together (`tools/rigs/modem-ab.sh swap-ccci`).
 
 ### Original notes

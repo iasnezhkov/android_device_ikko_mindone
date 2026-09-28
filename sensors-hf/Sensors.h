@@ -2,22 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-/*
- * android.hardware.sensors ISensors/default implementation for the iKKO
- * MindOne (MT6789), backed directly by the mind_one kernel's hf_manager
- * driver (/dev/hf_manager) instead of the stock, unpatchable
- * sensors.mt6789.so + HIDL 2.0 multihal chain it replaces.
- *
- * Modeled on the AOSP reference implementation's shape
- * (hardware/interfaces/sensors/aidl/default/{include/sensors-impl/Sensors.h,
- * Sensors.cpp}) but NOT copied from it verbatim: that reference generates
- * simulated per-sensor data on independent per-Sensor threads, whereas we
- * have exactly one real kernel event stream (one fd, one FIFO shared by
- * every enabled sensor - hf_manager.c:89 struct hf_client_fifo) so this
- * class owns a single reader thread instead of one thread per Sensor
- * object. See SENSORS-HAL-PLAN-1309.md for the full design rationale and
- * the kernel ABI citations behind every ioctl/write() call here.
- */
 
 #ifndef MINDONE_SENSORS_H_
 #define MINDONE_SENSORS_H_
@@ -111,12 +95,6 @@ class Sensors : public BnSensors {
 
     ::mindone::hf::HfManagerClient hf_;
 
-    // v2/calibration (SENSORS-HAL-CALIBRATION-1309.md): pushes nvcfg
-    // JSON calibration through hf_ once per ensureEnumeratedLocked() run,
-    // and persists runtime BIAS_ACTION/CALI_ACTION results seen in
-    // translateEvent() back to disk. Declared right after hf_ since the two
-    // are always used together; CalibrationStore never touches hf_'s fd
-    // itself, only the HfManagerClient& handed to pushAll().
     ::mindone::hf::CalibrationStore calibrationStore_;
 
     std::mutex mutex_;

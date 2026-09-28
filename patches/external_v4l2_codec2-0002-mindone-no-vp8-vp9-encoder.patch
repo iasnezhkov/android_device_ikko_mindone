@@ -1,0 +1,103 @@
+From 83a08c75fca819e9a552808280bc1c678ea89d04 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Wed, 23 Sep 2026 11:26:25 +0300
+Subject: [PATCH 2/6] v4l2: drop VP8/VP9 encoder registration, this silicon
+ cannot do it
+
+mtk-vcodec-enc.c has zero VP8/VP9 awareness anywhere: no V4L2 control,
+no V4L2_PIX_FMT_VP8/VP9 CAPTURE case. The driver own codec-ID gate,
+venc_if_init() (venc_drv_if.c), accepts only H264/H265/HEIF/MPEG4/H263
+- VP8 is rejected there before vpud is ever asked. VP9 goes further:
+there is no VENC_VP9 constant anywhere in this driver codec-ID enum
+(VDEC_VP9 exists for decode, VENC_VP9 does not exist at all for
+encode), so VP9 encode is not just unimplemented but structurally
+impossible through this driver as written. Neither codec has DVFS/
+bandwidth tuning table entries either (mt6789-media.dtsi), confirming
+MediaTek never profiled either one for this SoC encoder.
+
+Stock v4l2_codec2 lists c2.v4l2.vp8.encoder and c2.v4l2.vp9.encoder as
+if they worked. Keeping them would let a client successfully create
+the component (name validation and interface setup do not touch the
+driver) and only fail once it actually tries to encode - a confusing
+and pointless failure mode on hardware that can never satisfy it.
+Remove both names and their VideoCodec/isEncoder/isValid wiring.
+
+Change-Id: Ibb37b3b751c177c9de8cc941d9492d183ebd9c8a
+---
+ v4l2/V4L2ComponentCommon.cpp                        | 8 ++------
+ v4l2/V4L2ComponentStore.cpp                         | 6 ------
+ v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h | 2 --
+ 3 files changed, 2 insertions(+), 14 deletions(-)
+
+diff --git a/v4l2/V4L2ComponentCommon.cpp b/v4l2/V4L2ComponentCommon.cpp
+index d05b72d..770b449 100644
+--- a/v4l2/V4L2ComponentCommon.cpp
++++ b/v4l2/V4L2ComponentCommon.cpp
+@@ -13,8 +13,6 @@
+ namespace android {
+ 
+ const std::string V4L2ComponentName::kH264Encoder = "c2.v4l2.avc.encoder";
+-const std::string V4L2ComponentName::kVP8Encoder = "c2.v4l2.vp8.encoder";
+-const std::string V4L2ComponentName::kVP9Encoder = "c2.v4l2.vp9.encoder";
+ 
+ const std::string V4L2ComponentName::kH264Decoder = "c2.v4l2.avc.decoder";
+ const std::string V4L2ComponentName::kVP8Decoder = "c2.v4l2.vp8.decoder";
+@@ -28,7 +26,7 @@ const std::string V4L2ComponentName::kHEVCSecureDecoder = "c2.v4l2.hevc.decoder.
+ 
+ // static
+ bool V4L2ComponentName::isValid(const std::string& name) {
+-    return name == kH264Encoder || name == kVP8Encoder || name == kVP9Encoder ||
++    return name == kH264Encoder ||
+            name == kH264Decoder || name == kVP8Decoder || name == kVP9Decoder ||
+            name == kHEVCDecoder || name == kAV1Decoder || name == kH264SecureDecoder ||
+ 	   name == kVP8SecureDecoder || name == kVP9SecureDecoder || name == kHEVCSecureDecoder;
+@@ -38,7 +36,7 @@ bool V4L2ComponentName::isValid(const std::string& name) {
+ bool V4L2ComponentName::isEncoder(const std::string& name) {
+     ALOG_ASSERT(isValid(name));
+ 
+-    return name == kH264Encoder || name == kVP8Encoder || name == kVP9Encoder;
++    return name == kH264Encoder;
+ }
+ 
+ // static
+@@ -61,10 +59,8 @@ std::optional<VideoCodec> V4L2ComponentName::getCodec(const std::string& name) {
+             {kH264Encoder, VideoCodec::H264},
+ 
+             {kVP8Decoder, VideoCodec::VP8},   {kVP8SecureDecoder, VideoCodec::VP8},
+-            {kVP8Encoder, VideoCodec::VP8},
+ 
+             {kVP9Decoder, VideoCodec::VP9},   {kVP9SecureDecoder, VideoCodec::VP9},
+-            {kVP9Encoder, VideoCodec::VP9},
+ 
+             {kHEVCDecoder, VideoCodec::HEVC}, {kHEVCSecureDecoder, VideoCodec::HEVC},
+ 
+diff --git a/v4l2/V4L2ComponentStore.cpp b/v4l2/V4L2ComponentStore.cpp
+index d5b4901..5b6482b 100644
+--- a/v4l2/V4L2ComponentStore.cpp
++++ b/v4l2/V4L2ComponentStore.cpp
+@@ -41,12 +41,6 @@ std::shared_ptr<C2ComponentStore> V4L2ComponentStore::Create() {
+     if (property_get_bool("ro.vendor.v4l2_codec2.encoder.supported.h264", false))
+         builder.encoder(V4L2ComponentName::kH264Encoder, VideoCodec::H264,
+                         &V4L2ComponentFactory::create);
+-    if (property_get_bool("ro.vendor.v4l2_codec2.encoder.supported.vp8", false))
+-        builder.encoder(V4L2ComponentName::kVP8Encoder, VideoCodec::VP8,
+-                        &V4L2ComponentFactory::create);
+-    if (property_get_bool("ro.vendor.v4l2_codec2.encoder.supported.vp9", false))
+-        builder.encoder(V4L2ComponentName::kVP9Encoder, VideoCodec::VP9,
+-                        &V4L2ComponentFactory::create);
+ 
+     if (property_get_bool("ro.vendor.v4l2_codec2.decoder.supported.h264", false))
+         builder.decoder(V4L2ComponentName::kH264Decoder, VideoCodec::H264,
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h b/v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h
+index 1e7996c..3754db8 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h
+@@ -14,8 +14,6 @@ namespace android {
+ // Defines the names of all supported components.
+ struct V4L2ComponentName {
+     static const std::string kH264Encoder;
+-    static const std::string kVP8Encoder;
+-    static const std::string kVP9Encoder;
+ 
+     static const std::string kH264Decoder;
+     static const std::string kVP8Decoder;

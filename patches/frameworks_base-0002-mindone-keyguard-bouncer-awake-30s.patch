@@ -9,14 +9,11 @@ diff --git a/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardViewMed
 index 62c41395da57..2a9252db42dd 100644
 --- a/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardViewMediator.java
 +++ b/packages/SystemUI/src/com/android/systemui/keyguard/KeyguardViewMediator.java
-@@ -312,7 +312,10 @@ public class KeyguardViewMediator implements CoreStartable,
+@@ -312,7 +312,7 @@ public class KeyguardViewMediator implements CoreStartable,
      /**
       * The default amount of time we stay awake (used for all key input)
       */
 -    public static final int AWAKE_INTERVAL_BOUNCER_MS = 10000;
-+    // MINDONE (remainder of ): the same short keyguard timeout as
-+    // config_lockScreenDisplayTimeout (SystemUI res/values/config.xml, device overlay),
-+    // but this constant is not a resource - it is used while the bouncer (PIN entry) is shown.
 +    public static final int AWAKE_INTERVAL_BOUNCER_MS = 30000;
 
      /**

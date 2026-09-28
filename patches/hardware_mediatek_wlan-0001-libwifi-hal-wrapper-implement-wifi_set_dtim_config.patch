@@ -1,0 +1,99 @@
+From e63875b24fdfbf9339b9e0421f9d8962312e1c9c Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 27 Sep 2026 21:18:10 +0300
+Subject: [PATCH] libwifi-hal-wrapper: implement wifi_set_dtim_config via the
+ driver command
+
+The MediaTek vendor HAL (libwifi-hal-mtk.so) does not export
+wifi_set_dtim_config, so the wrapper left the AOSP stub in place and
+every IWifiStaIface.setDtimMultiplier() failed with NOT_SUPPORTED
+("Set maximum DTIM Multiplier to 9 FAIL" on every screen off).
+
+When the vendor library has no implementation, the wrapper now sends
+the gen4m private driver command "SET_DTIM_MULTIPLIER <n>" over
+SIOCDEVPRIVATE+1 (struct android_wifi_priv_cmd, the same path
+wpa_supplicant DRIVER commands use) to the interface the handle names.
+hal_wifi_default already holds SIOCDEVPRIVATE_1 on its udp_socket
+(device/mediatek/sepolicy_vndr hal_wifi_default.te) and the service
+runs with NET_ADMIN. The driver applies the value as the suspend
+multi-DTIM (kernel commit c247f4e1e); 0 restores its default.
+---
+ wlan/libwifi-hal-wrapper/libwifi-hal.cpp | 47 ++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/wlan/libwifi-hal-wrapper/libwifi-hal.cpp b/wlan/libwifi-hal-wrapper/libwifi-hal.cpp
+index 0fba82e..01f8e56 100644
+--- a/wlan/libwifi-hal-wrapper/libwifi-hal.cpp
++++ b/wlan/libwifi-hal-wrapper/libwifi-hal.cpp
+@@ -7,7 +7,14 @@
+ #define LOG_TAG "libwifi-hal-wrapper"
+ 
+ #include <dlfcn.h>
++#include <errno.h>
++#include <linux/sockios.h>
++#include <net/if.h>
++#include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
++#include <sys/ioctl.h>
++#include <sys/socket.h>
+ #include <unistd.h>
+ 
+ #include <log/log.h>
+@@ -27,6 +34,43 @@
+ static wifi_hal_legacy_fn* fln = nullptr;
+ static void* lib_handle = nullptr;
+ 
++struct android_wifi_priv_cmd {
++    char* buf;
++    int used_len;
++    int total_len;
++};
++
++static wifi_error set_dtim_config_priv_cmd(wifi_interface_handle handle, u32 multiplier) {
++    char ifname[IFNAMSIZ] = {};
++    char buf[64] = {};
++    struct android_wifi_priv_cmd cmd = {buf, 0, sizeof(buf)};
++    struct ifreq ifr = {};
++    int sock;
++    int ret;
++
++    if (!fln || !fln->wifi_get_iface_name ||
++        fln->wifi_get_iface_name(handle, ifname, sizeof(ifname)) != WIFI_SUCCESS) {
++        return WIFI_ERROR_INVALID_ARGS;
++    }
++    snprintf(buf, sizeof(buf), "SET_DTIM_MULTIPLIER %u", multiplier);
++    strlcpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
++    ifr.ifr_data = reinterpret_cast<char*>(&cmd);
++
++    sock = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
++    if (sock < 0) {
++        ALOGE("set_dtim_config: socket failed: %s", strerror(errno));
++        return WIFI_ERROR_UNKNOWN;
++    }
++    ret = ioctl(sock, SIOCDEVPRIVATE + 1, &ifr);
++    close(sock);
++    if (ret < 0) {
++        ALOGE("set_dtim_config(%s, %u) failed: %s", ifname, multiplier, strerror(errno));
++        return WIFI_ERROR_UNKNOWN;
++    }
++    ALOGI("set_dtim_config(%s, %u)", ifname, multiplier);
++    return WIFI_SUCCESS;
++}
++
+ wifi_error init_wifi_vendor_hal_func_table(wifi_hal_fn* fn) {
+     init_wifi_vendor_hal_func_table_legacy_t init_fn;
+     wifi_error ret = WIFI_ERROR_NONE;
+@@ -194,6 +238,9 @@ wifi_error init_wifi_vendor_hal_func_table(wifi_hal_fn* fn) {
+     SET_IF_NOT_NULL(fn, fln, wifi_twt_get_stats);
+     SET_IF_NOT_NULL(fn, fln, wifi_twt_clear_stats);
+     SET_IF_NOT_NULL(fn, fln, wifi_set_dtim_config);
++    if (!fln->wifi_set_dtim_config) {
++        fn->wifi_set_dtim_config = set_dtim_config_priv_cmd;
++    }
+     SET_IF_NOT_NULL(fn, fln, wifi_get_usable_channels);
+     SET_IF_NOT_NULL(fn, fln, wifi_trigger_subsystem_restart);
+     SET_IF_NOT_NULL(fn, fln, wifi_set_indoor_state);
+-- 
+2.43.0
+

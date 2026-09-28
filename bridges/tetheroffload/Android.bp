@@ -3,10 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-// tetheroffload bridge: AIDL android.hardware.tetheroffload V1 (IOffload) over the stock HIDL
-// tetheroffloadservice (config@1.0 IOffloadConfig + control@1.1 IOffloadControl).
-// Bridge registry - BRIDGES-HIDL-AIDL.
-// Review 14.09 (BRIDGES-REVIEW-1409): +OffloadHidlConn.cpp (death/reconnect).
 cc_binary {
     name: "android.hardware.tetheroffload-service.mindone",
     vendor: true,

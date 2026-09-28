@@ -2,19 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mind_one minimal RIL, phase 1 skeleton (RIL-MINIMAL-1409).
-//
-// main() for android.hardware.radio@1.6-service.mindone -- registers instance "slot1" only.
-// Modeled on the real AOSP reference implementation
-// hardware/interfaces/radio/1.2/default/radio-service.cpp (present read-only in the LineageOS
-// LineageOS tree; that file registers its own "default" test/mock IRadio the same way, with
-// registerAsService() taking no instance name -- we pass "slot1" explicitly since that's the
-// instance the telephony framework actually resolves against on this device, per
-// device/ikko/mindone/manifest.xml, cited in RadioImpl.h).
-//
-// Disabled by default (see init.mindone_ril.rc) -- start manually for an A/B test on the rescue
-// slot per RIL-MINIMAL-1409's A/B plan, after `stop vendor.ril-daemon-mtk` and the mux
-// channels are confirmed present (`ls -la /dev/radio/pttycmd1 /dev/radio/pttynoti`).
 #include <hidl/HidlTransportSupport.h>
 #include <cutils/properties.h>
 #include <unistd.h>
@@ -35,8 +22,6 @@ using mindone::ril::MindoneRadio;
 namespace {
 constexpr int kOpenRetries = 20;
 constexpr int kOpenRetryDelayUs = 500 * 1000;  // 500ms; ~10s total, matches gsm0710muxd's own
-                                                // channel-establishment window observed live
-                                                // (RIL-MINIMAL-1409 "channel layout")
 }  // namespace
 
 int main() {

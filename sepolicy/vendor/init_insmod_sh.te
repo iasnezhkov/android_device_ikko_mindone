@@ -1,0 +1,2 @@
+dontaudit init_insmod_sh debugfs_fb:dir { search };
+dontaudit init_insmod_sh self:key write;

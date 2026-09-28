@@ -2,12 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: connection lifecycle for the stock HIDL biometrics.fingerprint@2.1 service (Silead).
-// Handles linkToDeath() + a background reconnect loop, so a HAL crash does not permanently wedge
-// the AIDL bridge (see BRIDGES-REVIEW-1409 "fingerprint: death/reconnect"). Modeled
-// directly on bridges/secure_element/SecureElementBridge's death/reconnect pattern - none of the three
-// bridges reviewed in that pass (fingerprint, gatekeeper, tetheroffload) had any such handling
-// before this review; the secure_element v2 bridge was the only one.
 #pragma once
 
 #include <android/hardware/biometrics/fingerprint/2.1/IBiometricsFingerprint.h>

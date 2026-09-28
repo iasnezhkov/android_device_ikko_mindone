@@ -1,0 +1,17 @@
+on post-fs-data
+    mkdir /data/vendor/gauge 0770 system system
+    chown system system /sys/class/power_supply/battery/learned_aging_bp
+    chown system system /sys/class/power_supply/battery/learned_cycles_x100
+    exec_background - system system -- /vendor/bin/gauge-learned.sh restore
+
+on property:sys.boot_completed=1
+    start gauge_learned
+
+on shutdown
+    exec - system system -- /vendor/bin/gauge-learned.sh save
+
+service gauge_learned /vendor/bin/gauge-learned.sh loop
+    class late_start
+    user system
+    group system
+    disabled

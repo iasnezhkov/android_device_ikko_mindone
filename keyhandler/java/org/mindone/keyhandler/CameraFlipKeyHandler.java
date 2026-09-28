@@ -1,9 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-/*
- * mindone: device key handler for the flip-camera module's hall switch (F4296).
- * See CAMERA-FLIP-PLAN-1309 for the full design.
- */
 package org.mindone.keyhandler;
 
 import android.content.Context;
@@ -19,55 +15,11 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 
-/**
- * The phone has a single physical camera module the user flips by hand between a "back" and a
- * "front" position; a hall switch reports the transition. The kernel (mtk_kpd.c,
- * hall_eint_handler(), F4296) reproduces the factory behaviour: it emits an EV_KEY press+release
- * of KEY_F2 on one edge and KEY_F3 on the other, on the "mtk-kpd" input device, exactly like the
- * two logical keys the stock MediaTek camera app used to consume.
- *
- * This handler:
- *  1. records the new position in {@link CameraFlipContract#SETTING_CAMERA_FLIPPED} (a
- *     Settings.System key) so any app (in practice, the camera app) can read the current
- *     position without needing any permission or observing anything;
- *  2. broadcasts {@link CameraFlipContract#ACTION_CAMERA_FLIPPED} so a running app can react
- *     immediately instead of polling Settings;
- *  3. fully consumes the key (returns null) so plain KEYCODE_F2 / KEYCODE_F3 never reach any app.
- *
- * Registered via config_deviceKeyHandlerLibs / config_deviceKeyHandlerClasses (overlay/lineage-
- * sdk/lineage/res/res/values/config.xml) and instantiated by PhoneWindowManager through
- * reflection: {@code new PathClassLoader(apkPath, ...).loadClass(...).getConstructor(
- * Context.class).newInstance(mContext)}, running inside system_server. handleKeyEvent() is
- * called from PhoneWindowManager#interceptKeyBeforeQueueing(), i.e. before the key is queued to
- * any window, so returning null here really does mean no app ever sees the event.
- *
- * KEY MAPPING IS UNVERIFIED ON HARDWARE (device-free implementation, see plan doc "Decisions"):
- * the kernel driver only guarantees that KEY_F2 and KEY_F3 are the two opposite hall transitions
- * -- it does not (and, being a hall switch wired to a GPIO level, cannot on its own) know which
- * physical orientation ("lens facing the user" vs. "lens facing away") each one corresponds to.
- * {@link #POSITION_FOR_KEYCODE_F2} below is the single point to flip if on-device testing
- * (getevent + watching the preview) shows the mapping is inverted.
- */
 public class CameraFlipKeyHandler implements DeviceKeyHandler {
     private static final String TAG = "MindOneCameraFlip";
 
-    /**
-     * Position reported when KEY_F2 fires; KEY_F3 reports the other one. See the class doc.
-     *
-     * 🔴 15.09 (F4458): VERIFIED ON HARDWARE and inverted. On the device, flipping the
-     * module does switch the camera, but the preview comes out upside down in BOTH positions -
-     * which is exactly what an inverted mapping looks like: each position selects the logical
-     * camera meant for the other one, and the two differ by 180 deg in SENSOR_ORIENTATION, so
-     * neither position is ever right. Was POSITION_FRONT (the device-free guess).
-     */
     private static final int POSITION_FOR_KEYCODE_F2 = CameraFlipContract.POSITION_BACK;
 
-    // Best-effort source for the position at boot, before any flip has happened this session.
-    // Not implemented in the kernel yet (F4296 follow-up, see the plan doc) -- reading this
-    // always fails today, which is handled gracefully (position stays whatever Settings.System
-    // already had from a previous boot, or unknown on first boot ever). Kept as a plain sysfs
-    // scan, matched by the input device name rather than a hardcoded eventN, so this starts
-    // working with zero app-side changes the day the attribute is added.
     /**
      * Boot-time position exported by our mtk_kpd driver (the kernel module tree mtk_kpd.c, hall_position_show()):
      * "1" = the KEY_F2 side, "0" = the KEY_F3 side, "-1" = hall switch not registered. The path

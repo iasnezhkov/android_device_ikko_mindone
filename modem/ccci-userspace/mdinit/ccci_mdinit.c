@@ -133,17 +133,6 @@ static int open_monitor(void)
 	return fd;
 }
 
-/* Hold the two extra ports the stock daemon holds (F4473).
- *
- * Comparing the kernel's own "port ... open ... by <process>" lines between a stock boot and one
- * of ours showed the stock ccci_mdinit opening three ports - ccci_fs, ccci_ccb_ctrl and
- * ccci_ipc_5 - where ours opened none of the last two. A CCCI port with no reader does not report an
- * error: the modem simply waits on it, which is exactly the symptom we had - the whole file
- * service served, no further requests, and an exception with type NONE five seconds later.
- *
- * These are held open and drained; nothing is written to them. If a port is missing on some
- * board the daemon carries on rather than refusing to boot the modem over it.
- */
 static int open_held_port(const char *path)
 {
 	int fd = open(path, O_RDWR | O_NONBLOCK);
@@ -217,37 +206,12 @@ static void log_md_boot_mode(void)
 	unsigned int mode = 0;
 
 	if (ioctl(g_ioctl_fd, CCCI_IOC_GET_MD_BOOT_MODE, &mode) < 0) {
-		/* stock binary's own log string for this exact failure,
-		 * cited in MODEM-STACK-1409.md S2.2 -- reproduced verbatim
-		 * so a log diff against the stock daemon is directly
-		 * comparable. */
 		LOGW("fail to ioctl CCCI_IOC_GET_MD_BOOT_MODE err_no=%d", errno);
 		return;
 	}
 	LOGI("md%d boot mode = %u (0=invalid,1=normal,2=meta)", g_md_id + 1, mode);
 }
 
-/*
- * NVRAM step. Two parts, both best-effort and NON-FATAL to the boot
- * sequence -- proven safe to skip by MODEM-STACK-1409 S3 (the
- * kernel FSM has no gate on NVRAM readiness at all).
- *
- *  1. Wait for the system's own NVRAM restore service (nvram_daemon, a
- *     separate, already-shipped, unmodified stock binary/HAL -- not part
- *     of this deliverable) to publish vendor.service.nvram_restore, the
- *     exact property name + polling pattern read from ccci_mdinit's own
- *     string table ("%s(), property_get(\"vendor.service.nvram_restore\")
- *     = %s, read_nvram_ready_retry = %d").
- *  2. Read the MD_SBP (Sales/Branding Programming code) LID via
- *     NVM_GetLIDByName/NVM_GetFileDesc/NVM_CloseFileDesc (see
- *     nvram_shim.h) and fold it into md_boot_data[MD_CFG_SBP_CODE]. This
- *     is NOT an IMEI/calibration read (confirmed by disassembling both
- *     NVM_GetLIDByName call sites in the stock binary -- both target
- *     ".../APCFG/APRDCL/MD_SBP").
- *
- * The higher-risk NVM_RestoreFromBinRegion_OneFile call is a separate,
- * explicitly-gated step -- see maybe_restore_bin_region() below.
- */
 #define NVRAM_READY_POLL_MS 200
 #define NVRAM_READY_MAX_RETRY 50 /* 10s total, matches the class of timeout
 				   * mdinit itself uses elsewhere (BOOT_TIMEOUT
@@ -268,7 +232,7 @@ static int wait_nvram_ready(void)
 			return 0;
 		usleep(NVRAM_READY_POLL_MS * 1000);
 	}
-	LOGW("Get nvram restore ready faild !!!"); /* verbatim stock log string, MODEM-STACK-1409.md S? */
+	LOGW("Get nvram restore ready faild !!!");
 	return -1;
 }
 
@@ -343,23 +307,6 @@ static void nvram_sync_step(int *out_sbp)
 #define MD_DBG_DUMP_INVALID_LOCAL MD_DBG_DUMP_INVALID
 #define MD_DBG_DUMP_ALL_LOCAL 0x7FFFFFFF /* inc/ccci_modem.h:82 */
 
-/* Slots 4-11 recovered 15.09 by disassembling the stock daemon's trigger_modem_to_run()
- * (F4481). We were filling only the first four and sending zeros for the rest, while the
- * stock fills twelve:
- *
- *   [4]     md_image_dep_check()      = atoi(persist.vendor.md_c2k_cap_dep_check)
- *   [5..10] get_rsc_protol_value()    = the ro.vendor.mtk_protocol1_rat_config STRING,
- *                                       copied as 24 raw bytes (not a number)
- *   [11]    get_stored_modem_type_val = sysenv "md_type", which we already read over
- *                                       CCCI_IOC_GET_MD_TYPE for the store step
- *
- * The RAT string is the one that matters: on this device it is "C/Lf/Lt/W/G", i.e. the list
- * of radio access technologies the protocol stack is meant to bring up. Handing the modem a
- * zeroed field there asks it to configure a stack with no technologies at all, right after
- * the NVRAM read -- which is exactly where our boot dies. The kernel's own enum names these
- * slots MD_CFG_RAT_CHK_FLAG / MD_CFG_RAT_STR0..5 / MD_CFG_WM_IDX, so the layout is not a
- * guess from the disassembly alone.
- */
 static int set_boot_data(int sbp, unsigned int md_type)
 {
 	unsigned int boot_data[MD_BOOT_DATA_LEN];
@@ -402,20 +349,6 @@ static int set_boot_data(int sbp, unsigned int md_type)
 	return 0;
 }
 
-/* Mirror the stock daemon's store_modem_type_val step (F4473).
- *
- * The kernel keeps two values: config.load_type, set from the device tree, and
- * config.load_type_saving, which userspace writes with CCCI_IOC_STORE_MD_TYPE. It compares them
- * and uses the saved one to pick the modem image. The stock ccci_mdinit reads the current type
- * and stores it back before starting the modem; we never sent that ioctl at all, so
- * load_type_saving stayed at whatever it was.
- *
- * Reading the type first and writing the same value back is the conservative form of this: it
- * cannot select a different image than the kernel already intends, it only makes the "saving"
- * field agree with it, which is the state the stock leaves behind.
- */
-/* Returns the modem type, which also goes into md_boot_data[MD_CFG_WM_IDX] (F4481); 0 when it
- * cannot be read, which is what the stock's get_stored_modem_type_val() returns on failure too. */
 static unsigned int store_md_type(void)
 {
 	unsigned int type = 0;
@@ -432,18 +365,6 @@ static unsigned int store_md_type(void)
 	return type;
 }
 
-/* Send the battery voltage to the modem before starting it (F4473).
- *
- * Recovered from the stock daemon's V2 boot path, which this device takes
- * (/sys/kernel/ccci/kcfg_setting reports ccci_drv_ver V2): between reading the modem type and
- * triggering the run it issues CCCI_IOC_SEND_BATTERY_INFO. That is not a local setting - the
- * kernel handler reads battery_get_bat_voltage() and sends it to the modem over CCCI_SYSTEM_TX,
- * so the modem receives a message it would otherwise never get. A modem waiting on it stalls
- * silently, which is the shape of the failure we have.
- *
- * Failure is not fatal: the modem may or may not need it on this board, and refusing to boot
- * over a missing battery reading would be worse than booting without it.
- */
 static void send_battery_info(void)
 {
 	/* The message goes TO the modem, so it only lands once the modem can receive one: sending
@@ -454,24 +375,6 @@ static void send_battery_info(void)
 		LOGI("sent battery info to md%d (stock V2 boot step)", g_md_id + 1);
 }
 
-/* ---------------------------------------------------------------------------
- * Time service (F4484). The stock daemon has one and we had no counterpart at
- * all -- the modem was running without ever being told the timezone or a
- * corrected wall clock.
- *
- * Two kernel entry points, both on CCCI_DEV_IPC_5 with the separate 'P' magic
- * (port/port_ipc.c:145-170):
- *   CCCI_IPC_UPDATE_TIMEZONE  stores the offset kernel-side only
- *   CCCI_IPC_UPDATE_TIME      stores it AND transmits seconds + timezone + DST
- *                             to the modem on port ccci_0_202 (port_proxy.c:97)
- * Both take the timezone in minutes west of UTC.
- *
- * 🔴 The update thread deliberately copies the stock's design, because it is the
- * energy-correct one: a timerfd armed with TFD_TIMER_CANCEL_ON_SET blocks
- * forever and is released ONLY when something steps the wall clock. No polling,
- * no periodic wake-ups -- which matters on this device, where CCCI already owns
- * 57 of the 183 registered wakeup sources.
- */
 #define TIME_SRV_REARM_SECS (365 * 24 * 3600) /* horizon; re-armed each loop, never meant to expire */
 
 static int g_ipc_fd = -1;
@@ -633,7 +536,6 @@ static int do_stop_md(unsigned int flight_flag)
 
 /* ------------------------------------------------------------------ */
 /* Exception / reset / flight-mode reaction loop.                      */
-/* MODEM-STACK-1409.md S2.4: "Recovery is NOT autonomous ... this is a  */
 /* hard requirement for any ccci_mdinit replacement: it must actually   */
 /* watch for and react to exception/reset notifications, not just      */
 /* fire-and-forget the initial boot."                                  */
@@ -657,29 +559,6 @@ static void log_exception_type(void)
 		LOGW("CCCI_IOC_GET_MD_EX_TYPE failed: %s", strerror(errno));
 		return;
 	}
-	/*
-	 * ex_type is fsm_ee_ctl->ex_type, i.e. one of the CCCI_EE_REASON
-	 * values (fsm/ccci_fsm_internal.h:66-73): NONE/HS1_TIMEOUT/
-	 * HS2_TIMEOUT/WDT/EE/MD_NO_RESPONSE. We do not have a userspace
-	 * copy of that enum in common/ (it is FSM-internal, not part of
-	 * the ioctl ABI contract) so we log the raw numeric value plus a
-	 * best-effort label built from the same ordering for a human
-	 * reading logcat; verify against /proc/ccci_dump if precision
-	 * matters (MODEM-STACK-1409.md S2.3 -- confirmed readable, not
-	 * further decoded in this pass).
-	 *
-	 * Our board's exception PATH is proven to use mdee_dumper_v3
-	 * (MODEM-STACK-1409.md S2.4: mediatek,md_generation=6295 is >=6292
-	 * and <6297). The actual EE dump bytes never cross a CCCI
-	 * character-device port at all (S2.4: they go via
-	 * aed_md_exception_api() into the kernel AEE module and out
-	 * through Android's AEE userspace daemon, a path this daemon does
-	 * not participate in) -- so mindone_mdinit's role here is limited
-	 * to observing ex_type/ee reason and driving the stop/start
-	 * recovery cycle, exactly like the "completion-gating only" role
-	 * documented for mdlogger. We do not claim to collect the EE dump
-	 * body; only the kernel-exposed classification.
-	 */
 	static const char *const kExReason[] = {
 		"NONE", "HS1_TIMEOUT", "HS2_TIMEOUT", "WDT", "EE", "MD_NO_RESPONSE",
 	};
@@ -758,22 +637,6 @@ static void handle_monitor_message(uint32_t msg, uint32_t reserved)
 			set_md_status_prop("invalid");
 		break;
 	case CCCI_MD_MSG_SEND_BATTERY_INFO:
-		/* Kept as a safety net, but on THIS kernel it is unreachable, and saying so is the
-		 * point of the comment (F4484 corrects F4481, which was read off the stock binary
-		 * alone).
-		 *
-		 * What actually happens here: when the modem wants the battery reading it sends the
-		 * system message MD_GET_BATTERY_INFO, and our kernel answers it ITSELF in
-		 * port/port_sysmsg.c ("case MD_GET_BATTERY_INFO: sys_msg_send_battery(port)").
-		 * Userspace is never asked. Nothing in this kernel emits
-		 * CCCI_MD_MSG_SEND_BATTERY_INFO to the monitor channel -- grep over the whole module
-		 * tree finds no sender -- so this branch cannot fire. The stock daemon's equivalent
-		 * branch exists because its kernel generation routed the request up to userspace.
-		 *
-		 * The unprompted CCCI_IOC_SEND_BATTERY_INFO we issue after start is therefore the
-		 * only path that carries a voltage to the modem on this kernel, and it is the right
-		 * one; error 304 before start simply meant the modem could not receive yet.
-		 */
 		LOGI("md%d monitor reported a battery-info request (unexpected on this kernel -- "
 		     "it answers MD_GET_BATTERY_INFO in-kernel); answering anyway", g_md_id + 1);
 		send_battery_info();
@@ -781,20 +644,6 @@ static void handle_monitor_message(uint32_t msg, uint32_t reserved)
 	case CCCI_MD_MSG_STORE_NVRAM_MD_TYPE:
 	case CCCI_MD_MSG_CFG_UPDATE:
 	case CCCI_MD_MSG_RANDOM_PATTERN:
-		/* Observed, intentionally not acted on -- each for a checked reason (F4484):
-		 *
-		 * CFG_UPDATE: the stock treats it as a no-op too; its log string literally says
-		 *   "(dummy)".
-		 * RANDOM_PATTERN: this is the SIM-lock anti-tamper exchange, NOT an AP reset (the
-		 *   stock's "reset_ap_ioctl failed" log string is misleading). The stock answers
-		 *   with _IOW(CCCI_IOC_MAGIC, 46) = CCCI_IOC_SIM_LOCK_RANDOM_PATTERN. We cannot:
-		 *   this kernel DEFINES that ioctl (inc/ccci_core.h:214) but implements no handler
-		 *   for it anywhere in the module tree, so issuing it would only earn -ENOTTY. The
-		 *   kernel does forward the modem's SIM_LOCK_RANDOM_PATTERN (0x118) message up to
-		 *   us (port/port_sysmsg.c:233), which is why we see it at all.
-		 * STORE_NVRAM_MD_TYPE: needs a SIM-config counterpart that does not exist in this
-		 *   stack yet.
-		 */
 		LOGI("observed monitor msg=0x%x reserved=0x%x -- no action taken (see source comment)",
 		     msg, reserved);
 		break;
@@ -918,12 +767,10 @@ int main(int argc, char **argv)
 	md_type = store_md_type();
 	log_md_info();
 
-	/* Before the modem runs: it should come up already knowing the timezone, exactly as the
-	 * stock arranges it (F4484). */
 	time_srv_init();
 
 	if (set_boot_data(sbp, md_type) != 0)
-		LOGW("continuing despite CCCI_IOC_SET_BOOT_DATA failure (non-fatal per kernel FSM, MODEM-STACK-1409.md S3)");
+		LOGW("continuing despite CCCI_IOC_SET_BOOT_DATA failure (non-fatal per kernel FSM)");
 
 	if (do_start_md() != 0) {
 		LOGE("initial CCCI_IOC_DO_START_MD failed, entering exception loop anyway to observe/react to any kernel-side notification");

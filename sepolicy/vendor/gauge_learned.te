@@ -1,0 +1,15 @@
+type gauge_learned, domain;
+type gauge_learned_exec, exec_type, vendor_file_type, file_type;
+type gauge_learned_data_file, file_type, data_file_type;
+
+init_daemon_domain(gauge_learned)
+
+allow gauge_learned vendor_shell_exec:file rx_file_perms;
+allow gauge_learned vendor_toolbox_exec:file rx_file_perms;
+
+allow gauge_learned sysfs_batteryinfo:dir r_dir_perms;
+allow gauge_learned sysfs_batteryinfo:file rw_file_perms;
+allow gauge_learned sysfs_batteryinfo:lnk_file read;
+
+allow gauge_learned gauge_learned_data_file:dir rw_dir_perms;
+allow gauge_learned gauge_learned_data_file:file { create_file_perms rename };

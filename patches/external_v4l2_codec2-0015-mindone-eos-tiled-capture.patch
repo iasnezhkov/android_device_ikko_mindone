@@ -1,0 +1,116 @@
+From 54e5b16c7c4ebd2346663d76dfa0cb0797aa9707 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 27 Sep 2026 11:44:37 +0300
+Subject: [PATCH 15/17] v4l2: queue the initial EOS buffer on an internal tiled
+ CAPTURE buffer
+
+With the MTK block-detile path (0005) every CAPTURE buffer the V4L2 queue
+sees is one of mTiledCaptureBuffers (DMA-BUF heap memory), but
+setupInitialOutput() still queued the initial EOS on a gralloc GraphicBuffer
+(YCBCR_420_888, USAGE_HW_VIDEO_ENCODER) and passed its handle fds. The vb2
+core rejected it: "__prepare_dmabuf: invalid dmabuf fd for plane 0",
+"__buf_prepare: buffer preparation failed: -22" (videobuf2 debug on kernel
+L15, 27.09), so every c2.v4l2 decoder still failed at start after the kernel
+VCU-instance fix: "(CAPTURE_MPLANE)VIDIOC_QBUF failed", "Failed to queue
+initial EOS buffer".
+
+The EOS now goes on the tiled buffer that backs the free V4L2 CAPTURE slot,
+exactly as queueOutputBuffer() does for every later frame, and the
+sp<GraphicBuffer> that only served as a flag becomes a bool.
+
+Change-Id: I492e031eb8982679103571eca1e77c111dd71de6
+---
+ v4l2/V4L2Decoder.cpp                        | 28 +++++++--------------
+ v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h |  2 +-
+ 2 files changed, 10 insertions(+), 20 deletions(-)
+
+diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
+index e9cc0e1..7dab6b2 100644
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -121,9 +121,7 @@ V4L2Decoder::~V4L2Decoder() {
+         mDevice->stopPolling();
+         mDevice = nullptr;
+     }
+-    if (mInitialEosBuffer) {
+-        mInitialEosBuffer = nullptr;
+-    }
++    mInitialEosPending = false;
+ }
+ 
+ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
+@@ -253,24 +251,18 @@ bool V4L2Decoder::setupInitialOutput() {
+         return false;
+     }
+ 
+-    mInitialEosBuffer =
+-            new GraphicBuffer(mCodedSize.getWidth(), mCodedSize.getHeight(),
+-                              static_cast<PixelFormat>(HalPixelFormat::YCBCR_420_888),
+-                              GraphicBuffer::USAGE_HW_VIDEO_ENCODER, "V4L2DecodeComponent");
+-
+-    if (mInitialEosBuffer->initCheck() != NO_ERROR) {
++    TiledCaptureBuffer* tiledBuffer = mTiledCaptureBuffers.bufferAt(eosBuffer->bufferId());
++    if (!tiledBuffer || !tiledBuffer->isValid()) {
++        ALOGE("No internal tiled CAPTURE buffer for the initial EOS buffer");
+         return false;
+     }
+ 
+-    std::vector<int> fds;
+-    for (size_t i = 0; i < mInitialEosBuffer->handle->numFds; i++) {
+-        fds.push_back(mInitialEosBuffer->handle->data[i]);
+-    }
+-
++    std::vector<int> fds = {tiledBuffer->fd()};
+     if (!std::move(*eosBuffer).queueDMABuf(fds)) {
+         ALOGE("Failed to queue initial EOS buffer");
+         return false;
+     }
++    mInitialEosPending = true;
+ 
+     return true;
+ }
+@@ -393,7 +385,7 @@ void V4L2Decoder::decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB
+     // To determine if the DRC is pending, the access to the frame data is
+     // required. It's not possible to access the frame directly for the secure
+     // playback, so this check must be skipped. b/279834186
+-    if (!mIsSecure && mInitialEosBuffer && !mPendingDRC)
++    if (!mIsSecure && mInitialEosPending && !mPendingDRC)
+         mPendingDRC = waitForDRC(buffer->dmabuf, mCodec);
+ 
+     mDecodeRequests.push(DecodeRequest(std::move(buffer), std::move(decodeCb)));
+@@ -472,7 +464,7 @@ void V4L2Decoder::pumpDecodeRequest() {
+             // may trigger config from host side.
+             // Drain can only be finished if we are sure there was no stream = no
+             // single frame in the stack.
+-            if (mInitialEosBuffer && !mPendingDRC) {
++            if (mInitialEosPending && !mPendingDRC) {
+                 ALOGV("Terminate drain, because there was no stream");
+                 mTaskRunner->PostTask(FROM_HERE, ::base::BindOnce(std::move(request.decodeCb),
+                                                                   VideoDecoder::DecodeStatus::kOk));
+@@ -822,9 +814,7 @@ bool V4L2Decoder::changeResolution() {
+     ALOGV("%s()", __func__);
+     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+ 
+-    if (mInitialEosBuffer) {
+-        mInitialEosBuffer = nullptr;
+-    }
++    mInitialEosPending = false;
+ 
+     if (!startOutputQueue(mMinNumOutputBuffers, V4L2_MEMORY_DMABUF)) {
+         ALOGE("Failed to start output queue during DRC.");
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+index 17324b0..5a70518 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+@@ -117,7 +117,7 @@ private:
+     scoped_refptr<V4L2Queue> mOutputQueue;
+ 
+     // Contains the initial EOS buffer, until DRC event is dequeued.
+-    sp<GraphicBuffer> mInitialEosBuffer;
++    bool mInitialEosPending = false;
+ 
+     std::queue<DecodeRequest> mDecodeRequests;
+     std::map<int32_t, DecodeCB> mPendingDecodeCbs;
+-- 
+2.43.0
+

@@ -2,10 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: entry point of the fingerprint AIDL->HIDL bridge.
-//
-// Review 14.09: binds through FingerprintHidlConn instead of a raw sp<> so a HAL crash after
-// startup can be detected and recovered from (BRIDGES-REVIEW-1409).
 #define LOG_TAG "mindone-bridge-fingerprint"
 
 #include <android-base/logging.h>

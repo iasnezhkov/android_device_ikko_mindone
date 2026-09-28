@@ -1,0 +1,2 @@
+type mindone_fast_insmod_data_file, vendor_file_type, file_type;
+allow init_insmod_sh mindone_fast_insmod_data_file:file r_file_perms;

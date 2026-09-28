@@ -1,24 +1,4 @@
 <!--
-    SPDX-FileCopyrightText: The LineageOS Project
-    SPDX-License-Identifier: Apache-2.0
-
-    Extracted VERBATIM 01.09.2026 from this device's OWN vendor partition image
-    (/etc/vintf/manifest.xml, mounted read-only loop in VM, debugfs/mount) — not adapted from
-    any other tree. This is the real, already-valid VINTF device manifest our stock
-    vendor partition ships (built from many manifest_*.xml fragments by the stock build,
-    listed in the original "Input:" comment preserved below). target-level="6" confirmed —
-    A16 is served by level 6; raising it to 7 is an Android 17 question, not one for this build.
-    vendor.skyroam.hardware.{file,socket} independently cross-confirmed live in our own DSU
-    boot log (F3400: "HidlServiceManagement: Registered vendor.skyroam.hardware.socket@1.0
-    ::ISocket/default").
-
-    If the kernel line (<kernel target-level="8"/>) is ever bumped to 202404, the ROOT
-    <manifest target-level="6"> can stay at 6: VINTF match rules allow kernel-level >= root-level,
-    and all evidence for this build is for root level 6. Raising the root level is a separate,
-    much heavier step (different vendor HAL/AIDL version requirements). This file reflects the
-    device as it is.
--->
-<!--
     Input:
         manifest_sensor_hidl_v2.xml
         manifest_audio.xml
@@ -107,12 +87,12 @@
     <hal format="hidl">
         <name>android.hardware.graphics.composer</name>
         <transport>hwbinder</transport>
-        <version>2.1</version>
+        <version>2.3</version>
         <interface>
             <name>IComposer</name>
             <instance>default</instance>
         </interface>
-        <fqname>@2.1::IComposer/default</fqname>
+        <fqname>@2.3::IComposer/default</fqname>
     </hal>
     <hal format="hidl">
         <name>android.hardware.graphics.mapper</name>
@@ -124,23 +104,6 @@
         </interface>
         <fqname>@4.0::IMapper/default</fqname>
     </hal>
-    <hal format="hidl">
-        <name>android.hardware.media.omx</name>
-        <transport>hwbinder</transport>
-        <version>1.0</version>
-        <interface>
-            <name>IOmx</name>
-            <instance>default</instance>
-        </interface>
-        <interface>
-            <name>IOmxStore</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@1.0::IOmx/default</fqname>
-        <fqname>@1.0::IOmxStore/default</fqname>
-    </hal>
-    <!-- 06.09 (A16 audit par. 3.1): the stale HIDL entry android.hardware.nfc@1.2 was removed - there is no service, device.mk builds
-         AIDL android.hardware.nfc-service.nxp instead (track HANDOFF-NFC-3108); the entry produced 200+ "Could not find" errors and an ANR loop in com.android.nfc. -->
     <hal format="hidl">
         <name>android.hardware.radio</name>
         <transport>hwbinder</transport>
@@ -273,16 +236,6 @@
         <fqname>@1.0::IComposerExt/default</fqname>
     </hal>
     <hal format="hidl">
-        <name>vendor.mediatek.hardware.dmc</name>
-        <transport>hwbinder</transport>
-        <version>1.2</version>
-        <interface>
-            <name>IDmcService</name>
-            <instance>dmc_hidl_service</instance>
-        </interface>
-        <fqname>@1.2::IDmcService/dmc_hidl_service</fqname>
-    </hal>
-    <hal format="hidl">
         <name>vendor.mediatek.hardware.mtkpower</name>
         <transport>hwbinder</transport>
         <version>1.2</version>
@@ -326,8 +279,6 @@
         <fqname>@3.0::IMtkRadioEx/mtkSlot1</fqname>
         <fqname>@3.0::IMtkRadioEx/mtkSmartRatSwitch1</fqname>
     </hal>
-<!-- vendor.mediatek.hardware.netdagent: removed 14.09 (netdagent dropped, F4420) -->
-    <!-- vendor.mediatek.hardware.nvram@1.1 dropped 13.09: no client references the interface on this ROM (F4304) -->
 <!-- vendor.mediatek.hardware.pq@2.15 (picture-quality service): removed 13.09 — the service never ran on our ROM
      (no pid, no init rc), display works without it; only the service binary + its -impl are dropped, the libpq
      client libraries stay in case hwcomposer/gralloc dlopen them. -->
@@ -342,12 +293,6 @@
          NB: the build copies this repository into the LineageOS tree on every build, so the fix
          only survives here - editing the copy inside the VM is wiped at the next run. -->
     <kernel target-level="8"/>
-    <!-- 🔴 08.09 (F3930): Silead fingerprint, HIDL 2.1. The entry has to be here specifically, not in a
-         separate .xml fragment under vendor/etc/vintf/manifest/: the same install path as the default HAL
-         from hardware/interfaces already caused a build break, "overriding commands" (F3769). Without an
-         entry in the VINTF manifest the HIDL service does not register at all - the same as seen with
-         clientapi in the _b log: "Service ... must be in VINTF manifest". On top of it runs our AIDL->HIDL
-         bridge (android.hardware.biometrics.fingerprint-service.mindone), which the A16 framework requires. -->
     <hal format="hidl">
         <name>android.hardware.biometrics.fingerprint</name>
         <transport>hwbinder</transport>

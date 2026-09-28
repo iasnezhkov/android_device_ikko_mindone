@@ -1,0 +1,34 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_binary {
+    name: "android.hardware.camera.provider@2.6-service.mindone",
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["android.hardware.camera.provider-service.mindone.rc"],
+    vintf_fragments: ["manifest_camera_proxy.xml"],
+    srcs: [
+        "CameraDeviceProxy.cpp",
+        "CameraDeviceProxy35.cpp",
+        "CameraProviderHidlConn.cpp",
+        "CameraProviderProxy.cpp",
+        "MetadataAugmenter.cpp",
+        "service.cpp",
+    ],
+    shared_libs: [
+        "android.hardware.camera.common@1.0",
+        "android.hardware.camera.device@1.0",
+        "android.hardware.camera.device@3.2",
+        "android.hardware.camera.device@3.4",
+        "android.hardware.camera.device@3.5",
+        "android.hardware.camera.provider@2.4",
+        "android.hardware.camera.provider@2.5",
+        "android.hardware.camera.provider@2.6",
+        "libcamera_metadata",
+        "libhidlbase",
+        "liblog",
+        "libutils",
+    ],
+    cflags: ["-Wall", "-Werror"],
+}

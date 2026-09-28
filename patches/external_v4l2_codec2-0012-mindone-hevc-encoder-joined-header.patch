@@ -1,0 +1,132 @@
+From 8487150bf3ba44b944982988c0a4308538281ba0 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sat, 26 Sep 2026 07:36:23 +0300
+Subject: [PATCH] v4l2: request a joined header for every codec, not just H.264
+
+HEVC recording (CamRig video ... hevc, kernel K7) delivered one header
+buffer and then failed on the very next output buffer:
+"EncodeComponent: Failed to find work (timestamp ...)", C2_CORRUPTED,
+encode aborted. AVC on the same device.mk target is unaffected:
+2560x1440@30 for 5 min, 8876 frames, 1 drop.
+
+Root cause is a V4L2 control the driver defaults one way and the HAL
+only overrides for H.264.
+
+mtk-vcodec-enc.c sets up V4L2_CID_MPEG_VIDEO_HEADER_MODE once per
+context, for whichever codec ends up selected later, with SEPARATE as
+the default (mtk-vcodec-enc.c:3197-3200, v4l2_ctrl_new_std_menu(...,
+max=JOINED_WITH_1ST_FRAME, mask=0, def=SEPARATE); SEPARATE=0,
+JOINED_WITH_1ST_FRAME=1 in v4l2-controls.h). V4L2Encoder::configureDevice()
+only calls configureH264() - which sets this control to
+JOINED_WITH_1ST_FRAME - for AVC profiles (outputProfile between
+PROFILE_AVC_BASELINE and PROFILE_AVC_ENHANCED_MULTIVIEW_DEPTH_HIGH);
+every other profile, HEVC included, returns early and never touches the
+control, so it stays at the driver's SEPARATE default.
+
+With SEPARATE active, vb2ops_venc_start_streaming's check at
+mtk-vcodec-enc.c:2298-2299 (ctx->enc_params.seq_hdr_mode !=
+V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE) is false, so streamon leaves
+ctx->state at MTK_STATE_INIT (line 2314) instead of MTK_STATE_HEADER.
+On the first m2mops_venc_device_run() (mtk-vcodec-enc.c:3047-3058), the
+codec-is-h264/h265/hevc/heif/mpeg4/h263 check combined with
+ctx->state != MTK_STATE_HEADER is now true, so it calls
+mtk_venc_encode_header() before queueing the ordinary per-frame work.
+mtk_venc_encode_header() (mtk-vcodec-enc.c:2429-2494) removes one
+CAPTURE buffer, fills it with VENC_START_OPT_ENCODE_SEQUENCE_HEADER
+(VPS/SPS/PPS only, no picture data), and copies the *next pending
+OUTPUT buffer's* timestamp onto it (2480-2488) without removing that
+OUTPUT buffer from the queue. The queued encode_work then runs the
+normal frame path on that same still-pending OUTPUT buffer, producing a
+second CAPTURE buffer - the real frame 0 bitstream - stamped with the
+identical timestamp.
+
+EncodeComponent::onOutputBufferDone() (components/EncodeComponent.cpp:
+914-975) has no idea a buffer might be header-only for this codec: its
+only header-aware branch is "if (mExtractCSD)" (927-942), and
+V4L2EncodeComponent::initializeEncoder() sets
+mExtractCSD = isH264Profile(outputProfile) (V4L2EncodeComponent.cpp:69;
+false by default, EncodeComponent.h:174), so for HEVC that branch never
+runs at all. Every dequeued buffer, header-only or real, goes straight
+to getWorkByTimestamp(timestamp) (992-1010) and gets attached to
+whichever work item has a matching timestamp (966). The header-only
+buffer matches frame 0's still-queued work by timestamp coincidence and
+becomes that work's only output; once frame 0's input buffer is also
+released, isWorkDone() is satisfied and reportWork() pops it from
+mWorkQueue (971-973) - so from the client's side, frame 0 "arrives" as
+just the header bytes. When the real frame-0 bitstream (same timestamp)
+is dequeued next, getWorkByTimestamp() finds nothing (971-1009),
+timestamp != 0, and reportError(C2_CORRUPTED) fires (1006): the observed
+"Failed to find work" immediately after the header.
+
+AVC never hits this because configureH264() already asks for
+JOINED_WITH_1ST_FRAME, so mtk-vcodec-enc.c takes the other branch at
+streamon (state = MTK_STATE_HEADER right away), device_run's
+state != MTK_STATE_HEADER check is false on the first run, and the
+driver never calls the standalone mtk_venc_encode_header() - one CAPTURE
+buffer per OUTPUT buffer throughout, the only shape
+EncodeComponent::onOutputBufferDone() actually handles correctly.
+
+Fix: move the V4L2_CID_MPEG_VIDEO_HEADER_MODE control out of the
+H.264-only configureH264() and into the common configureDevice() path
+so every codec gets JOINED_WITH_1ST_FRAME, matching the shape
+EncodeComponent already assumes. This changes nothing for AVC (same
+final control value, just set one call earlier). VENC_SET_PARAM_
+PREPEND_HEADER is a generic IPI message with no codec-specific handling
+in either venc_common_if.c:520 or venc_vcp_if.c:1290/1477, so this is a
+supported, codec-agnostic mode switch, not a driver limitation.
+
+Not yet verified on device - the main thread needs to reflash/rebuild
+the service and rerun the HEVC CamRig capture (see task notes for the
+exact plan: expect no "Failed to find work", ffprobe showing hevc with
+a normal frame count matching duration*fps, and no AVC regression).
+
+Known separate issue, out of scope here: mExtractCSD is hardcoded to
+isH264Profile(outputProfile) (V4L2EncodeComponent.cpp:69), so HEVC never
+gets a C2StreamInitDataInfo CSD at all, fixed or not by this change.
+Simply flipping that condition on for HEVC would trade this crash for
+an earlier one: extractCSDInfo()/extractSPSPPS() (EncodeHelpers.cpp)
+parse NAL type as data[0] & 0x1f (H264NalParser::type()), which is
+H.264's forbidden_zero_bit+nal_ref_idc+type layout; HEVC's NAL type
+lives in bits 1-6 of the first byte, so the masked value the H264 parser
+computes for any single-layer HEVC NAL is always even (2*type mod 32)
+and can never equal kSPSType(7) - extractSPSPPS() would never find an
+"SPS", extractCSDInfo() would return false, and
+EncodeComponent::onOutputBufferDone() would hit
+"ALOGE(Failed to extract CSD"); reportError(C2_CORRUPTED)" on the very
+first buffer. Giving HEVC real CSD needs its own VPS/SPS/PPS-aware NAL
+parser, not just the flag flip.
+
+Change-Id: I15380421df3f06fbb8ee9c734965bf229d694b07
+---
+ v4l2/V4L2Encoder.cpp | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/v4l2/V4L2Encoder.cpp b/v4l2/V4L2Encoder.cpp
+index b22460a..820b2fd 100644
+--- a/v4l2/V4L2Encoder.cpp
++++ b/v4l2/V4L2Encoder.cpp
+@@ -645,6 +645,10 @@ bool V4L2Encoder::configureDevice(C2Config::profile_t outputProfile,
+     mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG, {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE, 1),
+                                                 V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_GOP_SIZE, 0)});
+ 
++    mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG,
++                         {V4L2ExtCtrl(V4L2_CID_MPEG_VIDEO_HEADER_MODE,
++                                      V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME)});
++
+     // All controls below are H.264-specific, so we can return here if the profile is not H.264.
+     if (outputProfile >= C2Config::PROFILE_AVC_BASELINE &&
+         outputProfile <= C2Config::PROFILE_AVC_ENHANCED_MULTIVIEW_DEPTH_HIGH) {
+@@ -696,10 +700,6 @@ bool V4L2Encoder::configureH264(C2Config::profile_t outputProfile,
+             static_cast<int32_t>(outputH264Level.value_or(V4L2_MPEG_VIDEO_H264_LEVEL_4_0));
+     h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_H264_LEVEL, h264Level);
+ 
+-    // Ask not to put SPS and PPS into separate bitstream buffers.
+-    h264Ctrls.emplace_back(V4L2_CID_MPEG_VIDEO_HEADER_MODE,
+-                           V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME);
+-
+     // Ignore return value as these controls are optional.
+     mDevice->setExtCtrls(V4L2_CTRL_CLASS_MPEG, std::move(h264Ctrls));
+ 
+-- 
+2.43.0
+

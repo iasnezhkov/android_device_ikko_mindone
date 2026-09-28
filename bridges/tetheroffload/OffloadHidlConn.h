@@ -2,12 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: connection lifecycle for the stock HIDL tetheroffload.{config@1.0,control@1.0/1.1}
-// services. Handles linkToDeath() on both interfaces + a background reconnect loop, so a crash
-// of the stock tetheroffloadservice process does not permanently wedge every subsequent AIDL
-// call (the previous version bound both sp<>s once at process start and never revisited them -
-// see BRIDGES-REVIEW-1409 "tetheroffload: death/reconnect"). Modeled on
-// bridges/secure_element/SecureElementBridge's death/reconnect pattern.
 #pragma once
 
 #include <android/hardware/tetheroffload/config/1.0/IOffloadConfig.h>

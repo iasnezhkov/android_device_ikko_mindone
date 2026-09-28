@@ -33,10 +33,6 @@
 #define CCCI_DEV_IOCTL3		"/dev/ccci_ioctl3"	/* port_cfg.c:146, minor 15 */
 #define CCCI_DEV_IOCTL4		"/dev/ccci_ioctl4"	/* port_cfg.c:149, minor 16 */
 #define CCCI_DEV_FS		"/dev/ccci_fs"		/* port_cfg.c:113, CCCI_FS_TX/RX, minor 4 */
-/* Ports the stock ccci_mdinit holds open for its whole life, recovered by comparing the kernel's
- * own "port ... open ... by <process>" lines across a stock boot and one of ours (F4473). The
- * stock daemon opens exactly three: ccci_fs, and these two. Nothing in our stack held them, and
- * a CCCI port with no reader is how the modem stalls without reporting an error. */
 #define CCCI_DEV_CCB_CTRL	"/dev/ccci_ccb_ctrl"	/* common circular buffer control */
 #define CCCI_DEV_IPC_5		"/dev/ccci_ipc_5"	/* IPC channel 5 */
 
@@ -47,7 +43,6 @@
 /* Any open char-port fd can issue these -- port_dev_ioctl() shares one */
 /* file_operations across every char port (port/port_char.c:57-69);    */
 /* the dummy ports (ccci_ioctl0..4) just exist to hand out an fd with   */
-/* no real data channel attached (MODEM-STACK-1409.md S2.2).            */
 /* ------------------------------------------------------------------ */
 #define CCCI_IOC_MAGIC			'C'
 
@@ -82,13 +77,6 @@
 #define CCCI_IOC_RILD_POWER_OFF_MD	_IO(CCCI_IOC_MAGIC, 125)	/* :289 */
 #define CCCI_IOC_GET_MD_EX_TYPE		_IOR(CCCI_IOC_MAGIC, 9, unsigned int)	/* :121 */
 
-/* Added 15.09 (F4484) after listing every ioctl the stock ccci_mdinit issues and diffing it
- * against ours. All three exist in this project's kernel (inc/ccci_core.h), cited below.
- *
- * Note on the stock's _IOR(CCCI_IOC_MAGIC, 72): deliberately NOT added. Our kernel's numbering
- * goes 71 then 76 -- there is no 72 -- so issuing it would only earn -ENOTTY. The stock binary
- * is built for a different kernel generation.
- */
 #define CCCI_IOC_SEND_RUNTIME_DATA	_IO(CCCI_IOC_MAGIC, 7)			/* ccci_core.h:117 */
 #define CCCI_IOC_GET_MD_INFO		_IOR(CCCI_IOC_MAGIC, 8, unsigned int)	/* :119, img_info[IMG_MD].version */
 #define CCCI_IOC_SIM_LOCK_RANDOM_PATTERN _IOW(CCCI_IOC_MAGIC, 46, unsigned int)	/* :214 */
@@ -180,15 +168,6 @@ struct ccci_header {
 #define CCCI_MAGIC_NUM		0xFFFFFFFFu	/* ccci_core.h:26 */
 #define CCCI_MONITOR_CH_ID	0xf0000000u	/* ccci_core.h:552, "for mdinit" */
 
-/*
- * CCCI_MD_MSG -- the virtual message IDs fsm_monitor_send_message() can
- * queue onto /dev/ccci_monitor's read side (fsm/ccci_fsm_internal.h:88-100).
- * This is the actual "exception/reset notification channel" mdinit must
- * poll: MODEM-STACK-1409.md S2.4 "Recovery is NOT autonomous" -- nothing
- * re-enters READY except a fresh CCCI_COMMAND_START, and even the kernel's
- * own silent WDT-recovery branch only *posts a message here* for userspace
- * to act on by calling DO_STOP_MD then DO_START_MD again.
- */
 enum ccci_md_msg {
 	CCCI_MD_MSG_FORCE_STOP_REQUEST		= 0xFAF50001,
 	CCCI_MD_MSG_FLIGHT_STOP_REQUEST	= 0xFAF50002,
@@ -226,10 +205,6 @@ enum md_boot_data_idx {
 	MD_BOOT_DATA_LEN	= 16,	/* array is unsigned int[16], slots 12-15 unused/reserved */
 };
 
-/* Slots 5..10 hold ONE string, not six numbers: the stock daemon's get_rsc_protol_value()
- * does property_get("ro.vendor.mtk_protocol1_rat_config", buf, 24) straight into this field
- * (F4481). 6 slots x 4 bytes = 24, the same length the stock passes.
- */
 #define MD_CFG_RAT_STR_BYTES	((MD_CFG_WM_IDX - MD_CFG_RAT_STR0) * sizeof(unsigned int))
 
 #define MD_DBG_DUMP_INVALID	(-1)	/* inc/ccci_modem.h:65, sentinel meaning "not set" */

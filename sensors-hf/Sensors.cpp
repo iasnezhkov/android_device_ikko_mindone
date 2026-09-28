@@ -25,10 +25,6 @@ using EventPayload = Event::EventPayload;
 
 namespace {
 
-// Bounded wait for HfManagerClient::waitUntilReady(). Task-specified upper
-// bound; see SENSORS-HAL-PLAN-1309.md "readiness-wait design" for why this
-// needs to comfortably clear the empirically measured ~27s SCP boot gap
-// (F4290/F4292) with margin.
 constexpr int kReadyTimeoutMs = 40000;
 
 // EventFlag wake bit used by frameworks/native's FMQ-based sensors event
@@ -65,12 +61,6 @@ void Sensors::ensureEnumeratedLocked() {
         return;
     }
 
-    // THE fix for the boot race (/ F4290 / F4292): block here, before
-    // any sensor_type is queried, until hf_manager reports the SCP-backed
-    // sensor stack ready (or we give up after kReadyTimeoutMs). Both entry
-    // points that can reach here (getSensorsList(), initialize()) call
-    // this while already holding mutex_, so whichever the framework calls
-    // first pays this wait and the other one returns instantly afterward.
     hf_.waitUntilReady(kReadyTimeoutMs);
 
     sensorList_.clear();
@@ -113,15 +103,6 @@ void Sensors::ensureEnumeratedLocked() {
 
     ALOGI("hf_manager enumeration done: %zu AIDL-mappable sensors found", sensorList_.size());
 
-    // v2/calibration (deliverable A, SENSORS-HAL-CALIBRATION-1309.md):
-    // push /mnt/vendor/nvcfg/sensor/*.json calibration into the SCP for
-    // every registered, calibratable sensor_type (pushAll() queries
-    // HfManagerClient::queryRegistered() itself, no need to track that
-    // here), and subscribe to runtime BIAS_ACTION/CALI_ACTION/TEMP_ACTION
-    // reports so translateEvent() below can persist updates back.
-    // ensureEnumeratedLocked() only ever runs once per process (see the
-    // enumerated_ guard above), so this pushes exactly once per HAL
-    // lifetime, same as the stock blob does at its own startup.
     calibrationStore_.pushAll(hf_);
 
     enumerated_ = true;
@@ -185,16 +166,6 @@ std::optional<Event> Sensors::translateEvent(const hf_manager_event& ke) {
         return e;
     }
     if (ke.action != ::mindone::hf::DATA_ACTION) {
-        // v2/calibration: route BIAS_ACTION/CALI_ACTION (and
-        // TEMP_ACTION, once its persistence is confirmed) to
-        // CalibrationStore so a runtime SCP recalibration gets written back
-        // to the nvcfg JSON files, same as the stock HAL does (see
-        // SENSORS-HAL-CALIBRATION-1309.md). onKernelEvent() itself ignores
-        // any action/sensor_type it doesn't manage, so it's safe to call
-        // unconditionally here. Still not surfaced on the AIDL event queue
-        // either way: BIAS_ACTION/CALI_ACTION/TEMP_ACTION/TEST_ACTION/
-        // RAW_ACTION remain internal MTK debug channels, not wired to the
-        // AIDL surface - same v1 decision, unchanged in v2.
         calibrationStore_.onKernelEvent(ke);
         return std::nullopt;
     }
@@ -203,13 +174,6 @@ std::optional<Event> Sensors::translateEvent(const hf_manager_event& ke) {
     const float gain = (gainIt != gainByHandle_.end() && gainIt->second != 0)
                                 ? static_cast<float>(gainIt->second)
                                 : 1.0f;
-    // CONFIRMED by F4294 (the fact log, live /proc/hf_manager dump,
-    // 13.09): physical = raw_word / gain (e.g. icm4n607_acc gain=1000,
-    // icm4n607_gyro gain=1000000, mmc5603 mag gain=1000, stk6a2x_als
-    // gain=1). Still worth a one-time sanity check with the accelerometer
-    // lying flat (expect ~9.81 on one axis) since F4294 read gain via
-    // /proc/hf_manager's debug text dump, not through this exact ioctl
-    // path - see plan doc open risks.
     auto scaled = [&](int idx) { return static_cast<float>(ke.word[idx]) / gain; };
     // SensorStatus is referenced here as a top-level android.hardware.sensors
     // type; if this AIDL version instead nests it under

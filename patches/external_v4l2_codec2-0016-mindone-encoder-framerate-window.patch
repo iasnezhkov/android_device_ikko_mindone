@@ -1,0 +1,98 @@
+From 051ca3803b2a1709f02e82cdebb72a5cde535336 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 27 Sep 2026 10:33:55 +0300
+Subject: [PATCH 16/17] v4l2: estimate the encoder framerate over a window of
+ timestamps
+
+EncodeComponent re-derived the framerate from every single timestamp delta and
+re-programmed the device (setFramerate -> VIDIOC_S_PARM, i.e. the VCU rate
+control budget and the VENC DVFS operating rate) whenever it moved by more
+than 5 fps. With a bursty surface source this flaps on nearly every frame:
+CodecRig 1080p30 AVC on L15/0926c logged "Frames are coming too fast - new
+framerate (107..355) would exceed the maximum value (30)" throughout, and got
+135/150 frames out at 0.17 Mbit/s; HEVC, which has no level clamp, was driven
+up to 355 fps. Camera input with steady timestamps was fine (1 drop in 5 min at
+1440p on 25.09).
+
+The rate is now the mean over the last 30 timestamps (at least 8 before the
+first adjustment); a timestamp that does not advance restarts the window. The
+level clamp and the 5 fps hysteresis are unchanged.
+
+Change-Id: Ib94b5c4d74d7c7bdae230e069c6ccbbbd8b0baca
+---
+ components/EncodeComponent.cpp                    | 15 ++++++++++++---
+ .../v4l2_codec2/components/EncodeComponent.h      |  3 ++-
+ v4l2/V4L2EncodeComponent.cpp                      |  2 +-
+ 3 files changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
+index 49b6ecd..540f43c 100644
+--- a/components/EncodeComponent.cpp
++++ b/components/EncodeComponent.cpp
+@@ -777,9 +777,19 @@ bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t
+ 
+     // Dynamically adjust framerate based on the frame's timestamp if required.
+     constexpr int64_t kMaxFramerateDiff = 5;
+-    if (mLastFrameTime && (timestamp > *mLastFrameTime)) {
++    constexpr size_t kFramerateWindow = 30;
++    constexpr size_t kFramerateMinSamples = 8;
++    if (!mRecentFrameTimes.empty() && timestamp <= mRecentFrameTimes.back()) {
++        mRecentFrameTimes.clear();
++    }
++    mRecentFrameTimes.push_back(timestamp);
++    if (mRecentFrameTimes.size() > kFramerateWindow) {
++        mRecentFrameTimes.pop_front();
++    }
++    if (mRecentFrameTimes.size() >= kFramerateMinSamples) {
++        const int64_t span = mRecentFrameTimes.back() - mRecentFrameTimes.front();
+         int64_t newFramerate = std::max(
+-                static_cast<int64_t>(std::round(1000000.0 / (timestamp - *mLastFrameTime))),
++                static_cast<int64_t>(std::round((mRecentFrameTimes.size() - 1) * 1000000.0 / span)),
+                 static_cast<int64_t>(1LL));
+         // Clients using input surface may exceed the maximum allowed framerate for the given
+         // profile. One of such examples is android.media.codec.cts.MediaCodecTest#testAbruptStop.
+@@ -798,7 +808,6 @@ bool EncodeComponent::encode(C2ConstGraphicBlock block, uint64_t index, int64_t
+             mInterface->setFramerate(static_cast<uint32_t>(newFramerate));
+         }
+     }
+-    mLastFrameTime = timestamp;
+ 
+     // Update dynamic encoding parameters (bitrate, framerate, key frame) if requested.
+     if (!updateEncodingParameters()) return false;
+diff --git a/components/include/v4l2_codec2/components/EncodeComponent.h b/components/include/v4l2_codec2/components/EncodeComponent.h
+index 2d40dff..b852d49 100644
+--- a/components/include/v4l2_codec2/components/EncodeComponent.h
++++ b/components/include/v4l2_codec2/components/EncodeComponent.h
+@@ -8,6 +8,7 @@
+ #include <atomic>
+ #include <limits>
+ #include <memory>
++#include <deque>
+ #include <optional>
+ #include <unordered_map>
+ #include <vector>
+@@ -168,7 +169,7 @@ protected:
+     // Maximum valid framerate for current output level and input frame size.
+     uint32_t mMaxFramerate = std::numeric_limits<uint32_t>::max();
+     // The timestamp of the last frame encoded, used to dynamically adjust the framerate.
+-    std::optional<int64_t> mLastFrameTime;
++    std::deque<int64_t> mRecentFrameTimes;
+ 
+     // Whether we need to extract and submit CSD (codec-specific data, e.g. H.264 SPS).
+     bool mExtractCSD = false;
+diff --git a/v4l2/V4L2EncodeComponent.cpp b/v4l2/V4L2EncodeComponent.cpp
+index 9549398..7d68953 100644
+--- a/v4l2/V4L2EncodeComponent.cpp
++++ b/v4l2/V4L2EncodeComponent.cpp
+@@ -61,7 +61,7 @@ bool V4L2EncodeComponent::initializeEncoder() {
+     ALOG_ASSERT(!mInputFormatConverter);
+     ALOG_ASSERT(!mEncoder);
+ 
+-    mLastFrameTime = std::nullopt;
++    mRecentFrameTimes.clear();
+ 
+     // Get the requested profile and level.
+     C2Config::profile_t outputProfile = mInterface->getOutputProfile();
+-- 
+2.43.0
+

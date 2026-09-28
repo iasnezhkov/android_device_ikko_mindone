@@ -100,37 +100,6 @@ int HfManagerClient::countRegisteredSensors() {
 }
 
 bool HfManagerClient::waitUntilReady(int timeoutMs, int pollIntervalMs) {
-    // Boot-race context (full citation chain in
-    // SENSORS-HAL-PLAN-1309.md#readiness-wait-design):
-    //   sensorhub.ko module_init -> transceiver_init() calls
-    //   hf_device_register() unconditionally (transceiver.c:1040), which
-    //   adds a ready=false entry to hfcore.device_list (hf_manager.c:309-
-    //   320) at ordinary module-load time - long before SCP is up.
-    //   Only once SCP signals SCP_EVENT_READY AND the SCP sensor task acks
-    //   back over sensor_comm (ready.c:47-98, the two flags scp_platform_
-    //   ready/scp_sensor_ready both true) does the sensor_ready notifier
-    //   chain fire transceiver_ready_notifier (transceiver.c:935-947,
-    //   priority READY_HIGHPRI) -> transceiver_sensor_bootup() ->
-    //   transceiver_create_manager() (transceiver.c:891-907), which first
-    //   does a synchronous SCP round-trip to fetch the REAL sensor list
-    //   (sensor_list_get_list(), sensorhub/sensor_list.c:122) and only
-    //   THEN calls hf_manager_create(), which is what flips
-    //   hf_dev->ready=true (hf_manager.c:454). So by construction: the
-    //   instant HF_MANAGER_REQUEST_READY_STATUS turns true, the real list
-    //   is already fully populated - no extra settle time is needed after
-    //   ready flips.
-    //   The empirically measured F4290/F4292 ~27s gap is SCP core boot +
-    //   firmware handshake, all upstream of any of this; nothing here can
-    //   shorten it, only wait it out without giving Android a permanently
-    //   empty sensor list.
-    //
-    // Defensive addition beyond the literal ioctl: READY_STATUS returns
-    // vacuously true if hfcore.device_list is empty (hf_manager.c:1630,
-    // packet.status pre-set true, loop body never runs to falsify it) -
-    // i.e. before sensorhub.ko's module_init has even run. We therefore
-    // also require a non-zero, two-poll-stable registered-sensor count
-    // before declaring readiness, so a future change to module load order
-    // can't reintroduce the exact bug this class exists to fix.
     const int64_t deadline = nowMs() + timeoutMs;
     int lastCount = -1;
     int stableHits = 0;

@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Mon, 28 Sep 2026 04:12:58 +0300
+Subject: [PATCH 24/27] v4l2: call libdpframework's real DpBlitStream
+ destructor
+
+Every MDP decode session left two dma-buf fds open in
+android.hardware.media.c2-service-v4l2: one system-heap buffer (3060 kB,
+the tiled source) and one mtk_mm "Gralloc" buffer (3064 kB, the
+destination), 2/4/6/8 after four AVC/HEVC surface sessions on 28.09
+(dmabuf_dump, /proc/<pid>/fdinfo exp_name). strace -f -y of one session:
+the decoder thread dup()s the source and destination fds right before
+the first MDP ioctl (the recording frame), and nothing closes the dups.
+v4l2_codec2 itself never calls dup; libdpframework does when a buffer is
+registered with DpBlitStream::setSrcBuffer/setDstBuffer, and releases
+them in ~DpBlitStream.
+
+That destructor never ran. The local declaration of DpBlitStream (the
+blob has no header here) declared only the constructor, so the explicit
+stream->~DpBlitStream() in ~MdpImageConverter bound to the implicit,
+trivial destructor of the local declaration and compiled to nothing.
+Declaring the destructor makes the call resolve to the blob's exported
+_ZN12DpBlitStreamD1Ev (nm -D: C1/C2 at 0x82bc8, D1/D2 at 0x82dc4, no
+deleting D0, so it is not virtual and the direct call is the right one).
+
+Test: CodecRig decode AVC and HEVC surface x4, dmabuf_dump of the service
+after each: 0 held (before: +2 per session); translate_fd 0; 150/150.
+---
+ v4l2/MdpImageConverter.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/v4l2/MdpImageConverter.cpp b/v4l2/MdpImageConverter.cpp
+index 8a3c108..6adcdb7 100644
+--- a/v4l2/MdpImageConverter.cpp
++++ b/v4l2/MdpImageConverter.cpp
+@@ -27,6 +27,7 @@ struct DpRect;
+ class DpBlitStream {
+ public:
+     DpBlitStream();
++    ~DpBlitStream();
+     int setSrcConfig(int width, int height, DP_COLOR_ENUM color, DpInterlaceFormat interlace,
+                       DpRect* roi);
+     int setSrcBuffer(int fd, unsigned int* planeSizes, unsigned int planeCount);
+-- 
+2.43.0
+

@@ -1,0 +1,177 @@
+From 27101e994e3d39365517f7dd8e74ee5bfd2853e6 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Wed, 23 Sep 2026 11:27:40 +0300
+Subject: [PATCH 3/6] v4l2: register the HEVC hardware encoder
+
+mtk-vcodec-enc.c has real, live-registered HEVC support that stock
+v4l2_codec2 (H.264/VP8/VP9 encoders only) never exposes:
+V4L2_CID_MPEG_VIDEO_HEVC_PROFILE/LEVEL/TIER controls with real s_ctrl
+handling, a full level/tier table (venc_common_if.c), the codec
+accepted at the driver own ID-validation gate (venc_if_init), and its
+own DVFS/bandwidth tuning table entry in the devicetree - three
+independent confirmations this is a real, MediaTek-profiled hardware
+path, not a paper capability.
+
+Wire it through the same generic VideoEncoder/EncodeInterface path
+H.264 and VP9 already use: a component name, VideoCodec::HEVC
+mapping, and a HEVCProfileLevelSetter. The profile menu itself is
+queried live from the driver (existing generic getSupportedProfiles()
+machinery, unchanged), which already caps out at
+V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN - this driver build only accepts
+Main, so HEVCProfileLevelSetter clamps to it the same way
+VP9ProfileLevelSetter clamps to VP9 profile 0. 10-bit Main10 encode
+would need a separate kernel patch widening that control own menu
+range and is left for later.
+
+Gated behind ro.vendor.v4l2_codec2.encoder.supported.hevc, same
+property-gate pattern as every other encoder in this store.
+
+Change-Id: I0cff03558efb8ae39a3211fdc696d8fb452bad22
+---
+ components/EncodeInterface.cpp                | 43 +++++++++++++++++++
+ .../v4l2_codec2/components/EncodeInterface.h  |  4 ++
+ v4l2/V4L2ComponentCommon.cpp                  |  6 ++-
+ v4l2/V4L2ComponentStore.cpp                   |  3 ++
+ .../v4l2_codec2/v4l2/V4L2ComponentCommon.h    |  1 +
+ 5 files changed, 55 insertions(+), 2 deletions(-)
+
+diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
+index 12152e6..19b6317 100644
+--- a/components/EncodeInterface.cpp
++++ b/components/EncodeInterface.cpp
+@@ -157,6 +157,27 @@ C2R EncodeInterface::VP9ProfileLevelSetter(bool /*mayBlock*/,
+     return C2R::Ok();
+ }
+ 
++C2R EncodeInterface::HEVCProfileLevelSetter(bool /*mayBlock*/,
++                                            C2P<C2StreamProfileLevelInfo::output>& info,
++                                            const C2P<C2StreamPictureSizeInfo::input>& /*videoSize*/,
++                                            const C2P<C2StreamFrameRateInfo::output>& /*frameRate*/,
++                                            const C2P<C2StreamBitrateInfo::output>& /*bitrate*/) {
++    constexpr C2Config::profile_t defaultMinProfile = C2Config::PROFILE_HEVC_MAIN;
++    if (!info.F(info.v.profile).supportsAtAll(info.v.profile) ||
++        info.v.profile < defaultMinProfile) {
++        if (info.F(info.v.profile).supportsAtAll(defaultMinProfile)) {
++            ALOGV("Set profile to default (%u) instead.", defaultMinProfile);
++            info.set().profile = defaultMinProfile;
++        } else {
++            ALOGE("Unable to set either requested profile (%u) or default profile (%u).",
++                  info.v.profile, defaultMinProfile);
++            return C2R(C2SettingResultBuilder::BadValue(info.F(info.v.profile)));
++        }
++    }
++
++    return C2R::Ok();
++}
++
+ // static
+ C2R EncodeInterface::SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::input>& videoSize) {
+     (void)mayBlock;
+@@ -303,6 +324,28 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+                                                  C2Config::LEVEL_VP9_6_2})})
+                         .withSetter(VP9ProfileLevelSetter, mInputVisibleSize, mFrameRate, mBitrate)
+                         .build());
++    } else if (caps.codec == VideoCodec::HEVC) {
++        outputMime = MEDIA_MIMETYPE_VIDEO_HEVC;
++        C2Config::profile_t minProfile = static_cast<C2Config::profile_t>(
++                *std::min_element(profiles.begin(), profiles.end()));
++        addParameter(
++                DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
++                        .withDefault(new C2StreamProfileLevelInfo::output(
++                                0u, minProfile, C2Config::LEVEL_HEVC_MAIN_4_1))
++                        .withFields(
++                                {C2F(mProfileLevel, profile).oneOf(profiles),
++                                 C2F(mProfileLevel, level)
++                                         .oneOf({C2Config::LEVEL_HEVC_MAIN_1,
++                                                 C2Config::LEVEL_HEVC_MAIN_2,
++                                                 C2Config::LEVEL_HEVC_MAIN_2_1,
++                                                 C2Config::LEVEL_HEVC_MAIN_3,
++                                                 C2Config::LEVEL_HEVC_MAIN_3_1,
++                                                 C2Config::LEVEL_HEVC_MAIN_4,
++                                                 C2Config::LEVEL_HEVC_MAIN_4_1,
++                                                 C2Config::LEVEL_HEVC_MAIN_5,
++                                                 C2Config::LEVEL_HEVC_MAIN_5_1})})
++                        .withSetter(HEVCProfileLevelSetter, mInputVisibleSize, mFrameRate, mBitrate)
++                        .build());
+     } else {
+         ALOGE("Unsupported component name: %s", name.c_str());
+         mInitStatus = C2_BAD_VALUE;
+diff --git a/components/include/v4l2_codec2/components/EncodeInterface.h b/components/include/v4l2_codec2/components/EncodeInterface.h
+index e59f58c..796bd3c 100644
+--- a/components/include/v4l2_codec2/components/EncodeInterface.h
++++ b/components/include/v4l2_codec2/components/EncodeInterface.h
+@@ -66,6 +66,10 @@ protected:
+                                      const C2P<C2StreamPictureSizeInfo::input>& videosize,
+                                      const C2P<C2StreamFrameRateInfo::output>& frameRate,
+                                      const C2P<C2StreamBitrateInfo::output>& bitrate);
++    static C2R HEVCProfileLevelSetter(bool mayBlock, C2P<C2StreamProfileLevelInfo::output>& info,
++                                      const C2P<C2StreamPictureSizeInfo::input>& videosize,
++                                      const C2P<C2StreamFrameRateInfo::output>& frameRate,
++                                      const C2P<C2StreamBitrateInfo::output>& bitrate);
+ 
+     static C2R SizeSetter(bool mayBlock, C2P<C2StreamPictureSizeInfo::input>& videoSize);
+ 
+diff --git a/v4l2/V4L2ComponentCommon.cpp b/v4l2/V4L2ComponentCommon.cpp
+index 770b449..407290c 100644
+--- a/v4l2/V4L2ComponentCommon.cpp
++++ b/v4l2/V4L2ComponentCommon.cpp
+@@ -13,6 +13,7 @@
+ namespace android {
+ 
+ const std::string V4L2ComponentName::kH264Encoder = "c2.v4l2.avc.encoder";
++const std::string V4L2ComponentName::kHEVCEncoder = "c2.v4l2.hevc.encoder";
+ 
+ const std::string V4L2ComponentName::kH264Decoder = "c2.v4l2.avc.decoder";
+ const std::string V4L2ComponentName::kVP8Decoder = "c2.v4l2.vp8.decoder";
+@@ -26,7 +27,7 @@ const std::string V4L2ComponentName::kHEVCSecureDecoder = "c2.v4l2.hevc.decoder.
+ 
+ // static
+ bool V4L2ComponentName::isValid(const std::string& name) {
+-    return name == kH264Encoder ||
++    return name == kH264Encoder || name == kHEVCEncoder ||
+            name == kH264Decoder || name == kVP8Decoder || name == kVP9Decoder ||
+            name == kHEVCDecoder || name == kAV1Decoder || name == kH264SecureDecoder ||
+ 	   name == kVP8SecureDecoder || name == kVP9SecureDecoder || name == kHEVCSecureDecoder;
+@@ -36,7 +37,7 @@ bool V4L2ComponentName::isValid(const std::string& name) {
+ bool V4L2ComponentName::isEncoder(const std::string& name) {
+     ALOG_ASSERT(isValid(name));
+ 
+-    return name == kH264Encoder;
++    return name == kH264Encoder || name == kHEVCEncoder;
+ }
+ 
+ // static
+@@ -63,6 +64,7 @@ std::optional<VideoCodec> V4L2ComponentName::getCodec(const std::string& name) {
+             {kVP9Decoder, VideoCodec::VP9},   {kVP9SecureDecoder, VideoCodec::VP9},
+ 
+             {kHEVCDecoder, VideoCodec::HEVC}, {kHEVCSecureDecoder, VideoCodec::HEVC},
++            {kHEVCEncoder, VideoCodec::HEVC},
+ 
+             {kAV1Decoder, VideoCodec::AV1},
+     };
+diff --git a/v4l2/V4L2ComponentStore.cpp b/v4l2/V4L2ComponentStore.cpp
+index 5b6482b..f585153 100644
+--- a/v4l2/V4L2ComponentStore.cpp
++++ b/v4l2/V4L2ComponentStore.cpp
+@@ -41,6 +41,9 @@ std::shared_ptr<C2ComponentStore> V4L2ComponentStore::Create() {
+     if (property_get_bool("ro.vendor.v4l2_codec2.encoder.supported.h264", false))
+         builder.encoder(V4L2ComponentName::kH264Encoder, VideoCodec::H264,
+                         &V4L2ComponentFactory::create);
++    if (property_get_bool("ro.vendor.v4l2_codec2.encoder.supported.hevc", false))
++        builder.encoder(V4L2ComponentName::kHEVCEncoder, VideoCodec::HEVC,
++                        &V4L2ComponentFactory::create);
+ 
+     if (property_get_bool("ro.vendor.v4l2_codec2.decoder.supported.h264", false))
+         builder.decoder(V4L2ComponentName::kH264Decoder, VideoCodec::H264,
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h b/v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h
+index 3754db8..f6f68fa 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2ComponentCommon.h
+@@ -14,6 +14,7 @@ namespace android {
+ // Defines the names of all supported components.
+ struct V4L2ComponentName {
+     static const std::string kH264Encoder;
++    static const std::string kHEVCEncoder;
+ 
+     static const std::string kH264Decoder;
+     static const std::string kVP8Decoder;

@@ -2,35 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mind_one minimal RIL, phase 1 skeleton (RIL-MINIMAL-1409).
-//
-// Hand-written, faithful implementations of the task's minimal request set (SIM status, signal
-// strength, voice/data registration, operator, dial/hangup/currentCalls/acceptCall, sendSms,
-// setupDataCall/deactivateDataCall in all their versioned forms, setRadioPower, getDeviceIdentity)
-// plus the two IRadio plumbing methods (setResponseFunctions, responseAcknowledgement) and the
-// boot handshake. See RadioImpl_stubs.cpp for the other ~174 (auto-generated
-// REQUEST_NOT_SUPPORTED responses) and RadioImpl.h for the class layout and version rationale.
-//
-// Scope, stated plainly rather than left implicit (this is a phase-1 skeleton, not a finished
-// RIL):
-//  - Single SIM application is assumed (no multi-app CardStatus enumeration).
-//  - getOperator answers the same AT+COPS? string for long/short/numeric -- a real
-//    implementation queries all three formats (AT+COPS=3,0 / =3,1 / =3,2 then AT+COPS? each
-//    time), not done here.
-//  - getVoiceRegistrationState/getDataRegistrationState use AT+CREG?/AT+CGREG? only; MTK's
-//    richer AT+ECREG/AT+ECGREG/AT+ECEREG variants (RIL-MINIMAL-1409 AT map) and LTE-only
-//    AT+CEREG are not queried -- phase 2.
-//  - getCurrentCalls/hangup assume a single active call slot addressed by its GSM index; CDMA,
-//    multiparty conferencing beyond +CHLD's own semantics, and video calls are out of scope.
-//  - setupDataCall implements exactly one default-bearer IPv4 PDN on a fixed context id; no
-//    IPv6/IPv4v6, no non-default DataRequestReason, no APN authentication. The interface name
-//    returned ("ccmni0") is a best-effort placeholder, NOT confirmed against a live data call --
-//    MODEM-STACK-1409 S2.7 explicitly could not trace the PDN-to-ccmniN assignment
-//    mechanism from kernel source alone; resolving it needs a live AT trace (a phase-2 item,
-//    also called out in RIL-MINIMAL-1409).
-//  - CellIdentity, AccessTechnologySpecificInfo (1.6 safe unions) and other structurally-required
-//    but not-yet-parsed fields are left at their HIDL-default ("noinit"/empty) value -- spec-legal,
-//    just not informative yet.
 #include "RadioImpl.h"
 
 #include <fcntl.h>
@@ -115,8 +86,6 @@ bool MindoneRadio::openAtChannels(const std::string& cmdDevicePath,
         (void)pdu;
     };
     auto onNotiUrc = [](const std::string& line, const std::string& pdu) {
-        // Phase-1 URC handling is intentionally minimal -- see RIL-MINIMAL-1409
-        // "phase 2 plan". Everything is logged so a live capture can grow this list.
         ALOGI("URC: %s%s", line.c_str(), pdu.empty() ? "" : (" / PDU=" + pdu).c_str());
     };
     auto onClosed = [] { ALOGE("AT channel closed unexpectedly"); };
@@ -155,14 +124,6 @@ bool MindoneRadio::openAtChannels(const std::string& cmdDevicePath,
 }
 
 void MindoneRadio::runBootHandshake() {
-    // Recovered from the STOCK RIL's real boot sequence, not the task's originally-guessed
-    // command names (three of which -- AT+EIND, AT+EMDSTATUS -- do not exist in the binary at
-    // all; see modem/ril/AT-MAP-NOTES.md "Boot-handshake findings" and
-    // RIL-MINIMAL-1409). The real handshake lives in `RmcRadioRequestHandler`'s
-    // constructor (address 0x424be4 in libmtk-ril.so), fired once per SIM slot at RIL bring-up.
-    // Every line here is a runtime-mode set or a plain read -- NONE of them is a persistent
-    // NVRAM/IMEI write (see RIL-MINIMAL-1409 "risks" for the AT+E* write-shaped commands
-    // this project blacklists outright, e.g. any AT+EGMR with the write-mode first argument).
     struct Step {
         const char* cmd;
         bool required;  // false: log-and-continue on failure/timeout, true: abort the rest
@@ -343,8 +304,6 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
     out.regState = stat;  // +CREG/+CGREG <stat> values line up 1:1 with V1_0::RegState's own
                            // NOT_REG_MT_NOT_SEARCHING_OP(0)..REG_DENIED(3)/UNKNOWN(4)/ROAMING(5)
     out.rat = 0;  // RadioTechnology::UNKNOWN -- +CREG/+CGREG don't carry a RAT id; the MTK
-                  // extension AT+ECGREG does (RIL-MINIMAL-1409 AT map) but is not
-                  // queried in this phase-1 skeleton (see file header "scope").
     return out;
 }
 
@@ -799,32 +758,6 @@ V1_5::SetupDataCallResult toV5(const V1_6::SetupDataCallResult& r6) {
     return Void();
 }
 
-// --------------------------------------------------------------------------------------------
-// setRadioPower / setRadioPower_1_5 / setRadioPower_1_6
-// --------------------------------------------------------------------------------------------
-// Idle power saving the modem supports and the stock stack never asks for (F4486).
-//
-// Surveyed the modem firmware's own AT table (488 vendor commands in MOLY.LR13.R2.MP.V195) and
-// checked each candidate against the company it keeps in that table, because the name alone
-// misleads:
-//   +EUEDRX: (7),(0-65535)  -- REAL. Sits among the NAS/registration commands (+CSCON, +EDRAT,
-//                              +EREGINFO), i.e. it is UE eDRX: longer idle gaps between paging
-//                              checks. No stock vendor library on the device references it --
-//                              grep over /vendor/lib*, /vendor/bin/hw finds nothing -- so the
-//                              modem has always run on its default DRX.
-//   +EPSMAP                 -- NOT power saving despite the name. It sits with +ESIMMAP and the
-//                              PDP-context set (+CGDCONT, +PSBEARER, +CGTFT): a PS APN map.
-//   +ESLP: (0,1)            -- factory/test set, immediate neighbours are +EGMR (IMEI write),
-//                              +ERFTX, +EADC. Not touched.
-//   +EWOCFGSET/+EWOKEEPALIVE-- Wi-Fi-calling (ePDG) keepalives, next to +EWIFIEN/+EEPDG. Not a
-//                              general TCP-keepalive offload.
-// So exactly one lever is both real and safe, and it is the one applied here.
-//
-// 🔴 Honest limit: the second parameter's 0-65535 encoding is not decoded. The default below is
-// the smallest non-zero setting deliberately -- it buys a real idle gap while keeping paging
-// delay at its minimum, which matters because eDRX is a trade: longer sleep, later incoming
-// calls and SMS. The value is overridable, "0" disables, and the applied setting is always read
-// back and logged so the encoding can be confirmed from one boot log rather than assumed.
 void MindoneRadio::applyPowerSavingProfileLocked() {
     char prop[PROPERTY_VALUE_MAX] = {0};
 

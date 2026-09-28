@@ -1,9 +1,0 @@
-// SPDX-License-Identifier: Apache-2.0
-
-aconfig_values {
-    name: "aconfig-values-mindone-bp4a-com.android.graphics.surfaceflinger.flags-all",
-    package: "com.android.graphics.surfaceflinger.flags",
-    srcs: [
-        "*_flag_values.textproto",
-    ],
-}

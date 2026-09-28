@@ -1,0 +1,39 @@
+From 40f85e09c675d2137eee57bcc03c46d8513c96b5 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Fri, 25 Sep 2026 01:49:29 +0300
+Subject: [PATCH] v4l2: ComponentStore gives the MPEG-4 and H.263 components
+ their media type
+
+Patch 4 (register the MPEG-4 and H.263 hardware decoders) added
+VideoCodec::MPEG4 and VideoCodec::H263 but not their case in
+ComponentStore::getTraits. Their Traits carried an empty mediaType, and
+the vendor build (-Werror,-Wswitch) stopped at ComponentStore.cpp:170:
+"enumeration values MPEG4 and H263 not handled in switch".
+Both map to the MediaDefs.h constants MEDIA_MIMETYPE_VIDEO_MPEG4 and
+MEDIA_MIMETYPE_VIDEO_H263.
+
+Change-Id: I0710dc7fd9b6c8156be47fa72c1b34cf4b116c94
+---
+ components/ComponentStore.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/components/ComponentStore.cpp b/components/ComponentStore.cpp
+index 4a09336..3ee81d3 100644
+--- a/components/ComponentStore.cpp
++++ b/components/ComponentStore.cpp
+@@ -183,6 +183,12 @@ std::shared_ptr<const C2Component::Traits> ComponentStore::getTraits(const C2Str
+     case VideoCodec::AV1:
+         traits->mediaType = MEDIA_MIMETYPE_VIDEO_AV1;
+         break;
++    case VideoCodec::MPEG4:
++        traits->mediaType = MEDIA_MIMETYPE_VIDEO_MPEG4;
++        break;
++    case VideoCodec::H263:
++        traits->mediaType = MEDIA_MIMETYPE_VIDEO_H263;
++        break;
+     }
+ 
+     mCachedTraits.emplace(name, traits);
+-- 
+2.43.0
+

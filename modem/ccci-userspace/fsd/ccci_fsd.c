@@ -2,72 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-/*
- * mindone_fsd -- open replacement for the stock /vendor/bin/ccci_fsd blob
- * (126140 bytes, ELF32 ARM, stripped, sha256
- * ff86d1af27a472041ab233166e00f3133f1e6526ac79457fa5ab06fb4b5c7d7e) that
- * serves the modem firmware's file-system requests over /dev/ccci_fs.
- *
- * ============================================================================
- * WIRE FORMAT STATUS (14.09 pass -- supersedes the "assumed layout" this
- * file shipped with before): see modem/ccci-userspace/common/ccci_fs_wire.h
- * for the full disassembly citation trail (F4414 in the fact log; this
- * closes the disassembly blocker recorded as F4396).
- * ============================================================================
- * PROVEN, cited to specific instruction addresses in the stock binary:
- *   - The mandatory 16-byte struct ccci_header prefix on every read()/
- *     write() (PORT_F_USER_HEADER on this port -- the kernel does NOT
- *     strip or add it for us, the kernel repository's mindone/modules/ccci_md_all/port/port_proxy.c:967-991).
- *     The stock daemon itself validates header.channel==14 (CCCI_FS_RX) on
- *     every read() before touching the payload -- our previous draft never
- *     looked at the header at all, which would have made it incompatible
- *     with the real kernel port. Fixed below.
- *   - Two "CMPT" (compatibility/combined) request shapes that bundle
- *     open+seek+read/write+close into one round trip via a BITMASK field
- *     (ccci_fs_wire.h's struct ccci_fs_cmpt_read_req / _write_req), not the
- *     single-enum "opid_map" this file assumed before.
- *   - Two response shapes: a fixed 24-byte ack (header + result + one
- *     always-0 word) for no-payload ops, and a 20-byte-header + N-byte-
- *     payload response for the CMPT_Read (data-returning) path.
- *   - Single physical read() cap of 0xd94 (3476) bytes, with a real
- *     multi-packet fragmentation/reassembly scheme on top for logical
- *     requests larger than that (header.data[0] sign bit = continuation
- *     flag; see ccci_fs_wire.h).
- *
- * STILL OPEN (tracked as F4414, not guessed at here):
- *   - The stock daemon ALSO dispatches to ~25 separate "modern" one-op-
- *     per-message handlers (FS_CCCI_Open/Read/Write/Seek/Close/CreateDir/
- *     RemoveDir/Rename/Move/... -- all confirmed to exist and be called
- *     from main(), by address) in addition to the two CMPT paths. The
- *     exact numeric field/selector that picks one of these ~25, vs. one of
- *     the two CMPT shapes, was NOT recovered -- only the CMPT shapes
- *     themselves were decoded field-by-field.
- *   - The exact wire offset of the inline (wide-char) filename field.
- *   - The 20-byte per-fragment continuation sub-header's own layout.
- *   - A confirmed anomaly: the stock CMPT_Write handler is called with its
- *     struct base pointer equal to the RAW read()-target buffer's own
- *     start (i.e. overlapping where the ccci_header used to be), while
- *     CMPT_Read's struct base is +0x30 further in. This project's
- *     reading is that main() reuses the now-dead header bytes as scratch
- *     space specifically for the write path; not independently confirmed.
- *
- * SAFETY DESIGN, kept from the previous draft and still the right call
- * given the opens above:
- *   1. Every packet is hex-dumped in full at LOG_INFO before/after we
- *      attempt to interpret it (log_hexdump()) -- makes a live capture on
- *      the device (read-only per this task's constraints) directly usable
- *      to close the remaining opens without guesswork.
- *   2. FS_CCCI_OP_BIN_REGION_ACCESS is answered with FS_NO_FEATURE and a
- *      loud log line, per MODEM-STACK-1409 S2.10's own
- *      recommendation ("keep it stubbed/pass-through until that gap is
- *      closed").
- *   3. All path resolution stays inside the confirmed real directory roots
- *      (path_resolve() below) regardless of what the wire parser produces.
- *   4. Because the exact op-selector remains open, this daemon answers
- *      only the two fully-decoded CMPT bitmask shapes (read-shaped and
- *      write-shaped) plus BIN_REGION_ACCESS; anything else is logged with
- *      a full hex dump and answered FS_NO_OP rather than guessed at.
- */
 #define _GNU_SOURCE
 #include <dirent.h>
 #include <errno.h>
@@ -92,13 +26,6 @@
 
 #include <sys/vfs.h>
 
-/* op_id values, read out of the stock ccci_mdinit's dispatcher (F4472). The switch runs from
- * 0x1001 to 0x1025; only the ones this daemon answers are named here, the rest are in
- * the modem notes so the table does not rot in two places. */
-/* The complete operation table, recovered 15.09 from the stock daemon's fsd_main dispatcher
- * (F4485). The stock names each handler FS_CCCI_<op>, so these are its names, not invented ones.
- * op_ids are contiguous 0x1001..0x1025 -- 37 operations; we used to serve five.
- */
 #define FS_OP_OPEN		0x1001
 #define FS_OP_SEEK		0x1002
 #define FS_OP_READ		0x1003
@@ -176,15 +103,6 @@ static void fs_handle_init(void)
 		g_fs_handles[i] = -1;
 }
 
-/* Modem open flags -> POSIX open flags.
- *
- * Read out of the stock FS_CCCI_Open (F4485), not guessed:
- *     v30 = ~(a2 >> 7) & 2;               bit 8 clear -> O_RDWR, set -> O_RDONLY
- *     if (a2 & 0x10000)  v30 = 66;        O_RDWR|O_CREAT
- *     if (a2 & 0x20000)  v30 = 578;       O_RDWR|O_CREAT|O_TRUNC
- *     v33 = v30 | ((a2 >> 17) & 0x800);   bit 28 -> O_NONBLOCK
- *     open(path, v33, 0660);
- */
 #define FS_FLAG_READ_ONLY	0x00000100u
 #define FS_FLAG_CREATE		0x00010000u
 #define FS_FLAG_CREATE_ALWAYS	0x00020000u
@@ -456,14 +374,6 @@ static const char *fs_drive_dir(const char *path);
 
 
 
-/* Turn a modem path such as "Z:\NVRAM\BACKUP" into a real one.
- *
- * The stock conversion (FS_CCCI_GetAttributes @0x20098, F4472) walks the UTF-16 name two bytes
- * at a time, drops the first two characters - the drive letter and its colon - maps backslash to
- * slash, and refuses any name containing "..", then prefixes the drive's directory. The ".."
- * check is a security check, not a convenience: without it a modem-supplied path could walk out
- * of the drive and touch anything the daemon can reach.
- */
 static int fs_resolve(const char *path, char *out, size_t cap)
 {
 	const char *dir = fs_drive_dir(path);
@@ -517,17 +427,6 @@ static const char *fs_drive_dir(const char *path)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-/* ---- Request parsing (F4472) ----------------------------------------------
- *
- * A request is framed exactly like a reply: after the 16-byte ccci_header come the op_id, the
- * segment count, and then that many segments, each a uint32 byte length followed by the bytes
- * padded up to a multiple of 4. The stock dispatcher reads its arguments straight out of that
- * array - FS_CCCI_Open(seg0, *(uint32 *)seg1), FS_CCCI_FindFirst(seg0, *(uint8 *)seg1,
- * *(uint8 *)seg2, ...) and so on.
- *
- * Reading it generically replaces the two guessed CMPT shapes this daemon used to try: there is
- * no "shape" to match, only segments to index.
- */
 #define FS_MAX_SEGS	8
 
 struct fs_req {
@@ -590,7 +489,6 @@ static int fs_wcs_to_str(const unsigned char *src, uint32_t bytes, char *out, si
 
 /* ------------------------------------------------------------------ */
 /* Directory roots -- confirmed by exhaustive strings(1) over the stock  */
-/* binary (MODEM-STACK-1409 S2.10). Only plain md/md_cmn are     */
 /* real on this single-modem board; md2/md3/md5 are listed for           */
 /* completeness and rejected at runtime (FS_NO_MATCH) since this board   */
 /* has no such modem instance.                                          */
@@ -747,30 +645,6 @@ static void log_hexdump(const char *tag, const void *buf, size_t len)
 /* Response builders -- both formats verified in ccci_fs_wire.h.        */
 /* ------------------------------------------------------------------ */
 
-/* ---- Response framing (rewritten 15.09 from the stock binary, F4472) -------
- *
- * What this daemon used to emit - a ccci_header carrying a byte length, then a bare int32
- * result - is not the format the modem reads. The stock assembler (inlined in fsd_main, around
- * the __write_chk call) builds this instead:
- *
- *   word 0  data[0], taken from the request with the 0x80000000 flag cleared
- *   word 1  TOTAL length of the frame in bytes
- *   word 2  the request's channel/seq word PLUS ONE - the reply goes out on the
- *           facing channel, 14 -> 15, which is `++v154[2]` in the decompilation
- *   word 3  reserved, carried over from the request
- *   word 4  op_id | 0xFFFF0000
- *   word 5  number of segments
- *   then    per segment: a uint32 byte length, the bytes, padded up to a multiple of 4
- *
- * The result code is NOT a header field: it is simply the first segment, four bytes long.
- * FS_CCCI_GetDiskInfo, for instance, answers with two segments - the result and an 84-byte
- * disk-info block.
- *
- * This also explains the modem's assert verbatim: it reports para0 = the op tag it expects at
- * word 4 and para1 = whatever it actually found there. Answering FS_NO_OP put -1 at that offset
- * (para1 = 0xffffffff); answering a correct GetDiskInfo put the result 0 there (para1 = 0).
- * Neither was an opcode, so it asserted both times.
- */
 struct fs_seg {
 	const void *data;
 	size_t len;
@@ -849,7 +723,6 @@ static int32_t handle_cmpt_write(const struct ccci_fs_cmpt_write_req *req, size_
 			char path[PATH_MAX];
 			int flags = O_RDWR;
 
-			/* Caller resolves; see the note in handle_cmpt_read (F4489). */
 			if ((size_t)snprintf(path, sizeof(path), "%s", real_path) >= sizeof(path)) {
 				*out_handle = -1;
 				return FS_PARAM_ERROR;
@@ -936,17 +809,13 @@ static int32_t handle_cmpt_read(const struct ccci_fs_cmpt_read_req *req, const c
 	 * unlike CMPT_Write).
 	 */
 	if (req->opid_map & 0x1) {
-		/* `real_path` is already resolved by the caller. It used to be a hardcoded
-		 * "/nvcfg/unknown" because the filename's position on the wire was unknown
-		 * (F4414); it is known now -- the first request segment, a UTF-16 path, exactly
-		 * like every other path-carrying operation (F4489). */
 		fd = open(real_path, (req->flag & 0x1) ? (O_RDWR | O_CREAT) : O_RDWR, 0660);
 		if (fd < 0) {
 			LOGW("cmpt_read: open(%s) failed: %s", real_path, strerror(errno));
 			return errno_to_fs_result(errno);
 		}
 	} else {
-		return FS_PARAM_ERROR; /* no handle-reuse path decoded for CMPT_Read (F4414) */
+		return FS_PARAM_ERROR;
 	}
 
 	/* bit1: GET_SIZE -- semantics of size_out (an out-param address on
@@ -956,7 +825,7 @@ static int32_t handle_cmpt_read(const struct ccci_fs_cmpt_read_req *req, const c
 	 * path instead.
 	 */
 	if (req->opid_map & 0x2)
-		LOGW("cmpt_read: GET_SIZE bit set, size_out target not reproducible (F4414)");
+		LOGW("cmpt_read: GET_SIZE bit set, size_out target not reproducible");
 
 	/* bit2: SEEK */
 	if (req->opid_map & 0x4) {
@@ -981,32 +850,17 @@ static int32_t handle_cmpt_read(const struct ccci_fs_cmpt_read_req *req, const c
 		*out_len = (int32_t)n;
 	}
 
-	/* bit4: CLOSE. No handle-reuse path was decoded for CMPT_Read
-	 * (F4414), so this daemon always closes at the end regardless of
-	 * whether the bit was set -- logged when the bit itself was absent,
-	 * since that diverges from the stock control flow we did decode.
-	 */
 	if (!(req->opid_map & 0x10))
-		LOGW("cmpt_read: CLOSE bit not set -- no handle-reuse path decoded (F4414), closing anyway");
+		LOGW("cmpt_read: CLOSE bit not set -- no handle-reuse path decoded, closing anyway");
 	close(fd);
 
 	return FS_NO_ERROR;
 }
 
-/* Deliberate, documented stub -- NVRAM-LID-1409 S5/S8.
- * NVM_RestoreFromBinRegion_OneFile is linked (kept as the stock shared
- * library, not reimplemented) but intentionally not called from the
- * MD-facing wire path. Not wired into main()'s dispatch below: the
- * numeric wire selector for FS_CCCI_OP_BIN_REGION_ACCESS was not decoded
- * in this pass (F4414), so this daemon cannot yet recognize such a
- * request to route it here in the first place. Kept (marked unused
- * rather than deleted) so the next pass that decodes the selector has a
- * ready, already-safe handler to wire up.
- */
 static void handle_bin_region_access(const char *filename, int32_t *out_result) __attribute__((unused));
 static void handle_bin_region_access(const char *filename, int32_t *out_result)
 {
-	LOGE("Main: FS_CCCI_OP_BIN_REGION_ACCESS requested for '%s' -- stubbed, returning FS_NO_FEATURE (see NVRAM-LID-1409 S5/S8)",
+	LOGE("Main: FS_CCCI_OP_BIN_REGION_ACCESS requested for '%s' -- stubbed, returning FS_NO_FEATURE",
 	     filename ? filename : "(null)");
 	*out_result = FS_NO_FEATURE;
 	(void)NVM_RestoreFromBinRegion_OneFile; /* kept linked/referenced, intentionally unused here */
@@ -1023,11 +877,10 @@ int main(void)
 	int fd;
 	unsigned char rxbuf[IO_BUF_SIZE];
 	unsigned char txbuf[IO_BUF_SIZE];
-	/* Scratch for a read's payload before it is framed into txbuf (F4472). */
 	unsigned char rdbuf[IO_BUF_SIZE];
 
 	handles_init();
-	LOGI("mindone_fsd starting (md_fsd Ver:mindone-2, CCCI Ver: our-6.12-port, wire=F4414)");
+	LOGI("mindone_fsd starting (md_fsd Ver:mindone-2, CCCI Ver: our-6.12-port)");
 
 	fs_handle_init();
 	fs_find_init();
@@ -1067,21 +920,11 @@ int main(void)
 			continue;
 		}
 
-		/* Fragmentation (F4414): a negative data[0] marks a
-		 * continuation fragment. Full reassembly (per-instance
-		 * accumulator, 20-byte continuation sub-header) is not
-		 * reimplemented here -- single-fragment requests (data[0]
-		 * >= 0, which covers every request that fits in one
-		 * CCCI_FS_READ_CHUNK) are handled; a continuation fragment
-		 * is logged and dropped rather than silently misparsed.
-		 */
 		if ((int32_t)hdr.data[0] < 0) {
-			LOGW("Main: continuation fragment received, reassembly not implemented (F4414), dropping");
+			LOGW("Main: continuation fragment received, reassembly not implemented, dropping");
 			continue;
 		}
 
-		/* The op_id the modem expects echoed back at word 4 of the reply is the first word
-		 * of the request payload - the same field the stock dispatcher switches on (F4472). */
 		if ((size_t)n >= sizeof(hdr) + sizeof(uint32_t))
 			memcpy(&req_op_id, rxbuf + sizeof(hdr), sizeof(req_op_id));
 		else
@@ -1132,9 +975,6 @@ int main(void)
 				if (path_resolve("/nvcfg/unknown", realp, sizeof(realp)) != FS_NO_ERROR)
 					snprintf(realp, sizeof(realp), "/mnt/vendor/nvcfg/unknown");
 
-				/* Read into a scratch buffer rather than straight into the response:
-				 * with the real framing (F4472) the payload no longer sits at a fixed
-				 * offset in txbuf - it follows a per-segment length word. */
 				result = handle_cmpt_read(rreq, realp, rdbuf, sizeof(rdbuf),
 							   &out_len);
 				resp_len = build_data_resp(txbuf, sizeof(txbuf), &hdr, req_op_id, result,
@@ -1146,21 +986,6 @@ int main(void)
 				continue;
 			}
 		}
-		/* ---- Parsed dispatch (F4472, extended to the full table in F4485) --------
-		 * Requests are segmented exactly like replies, so there is nothing to
-		 * pattern-match: parse once, then index the segments the way the stock
-		 * dispatcher does.
-		 *
-		 * All 37 operations the stock daemon implements are covered below; the op_id
-		 * table and each handler's reply shape (how many segments and how long) were
-		 * recovered from the stock fsd_main dispatcher, so the shapes are its shapes.
-		 *
-		 * 🔴 Two deliberate exceptions, both stated at their case labels: the OTP write
-		 * and lock paths are compiled but disabled by default (one-time-programmable
-		 * fuses cannot be restored from any backup), and the bin-region op still falls
-		 * through, because its payload format is the one surface where a wrong guess
-		 * silently corrupts IMEI and calibration rather than failing loudly.
-		 */
 		{
 			struct fs_req req;
 			char path[260], real[512];
@@ -1369,12 +1194,6 @@ int main(void)
 									      &hdr, req.op_id,
 									      FS_ERR_GENERIC_MAPPED);
 					} else {
-						/* Three segments, as the stock handler builds them
-						 * (dispatcher case 0x1003, F4472): the result code, the
-						 * count actually read, and only then the bytes. Folding
-						 * the count into the result - which is what this used to
-						 * do - leaves the modem reading the data segment as the
-						 * count and stops it dead after the first read. */
 						const int32_t res = FS_NO_ERROR;
 						const int32_t cnt = (int32_t)got;
 						const struct fs_seg segs[3] = {
@@ -1740,18 +1559,6 @@ int main(void)
 					goto send_resp;
 
 				case FS_OP_CMPT_READ: {
-					/* The compound read. Its request struct was reconstructed
-					 * long ago from a 32-bit build, and the doubt that put
-					 * on the field offsets (F4472) is now settled: the 64-bit
-					 * stock of THIS device lays them out identically -- opid_map
-					 * +0, flag +12, offset +20, whence +24, length +32.
-					 *
-					 * What that reconstruction could NOT give was the filename's
-					 * position, so this daemon has been opening a hardcoded
-					 * "/nvcfg/unknown" placeholder (F4414). It is the FIRST
-					 * REQUEST SEGMENT, a UTF-16 path, exactly like every other
-					 * path-carrying op -- so the real file is used now.
-					 */
 					int32_t out_len = 0;
 					struct ccci_fs_cmpt_read_req creq;
 
@@ -1843,22 +1650,7 @@ not_served:
 		}
 
 
-		/* Everything that reached here: a request the parser could not decode at all, or
-		 * one of the few ops deliberately left unserved -- BIN_REGION_ACCESS (0x1023) and
-		 * the two ConvWcsToCs forms (0x1022/0x1024). The "~25 undecoded modern ops" this
-		 * comment used to describe are gone: the full 37-op table is dispatched above
-		 * (F4485).
-		 *
-		 * The answer here is NOT FS_NO_OP any more. -1 is not a value FS_ErrorConv ever
-		 * produces, and the modem does not treat it as an error it can recover from: it
-		 * asserts on the spot and resets. Measured 15.09 with our trio running:
-		 *   [ccci1/fsm]assert para0 = 0xffff100e, para1 = 0xffffffff, para2 = 0x00000000
-		 * where para0 carries the request's opid_map and para1 is exactly the -1 we sent.
-		 * Answering a real file-system error instead gives the modem something its own
-		 * error paths are written for, which is the difference between a clean failure and
-		 * a boot loop. ENOENT is the honest one: we genuinely do not have the file.
-		 */
-		LOGW("Main: request did not match a decoded CMPT shape (F4414) -- answering ENOENT");
+		LOGW("Main: request did not match a decoded CMPT shape -- answering ENOENT");
 		result = FS_ERR_ENOENT_MAPPED;
 		resp_len = build_result_resp(txbuf, sizeof(txbuf), &hdr, req_op_id, result);
 send_resp:

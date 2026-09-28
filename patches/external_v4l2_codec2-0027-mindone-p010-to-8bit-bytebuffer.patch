@@ -1,0 +1,441 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Mon, 28 Sep 2026 05:26:47 +0300
+Subject: [PATCH 27/27] v4l2: downconvert 10-bit ByteBuffer decode output to
+ NV12
+
+c2.v4l2.hevc.decoder decoding HEVC Main10 into a ByteBuffer (MediaCodec
+configured without a surface, client did not request
+COLOR_FormatYUVP010) fails with "sendOutputBuffers: tried 5 realloc and
+failed". CCodec silently defaults an unrequested
+ByteBuffer output to 8-bit YUV420, but DecodeInterface declared no
+C2StreamPixelFormatInfo at all, so the client had nothing to negotiate
+against: V4L2Decoder always allocated a 10-bit P010 block whenever the
+V4L2 capture format was 10-bit (V4L2Decoder.cpp picks
+HalPixelFormat::YCBCR_P010 for P010/MTST/MTSR), and
+GraphicView2MediaImageConverter then refused the 8-vs-10 bit mismatch.
+AOSP's own software decoders (C2SoftGav1Dec) avoid exactly this by
+declaring C2StreamPixelFormatInfo::output and down-converting when the
+client did not ask for P010 (e.g. MediaMetadataRetriever HDR10
+thumbnails); this component never gave CCodec that parameter to
+configure.
+
+Fix, following the C2SoftGav1Dec pattern:
+- DecodeInterface: declare C2StreamPixelFormatInfo::output
+  (YCBCR_420_888 default, IMPLEMENTATION_DEFINED always allowed to
+  detect surface mode, YCBCR_P010 added only when the codec has a
+  10-bit profile in caps.supportedProfiles);
+- V4L2DecodeComponent/V4L2Decoder: read the client-negotiated pixel
+  format at component start; on DRC, if the V4L2 capture format is
+  10-bit (P010/MTST/MTSR) but the client asked for plain
+  YCBCR_420_888 (ByteBuffer, not surface, not P010), allocate an 8-bit
+  NV12 block instead of P010, and detile into it instead of failing;
+- VideoFrame::detileFrom10To8 / LibyuvImageConverter::convertMT10ToNV12:
+  detile the MT10 tiled 10-bit capture buffer straight into 8-bit NV12
+  by truncating each sample to its high 8 bits during the existing
+  untile pass, instead of untiling to P010 and then running a separate
+  libyuv down-convert pass over the whole frame again: libyuv has no
+  public API for MediaTek's MT10 tiling anyway, and the untile already
+  computes every 10-bit sample once.
+- surface mode (IMPLEMENTATION_DEFINED) and genuinely 8-bit streams
+  take neither new code path: the switch to NV12 only fires for a
+  10-bit V4L2 capture format together with an explicit 8-bit client
+  request.
+
+Test (device-free change; on-device run is for the main thread):
+CodecRig decode hevc_main10_10bit_1080p30.mp4 c2.v4l2.hevc.decoder
+buffer, expect 150/150 frames decoded with no realloc failure; compare
+frame hashes against CodecRig decode hevc_main10_10bit_1080p30.mp4
+c2.android.hevc.decoder buffer, since the previously-working P010
+surface output is not directly comparable to an 8-bit ByteBuffer and
+the AOSP software HEVC decoder already performs the same 10-to-8-bit
+downconversion for ByteBuffer clients. Not run from here (device-free);
+surface-mode HEVC10 and 8-bit HEVC/AVC ByteBuffer decode are unchanged
+by construction and should be spot-checked too.
+
+Risk: only the new combination (10-bit V4L2 capture format + explicit
+8-bit client request) takes a new path; every other combination keeps
+the exact pixel format and detile call it used before this change. The
+new C2StreamPixelFormatInfo parameter is additive; a client that never
+queries or sets it keeps getting the previous default behavior.
+---
+ common/LibyuvImageConverter.cpp               | 35 ++++++++++++++++---
+ common/VideoTypes.cpp                         |  2 ++
+ .../v4l2_codec2/common/ImageConverter.h       |  5 +++
+ .../v4l2_codec2/common/LibyuvImageConverter.h |  3 ++
+ .../include/v4l2_codec2/common/VideoTypes.h   |  1 +
+ components/DecodeInterface.cpp                | 27 ++++++++++++++
+ components/VideoFrame.cpp                     | 35 +++++++++++++++++++
+ .../v4l2_codec2/components/DecodeInterface.h  |  2 ++
+ .../v4l2_codec2/components/VideoFrame.h       |  3 ++
+ v4l2/V4L2DecodeComponent.cpp                  |  2 +-
+ v4l2/V4L2Decoder.cpp                          | 30 ++++++++++------
+ v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h   |  7 ++--
+ 12 files changed, 134 insertions(+), 18 deletions(-)
+
+diff --git a/common/LibyuvImageConverter.cpp b/common/LibyuvImageConverter.cpp
+index 4828d5d..d248fa5 100644
+--- a/common/LibyuvImageConverter.cpp
++++ b/common/LibyuvImageConverter.cpp
+@@ -46,7 +46,8 @@ uint16_t mt10DecodeSample(const uint8_t* plane, int tileRow, int tileCol, int ro
+ }
+ 
+ void mt10DecodePlane(const uint8_t* src, int tileBytes, int tileRows, int tilesPerRow, int widthOut,
+-                     int heightRows, bool raster, uint8_t* dst, size_t dstStrideBytes) {
++                     int heightRows, bool raster, uint8_t* dst, size_t dstStrideBytes,
++                     int bytesPerSample) {
+     for (int y = 0; y < heightRows; y++) {
+         const int tileRow = y / tileRows;
+         const int rowInTile = y % tileRows;
+@@ -57,8 +58,12 @@ void mt10DecodePlane(const uint8_t* src, int tileBytes, int tileRows, int tilesP
+             const int colInTile = x % kMt10TileW;
+             const uint16_t sample = mt10DecodeSample(src, tileRow, tileCol, rowInTile, colInTile,
+                                                       tileBytes, tilesPerRow, raster);
+-            drow[x * 2] = static_cast<uint8_t>(sample & 0xff);
+-            drow[x * 2 + 1] = static_cast<uint8_t>(sample >> 8);
++            if (bytesPerSample == 2) {
++                drow[x * 2] = static_cast<uint8_t>(sample & 0xff);
++                drow[x * 2 + 1] = static_cast<uint8_t>(sample >> 8);
++            } else {
++                drow[x] = static_cast<uint8_t>(sample >> 8);
++            }
+         }
+     }
+ }
+@@ -79,9 +84,29 @@ bool LibyuvImageConverter::convertMT10ToP010(const TiledMT10Image& src, const P0
+     const size_t yBytes = static_cast<size_t>(tilesPerRow) * lumaTileRowCount * kMt10LumaTileBytes;
+ 
+     mt10DecodePlane(src.data, kMt10LumaTileBytes, kMt10LumaTileRows, tilesPerRow, width, height,
+-                    src.raster, dst.y, dst.strideY);
++                    src.raster, dst.y, dst.strideY, 2);
+     mt10DecodePlane(src.data + yBytes, kMt10ChromaTileBytes, kMt10ChromaTileRows, tilesPerRow, width,
+-                    (height + 1) / 2, src.raster, dst.uv, dst.strideUV);
++                    (height + 1) / 2, src.raster, dst.uv, dst.strideUV, 2);
++    return true;
++}
++
++bool LibyuvImageConverter::convertMT10ToNV12(const TiledMT10Image& src, const NV12WritableImage& dst,
++                                             int width, int height) {
++    if (!src.data || !dst.y || !dst.uv || width <= 0 || height <= 0 ||
++        src.strideY < static_cast<size_t>(width)) {
++        ALOGE("convertMT10ToNV12: invalid arguments, width=%d height=%d strideY=%zu", width, height,
++              src.strideY);
++        return false;
++    }
++
++    const int tilesPerRow = static_cast<int>(src.strideY) / kMt10TileW;
++    const int lumaTileRowCount = mt10RoundUp(height, kMt10LumaTileRows) / kMt10LumaTileRows;
++    const size_t yBytes = static_cast<size_t>(tilesPerRow) * lumaTileRowCount * kMt10LumaTileBytes;
++
++    mt10DecodePlane(src.data, kMt10LumaTileBytes, kMt10LumaTileRows, tilesPerRow, width, height,
++                    src.raster, dst.y, dst.strideY, 1);
++    mt10DecodePlane(src.data + yBytes, kMt10ChromaTileBytes, kMt10ChromaTileRows, tilesPerRow, width,
++                    (height + 1) / 2, src.raster, dst.uv, dst.strideUV, 1);
+     return true;
+ }
+ 
+diff --git a/common/VideoTypes.cpp b/common/VideoTypes.cpp
+index 4afe954..c3a70cf 100644
+--- a/common/VideoTypes.cpp
++++ b/common/VideoTypes.cpp
+@@ -103,6 +103,8 @@ const char* HalPixelFormatToString(HalPixelFormat format) {
+         return "YV12";
+     case HalPixelFormat::NV12:
+         return "NV12";
++    case HalPixelFormat::IMPLEMENTATION_DEFINED:
++        return "IMPLEMENTATION_DEFINED";
+     }
+ }
+ 
+diff --git a/common/include/v4l2_codec2/common/ImageConverter.h b/common/include/v4l2_codec2/common/ImageConverter.h
+index a227289..17589c5 100644
+--- a/common/include/v4l2_codec2/common/ImageConverter.h
++++ b/common/include/v4l2_codec2/common/ImageConverter.h
+@@ -53,6 +53,11 @@ public:
+                                    int width, int height) {
+         return false;
+     }
++
++    virtual bool convertMT10ToNV12(const TiledMT10Image& src, const NV12WritableImage& dst,
++                                   int width, int height) {
++        return false;
++    }
+ };
+ 
+ }  // namespace android
+diff --git a/common/include/v4l2_codec2/common/LibyuvImageConverter.h b/common/include/v4l2_codec2/common/LibyuvImageConverter.h
+index a65dbb3..b862367 100644
+--- a/common/include/v4l2_codec2/common/LibyuvImageConverter.h
++++ b/common/include/v4l2_codec2/common/LibyuvImageConverter.h
+@@ -15,6 +15,9 @@ public:
+ 
+     bool convertMT10ToP010(const TiledMT10Image& src, const P010WritableImage& dst, int width,
+                            int height) override;
++
++    bool convertMT10ToNV12(const TiledMT10Image& src, const NV12WritableImage& dst, int width,
++                           int height) override;
+ };
+ 
+ }  // namespace android
+diff --git a/common/include/v4l2_codec2/common/VideoTypes.h b/common/include/v4l2_codec2/common/VideoTypes.h
+index 350bec9..65c7215 100644
+--- a/common/include/v4l2_codec2/common/VideoTypes.h
++++ b/common/include/v4l2_codec2/common/VideoTypes.h
+@@ -39,6 +39,7 @@ enum class HalPixelFormat : int32_t {
+     YCBCR_420_888 = static_cast<int32_t>(HPixelFormat::YCBCR_420_888),
+     YV12 = static_cast<int32_t>(HPixelFormat::YV12),
+     YCBCR_P010 = static_cast<int32_t>(HPixelFormat::YCBCR_P010),
++    IMPLEMENTATION_DEFINED = static_cast<int32_t>(HPixelFormat::IMPLEMENTATION_DEFINED),
+     // NV12 is not defined at PixelFormat, follow the convention to use fourcc value.
+     NV12 = 0x3231564e,
+ };
+diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
+index 1cdfd27..d299e31 100644
+--- a/components/DecodeInterface.cpp
++++ b/components/DecodeInterface.cpp
+@@ -40,6 +40,17 @@ size_t calculateInputBufferSize(size_t area) {
+     if (area > k1080pArea) return kInputBufferSizeFor4K;
+     return kInputBufferSizeFor1080p;
+ }
++
++bool is10BitProfile(uint32_t profile) {
++    switch (profile) {
++    case C2Config::PROFILE_HEVC_MAIN_10:
++    case C2Config::PROFILE_VP9_2:
++    case C2Config::PROFILE_VP9_3:
++        return true;
++    default:
++        return false;
++    }
++}
+ }  // namespace
+ 
+ // static
+@@ -170,6 +181,8 @@ DecodeInterface::DecodeInterface(const std::string& name,
+         }
+     }
+ 
++    const bool has10BitProfile = std::any_of(profiles.begin(), profiles.end(), is10BitProfile);
++
+     uint32_t defaultProfile = caps.defaultProfile;
+     if (defaultProfile == C2Config::PROFILE_UNUSED)
+         defaultProfile = *std::min_element(profiles.begin(), profiles.end());
+@@ -471,6 +484,20 @@ DecodeInterface::DecodeInterface(const std::string& name,
+                                          mCodedColorAspects)
+                              .build());
+     }
++
++    std::vector<uint32_t> pixelFormats = {
++            static_cast<uint32_t>(HalPixelFormat::YCBCR_420_888),
++            static_cast<uint32_t>(HalPixelFormat::IMPLEMENTATION_DEFINED),
++    };
++    if (has10BitProfile) {
++        pixelFormats.push_back(static_cast<uint32_t>(HalPixelFormat::YCBCR_P010));
++    }
++    addParameter(DefineParam(mPixelFormat, C2_PARAMKEY_PIXEL_FORMAT)
++                         .withDefault(new C2StreamPixelFormatInfo::output(
++                                 0u, static_cast<uint32_t>(HalPixelFormat::YCBCR_420_888)))
++                         .withFields({C2F(mPixelFormat, value).oneOf(pixelFormats)})
++                         .withSetter(Setter<decltype(*mPixelFormat)>::StrictValueWithNoDeps)
++                         .build());
+ }
+ 
+ size_t DecodeInterface::getInputBufferSize() const {
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+index 8326ae0..6353e5f 100644
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -251,4 +251,39 @@ bool VideoFrame::detileFrom10(ImageConverter* converter, const TiledMT10Image& s
+     return converter->convertMT10ToP010(src, dst, width, height);
+ }
+ 
++bool VideoFrame::detileFrom10To8(ImageConverter* converter, const TiledMT10Image& src, int width,
++                                 int height) {
++    if (!converter || !mGraphicBlock) {
++        return false;
++    }
++
++    C2Acquirable<C2GraphicView> writable = mGraphicBlock->map();
++    C2GraphicView view = writable.get();
++    if (view.error() != C2_OK) {
++        ALOGE("Failed to map graphic block for 10-to-8-bit detile, error=%d", view.error());
++        return false;
++    }
++
++    const C2PlanarLayout layout = view.layout();
++    if (layout.numPlanes < 2) {
++        ALOGE("Graphic block has %u planes, cannot detile 10-to-8-bit into it", layout.numPlanes);
++        return false;
++    }
++    if (layout.planes[C2PlanarLayout::PLANE_U].colInc != 2) {
++        ALOGE("Graphic block chroma colInc=%d is not interleaved 8-bit, cannot detile "
++              "10-to-8-bit into it",
++              layout.planes[C2PlanarLayout::PLANE_U].colInc);
++        return false;
++    }
++
++    uint8_t* const* data = view.data();
++    NV12WritableImage dst;
++    dst.y = data[C2PlanarLayout::PLANE_Y];
++    dst.uv = data[C2PlanarLayout::PLANE_U];
++    dst.strideY = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
++    dst.strideUV = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
++
++    return converter->convertMT10ToNV12(src, dst, width, height);
++}
++
+ }  // namespace android
+diff --git a/components/include/v4l2_codec2/components/DecodeInterface.h b/components/include/v4l2_codec2/components/DecodeInterface.h
+index 7e513c5..4a0aa6b 100644
+--- a/components/include/v4l2_codec2/components/DecodeInterface.h
++++ b/components/include/v4l2_codec2/components/DecodeInterface.h
+@@ -29,6 +29,7 @@ public:
+     c2_status_t status() const { return mInitStatus; }
+     C2BlockPool::local_id_t getBlockPoolId() const { return mOutputBlockPoolIds->m.values[0]; }
+     std::optional<VideoCodec> getVideoCodec() const { return mVideoCodec; }
++    uint32_t getPixelFormat() const { return mPixelFormat->value; }
+ 
+     static uint32_t getOutputDelay(VideoCodec codec);
+ 
+@@ -99,6 +100,7 @@ private:
+     // former has higher priority. This parameter is used for component to provide color aspects
+     // as C2Info in decoded output buffers.
+     std::shared_ptr<C2StreamColorAspectsInfo::output> mColorAspects;
++    std::shared_ptr<C2StreamPixelFormatInfo::output> mPixelFormat;
+ 
+     c2_status_t mInitStatus;
+     std::optional<VideoCodec> mVideoCodec;
+diff --git a/components/include/v4l2_codec2/components/VideoFrame.h b/components/include/v4l2_codec2/components/VideoFrame.h
+index 63e748c..d0f1846 100644
+--- a/components/include/v4l2_codec2/components/VideoFrame.h
++++ b/components/include/v4l2_codec2/components/VideoFrame.h
+@@ -42,6 +42,9 @@ public:
+ 
+     bool detileFrom10(ImageConverter* converter, const TiledMT10Image& src, int width, int height);
+ 
++    bool detileFrom10To8(ImageConverter* converter, const TiledMT10Image& src, int width,
++                         int height);
++
+ private:
+     VideoFrame(std::shared_ptr<C2GraphicBlock> block, std::vector<int> fds);
+ 
+diff --git a/v4l2/V4L2DecodeComponent.cpp b/v4l2/V4L2DecodeComponent.cpp
+index 284b094..31331c6 100644
+--- a/v4l2/V4L2DecodeComponent.cpp
++++ b/v4l2/V4L2DecodeComponent.cpp
+@@ -106,7 +106,7 @@ void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent*
+                                                          ::base::Unretained(this)),
+                                    ::base::BindRepeating(&V4L2DecodeComponent::reportError,
+                                                          ::base::Unretained(this), C2_CORRUPTED),
+-                                   mDecoderTaskRunner, mIsSecure);
++                                   mDecoderTaskRunner, mIsSecure, mIntfImpl->getPixelFormat());
+     if (!mDecoder) {
+         ALOGE("Failed to create V4L2Decoder for %s", VideoCodecToString(*codec));
+         return;
+diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
+index 4e19229..cdf6dd5 100644
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -75,11 +75,13 @@ bool waitForDRC(const C2ConstLinearBlock& input, std::optional<VideoCodec> codec
+ std::unique_ptr<VideoDecoder> V4L2Decoder::Create(
+         uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
+         const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb, ErrorCB errorCb,
+-        scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure) {
++        scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure,
++        uint32_t requestedPixelFormat) {
+     std::unique_ptr<V4L2Decoder> decoder =
+             ::base::WrapUnique<V4L2Decoder>(new V4L2Decoder(debugStreamId, taskRunner));
+     if (!decoder->start(codec, inputBufferSize, minNumOutputBuffers, std::move(getPoolCb),
+-                        std::move(outputCb), std::move(errorCb), isSecure)) {
++                        std::move(outputCb), std::move(errorCb), isSecure,
++                        requestedPixelFormat)) {
+         return nullptr;
+     }
+     return decoder;
+@@ -126,7 +128,7 @@ V4L2Decoder::~V4L2Decoder() {
+ 
+ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
+                         const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
+-                        ErrorCB errorCb, bool isSecure) {
++                        ErrorCB errorCb, bool isSecure, uint32_t requestedPixelFormat) {
+     ATRACE_CALL();
+     ALOGV("%s(codec=%s, inputBufferSize=%zu, minNumOutputBuffers=%zu)", __func__,
+           VideoCodecToString(codec), inputBufferSize, minNumOutputBuffers);
+@@ -138,6 +140,7 @@ bool V4L2Decoder::start(const VideoCodec& codec, const size_t inputBufferSize,
+     mErrorCb = std::move(errorCb);
+     mCodec = codec;
+     mIsSecure = isSecure;
++    mRequestedPixelFormat = requestedPixelFormat;
+ 
+     if (mState == State::Error) {
+         ALOGE("Ignore due to error state.");
+@@ -707,8 +710,11 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
+                 tiledImage.raster = mCaptureMt10Raster;
+                 tiledImage.dmaBufFd = decodedTiled->fd();
+                 tiledImage.dmaBufSize = decodedTiled->size();
+-                detiled = frame->detileFrom10(mImageConverter.get(), tiledImage,
+-                                              mCodedSize.width, mCodedSize.height);
++                detiled = mOutputIsDownconvertedTo8Bit
++                                  ? frame->detileFrom10To8(mImageConverter.get(), tiledImage,
++                                                           mCodedSize.width, mCodedSize.height)
++                                  : frame->detileFrom10(mImageConverter.get(), tiledImage,
++                                                        mCodedSize.width, mCodedSize.height);
+                 decodedTiled->syncEndRead();
+             } else {
+                 TiledMM21Image tiledImage;
+@@ -842,11 +848,15 @@ bool V4L2Decoder::changeResolution() {
+     // Use flexible pixel 420 format YCBCR_420_888 for 8-bit and P010 for 10-bit.
+     const std::optional<struct v4l2_format> format = getFormatInfo();
+     const uint32_t capturePixfmt = format->fmt.pix_mp.pixelformat;
+-    HalPixelFormat outputFormat =
+-            (capturePixfmt == V4L2_PIX_FMT_P010 || capturePixfmt == kMt21S10TFourcc ||
+-             capturePixfmt == kMt21S10RFourcc)
+-                    ? HalPixelFormat::YCBCR_P010
+-                    : HalPixelFormat::YCBCR_420_888;
++    const bool captureIs10Bit = capturePixfmt == V4L2_PIX_FMT_P010 ||
++                                capturePixfmt == kMt21S10TFourcc ||
++                                capturePixfmt == kMt21S10RFourcc;
++    mOutputIsDownconvertedTo8Bit =
++            captureIs10Bit &&
++            mRequestedPixelFormat == static_cast<uint32_t>(HalPixelFormat::YCBCR_420_888);
++    HalPixelFormat outputFormat = (captureIs10Bit && !mOutputIsDownconvertedTo8Bit)
++                                          ? HalPixelFormat::YCBCR_P010
++                                          : HalPixelFormat::YCBCR_420_888;
+     mVideoFramePool = mGetPoolCb.Run(mCodedSize, outputFormat,
+                                      mOutputQueue->allocatedBuffersCount());
+     if (!mVideoFramePool) {
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+index 5a70518..386c256 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+@@ -47,7 +47,8 @@ public:
+     static std::unique_ptr<VideoDecoder> Create(
+             uint32_t debugStreamId, const VideoCodec& codec, const size_t inputBufferSize,
+             const size_t minNumOutputBuffers, GetPoolCB getPoolCB, OutputCB outputCb,
+-            ErrorCB errorCb, scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure);
++            ErrorCB errorCb, scoped_refptr<::base::SequencedTaskRunner> taskRunner, bool isSecure,
++            uint32_t requestedPixelFormat);
+     ~V4L2Decoder() override;
+ 
+     void decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB decodeCb) override;
+@@ -78,7 +79,7 @@ private:
+     V4L2Decoder(uint32_t debugStreamId, scoped_refptr<::base::SequencedTaskRunner> taskRunner);
+     bool start(const VideoCodec& codec, const size_t inputBufferSize,
+                const size_t minNumOutputBuffers, GetPoolCB getPoolCb, OutputCB outputCb,
+-               ErrorCB errorCb, bool isSecure);
++               ErrorCB errorCb, bool isSecure, uint32_t requestedPixelFormat);
+     bool setupInputFormat(const uint32_t inputPixelFormat, const size_t inputBufferSize);
+ 
+     // Sets minimal resolution and allocates minimal amount of output buffers for
+@@ -153,6 +154,8 @@ private:
+     uint32_t mCaptureStrideY = 0;
+     bool mCaptureIsMt10 = false;
+     bool mCaptureMt10Raster = false;
++    uint32_t mRequestedPixelFormat = static_cast<uint32_t>(HalPixelFormat::YCBCR_420_888);
++    bool mOutputIsDownconvertedTo8Bit = false;
+ 
+     // Currently enqueued frame at the deocder device, mapped using V4L2 buffer ID.
+     std::map<size_t, std::unique_ptr<VideoFrame>> mFrameAtDevice;
+-- 
+2.43.0
+

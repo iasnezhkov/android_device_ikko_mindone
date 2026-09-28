@@ -1,27 +1,4 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-// mind_one minimal RIL (RIL-MINIMAL-1409, MODEM-STACK-1409).
-//
-// AtChannel ports the *design* of AOSP's hardware/ril/reference-ril/atchannel.c (present
-// read-only in the LineageOS tree, hardware/ril/reference-ril/atchannel.{c,h})
-// to a small C++ class: a background reader thread that classifies every line coming off an AT
-// tty as an intermediate response, a final response (OK/ERROR/+CME ERROR/+CMS ERROR/NO
-// CARRIER/...), or an unsolicited result code (URC); a single-command-in-flight command queue
-// serialized by a mutex+condition_variable (matching reference-ril's s_commandmutex/
-// s_commandcond and the comment on RadioSeClient::mCallLock in
-// bridges/secure_element/SecureElementBridge.h -- a real AT-command serial line cannot usefully answer
-// two requests at once anyway); and at_send_command_singleline/_numeric/_multiline/_sms
-// equivalents as one parameterized sendCommand() call.
-//
-// One deliberate adaptation from reference-ril, cited here rather than left implicit: the real
-// stock stack does NOT multiplex command responses and URCs on the same fd the way
-// reference-ril's design (one physical /dev/ttyUSB-style port) assumes. Our mux
-// (gsm0710muxd, confirmed live on this exact device/build -- RIL-MINIMAL-1409
-// "channel layout") hands out a *dedicated* notification channel (/dev/radio/pttynoti) separate
-// from the numbered command channels (/dev/radio/pttycmd1..11) mtkfusionrild opens for AT
-// command/response traffic. AtChannel therefore only ever sees intermediate/final response
-// lines on its own fd; URCs arrive on a second AtChannel instance (opened read-only in URC-only
-// mode: no command queue, every line handed straight to the URC callback) bound to pttynoti.
-// See UrcListener.h and service.cpp for how the two are wired together.
 #pragma once
 
 #include <atomic>

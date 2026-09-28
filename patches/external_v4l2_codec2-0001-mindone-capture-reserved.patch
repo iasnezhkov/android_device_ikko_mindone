@@ -1,0 +1,44 @@
+From 8ad7e52c46052081ad089d46755ca1d287c0d4dd Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Wed, 23 Sep 2026 11:25:52 +0300
+Subject: [PATCH 1/6] v4l2: mark CAPTURE buffers with reserved=0xFFFFFFFF on
+ QBUF
+
+The mtk_vcodec_dec_v1 driver only treats a CAPTURE-queue v4l2_buffer as
+a plain DMA-BUF buffer (as opposed to a buffer carrying an appended
+general-purpose metadata fd) when v4l2_buffer.reserved is exactly
+0xFFFFFFFF; any other value, including the zero this struct gets from
+default-construction, is read as a metadata fd index and the QBUF is
+rejected with EINVAL.
+
+Stock v4l2_codec2 never touches this field on either queue. Set it
+unconditionally on the CAPTURE side of V4L2Queue::queueBuffer(), the
+single call site both V4L2Decoder and V4L2Encoder funnel through, so
+every CAPTURE QBUF against our driver carries the value it requires.
+The OUTPUT side is unaffected: the encoders raw-input queue treats
+reserved as an optional metadata attachment gated by a separate flag
+v4l2_codec2 never sets, so leaving it zero there is correct.
+
+Verified against the real driver by tools/rigs/v4l2dec.c, which sets
+the same field the same way and decodes 30/30 H.264 frames bit-exact.
+
+Change-Id: I480202348a03f069003349fe984c5d4c39132f8d
+---
+ v4l2/V4L2Device.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/v4l2/V4L2Device.cpp b/v4l2/V4L2Device.cpp
+index bb020ba..e8bc773 100644
+--- a/v4l2/V4L2Device.cpp
++++ b/v4l2/V4L2Device.cpp
+@@ -944,6 +944,10 @@ void V4L2Queue::reportTraceMetrics() {
+ bool V4L2Queue::queueBuffer(struct v4l2_buffer* v4l2Buffer) {
+     DCHECK_CALLED_ON_VALID_SEQUENCE(mSequenceChecker);
+ 
++    if (mType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
++        v4l2Buffer->reserved = 0xFFFFFFFFu;
++    }
++
+     int ret = mDevice->ioctl(VIDIOC_QBUF, v4l2Buffer);
+     if (ret) {
+         ALOGEQ("VIDIOC_QBUF failed");

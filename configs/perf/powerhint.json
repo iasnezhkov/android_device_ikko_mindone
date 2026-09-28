@@ -49,6 +49,20 @@
       "AllowFailure": true
     },
     {
+      "Name": "TAUClampBoost",
+      "Paths": ["/dev/cpuctl/top-app/cpu.uclamp.min"],
+      "Values": ["50", "0"],
+      "DefaultIndex": 1,
+      "ResetOnInit": true
+    },
+    {
+      "Name": "GPUMinFreqIndex",
+      "Paths": ["/sys/kernel/ged/hal/custom_boost_gpu_freq"],
+      "Values": ["0", "17", "44"],
+      "DefaultIndex": 2,
+      "ResetOnInit": true
+    },
+    {
       "Name": "PowerHALAudioState",
       "Paths": ["vendor.powerhal.audio"],
       "Values": ["AUDIO_STREAMING_LOW_LATENCY", ""],
@@ -66,11 +80,20 @@
     { "PowerHint": "INTERACTION", "Node": "CPUBigClusterMinFreq", "Value": "1000000", "Duration": 150 },
     { "PowerHint": "INTERACTION", "Node": "CPULittleClusterDownRateLimit", "Value": "50000", "Duration": 150 },
     { "PowerHint": "INTERACTION", "Node": "CPUBigClusterDownRateLimit", "Value": "50000", "Duration": 150 },
+    { "PowerHint": "INTERACTION", "Node": "TAUClampBoost", "Value": "50", "Duration": 150 },
+    { "PowerHint": "INTERACTION", "Node": "GPUMinFreqIndex", "Value": "17", "Duration": 300 },
+
+    { "PowerHint": "DISPLAY_UPDATE_IMMINENT", "Node": "CPULittleClusterMinFreq", "Value": "1200000", "Duration": 100 },
+    { "PowerHint": "DISPLAY_UPDATE_IMMINENT", "Node": "CPUBigClusterMinFreq", "Value": "1000000", "Duration": 100 },
+    { "PowerHint": "DISPLAY_UPDATE_IMMINENT", "Node": "TAUClampBoost", "Value": "50", "Duration": 100 },
+    { "PowerHint": "DISPLAY_UPDATE_IMMINENT", "Node": "GPUMinFreqIndex", "Value": "17", "Duration": 100 },
 
     { "PowerHint": "LAUNCH", "Node": "CPULittleClusterMinFreq", "Value": "1700000", "Duration": 1500 },
     { "PowerHint": "LAUNCH", "Node": "CPUBigClusterMinFreq", "Value": "1900000", "Duration": 1500 },
     { "PowerHint": "LAUNCH", "Node": "CPULittleClusterDownRateLimit", "Value": "50000", "Duration": 1500 },
     { "PowerHint": "LAUNCH", "Node": "CPUBigClusterDownRateLimit", "Value": "50000", "Duration": 1500 },
+    { "PowerHint": "LAUNCH", "Node": "TAUClampBoost", "Value": "50", "Duration": 1500 },
+    { "PowerHint": "LAUNCH", "Node": "GPUMinFreqIndex", "Value": "0", "Duration": 1500 },
 
     { "PowerHint": "SUSTAINED_PERFORMANCE", "Node": "CPULittleClusterMinFreq", "Value": "1200000", "Duration": 0 },
     { "PowerHint": "SUSTAINED_PERFORMANCE", "Node": "CPUBigClusterMinFreq", "Value": "1300000", "Duration": 0 },
@@ -79,6 +102,7 @@
     { "PowerHint": "EXPENSIVE_RENDERING", "Node": "CPUBigClusterMinFreq", "Value": "1300000", "Duration": 0 },
     { "PowerHint": "EXPENSIVE_RENDERING", "Node": "CPULittleClusterDownRateLimit", "Value": "50000", "Duration": 0 },
     { "PowerHint": "EXPENSIVE_RENDERING", "Node": "CPUBigClusterDownRateLimit", "Value": "50000", "Duration": 0 },
+    { "PowerHint": "EXPENSIVE_RENDERING", "Node": "GPUMinFreqIndex", "Value": "17", "Duration": 0 },
     { "PowerHint": "EXPENSIVE_RENDERING", "Node": "PowerHALRenderingState", "Value": "EXPENSIVE_RENDERING", "Duration": 0 },
 
     { "PowerHint": "LOW_POWER", "Node": "CPULittleClusterMaxFreq", "Value": "1200000", "Duration": 0 },
@@ -97,5 +121,29 @@
 
     { "PowerHint": "CAMERA_STREAMING_HIGH", "Node": "CPULittleClusterMinFreq", "Value": "1200000", "Duration": 0 },
     { "PowerHint": "CAMERA_STREAMING_HIGH", "Node": "CPUBigClusterMinFreq", "Value": "1300000", "Duration": 0 }
+  ],
+  "AdpfConfig": [
+    {
+      "Name": "REFRESH_96FPS",
+      "PID_On": true,
+      "PID_Po": 5.0,
+      "PID_Pu": 3.0,
+      "PID_I": 0.001,
+      "PID_I_Init": 200,
+      "PID_I_High": 512,
+      "PID_I_Low": -30,
+      "PID_Do": 500.0,
+      "PID_Du": 0.0,
+      "SamplingWindow_P": 1,
+      "SamplingWindow_I": 0,
+      "SamplingWindow_D": 1,
+      "UclampMin_On": true,
+      "UclampMin_Init": 300,
+      "UclampMin_High": 700,
+      "UclampMin_Low": 2,
+      "ReportingRateLimitNs": 166666660,
+      "TargetTimeFactor": 1.0,
+      "StaleTimeFactor": 10.0
+    }
   ]
 }

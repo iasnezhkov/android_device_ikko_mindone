@@ -1,0 +1,89 @@
+From 3f5846427a7d4327525aabc4620bd5d6e89d8919 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Fri, 25 Sep 2026 19:13:44 +0300
+Subject: [PATCH] v4l2: default the encoders to the best 8-bit profile the
+ device offers
+
+EncodeInterface defaulted C2_PARAMKEY_PROFILE_LEVEL to the lowest profile
+the V4L2 device lists, which for H.264 is Constrained/Baseline. Camera
+apps that record through CameraX or MediaRecorder do not set a profile
+(media_profiles_V1_0.xml carries none), so every recording on this device
+came out as Baseline: CamRig video at 2560x1440 gave ffprobe "h264
+Baseline" at 23.7 Mbit/s.
+
+The default is now the first of a preferred list the device supports:
+PROFILE_AVC_HIGH, then PROFILE_AVC_MAIN, for H.264, and PROFILE_HEVC_MAIN
+for HEVC (Main10 stays opt-in, it needs a 10-bit input); if none is
+offered the old lowest-profile default remains. The level setter still
+raises the level to what size, frame rate and bitrate need, and an app
+that asks for a profile gets it as before.
+
+Verified on the device (2509-K5, ROM 0925c, service bind-mounted): the
+same CamRig video 2560x1440 recording without a profile now gives ffprobe
+"h264 High, level 50", 142 frames in 4.79 s = 29.42 fps, 23.7 Mbit/s.
+HEVC could not be checked yet: the kernel encoder rejects the HEVC
+capture format (no frame-size entry for the HEVC alias of H265), fixed in
+the kernel separately.
+
+Change-Id: Ifb1de9f76e5fcb9eecb891c1df24a25e283e55a8
+---
+ components/EncodeInterface.cpp | 24 ++++++++++++++++++------
+ 1 file changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/components/EncodeInterface.cpp b/components/EncodeInterface.cpp
+index 19b6317..7d03dec 100644
+--- a/components/EncodeInterface.cpp
++++ b/components/EncodeInterface.cpp
+@@ -41,6 +41,18 @@ constexpr uint32_t kDefaultBitrate = 64000;
+ // The maximal output bitrate in bits per second. It's the max bitrate of AVC Level4.1.
+ // TODO: increase this in the future for supporting higher level/resolution encoding.
+ constexpr uint32_t kMaxBitrate = 50000000;
++
++C2Config::profile_t preferredProfile(const std::vector<uint32_t>& profiles,
++                                     std::initializer_list<C2Config::profile_t> preferred) {
++    for (C2Config::profile_t p : preferred) {
++        if (std::find(profiles.begin(), profiles.end(), static_cast<uint32_t>(p)) !=
++            profiles.end()) {
++            return p;
++        }
++    }
++    return static_cast<C2Config::profile_t>(*std::min_element(profiles.begin(), profiles.end()));
++}
++
+ }  // namespace
+ 
+ //static
+@@ -275,11 +287,11 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+     std::string outputMime;
+     if (caps.codec == VideoCodec::H264) {
+         outputMime = MEDIA_MIMETYPE_VIDEO_AVC;
+-        C2Config::profile_t minProfile = static_cast<C2Config::profile_t>(
+-                *std::min_element(profiles.begin(), profiles.end()));
++        C2Config::profile_t defaultProfile = preferredProfile(
++                profiles, {C2Config::PROFILE_AVC_HIGH, C2Config::PROFILE_AVC_MAIN});
+         addParameter(
+                 DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+-                        .withDefault(new C2StreamProfileLevelInfo::output(0u, minProfile,
++                        .withDefault(new C2StreamProfileLevelInfo::output(0u, defaultProfile,
+                                                                           C2Config::LEVEL_AVC_4_1))
+                         .withFields(
+                                 {C2F(mProfileLevel, profile).oneOf(profiles),
+@@ -326,12 +338,12 @@ void EncodeInterface::Initialize(const C2String& name, const SupportedCapabiliti
+                         .build());
+     } else if (caps.codec == VideoCodec::HEVC) {
+         outputMime = MEDIA_MIMETYPE_VIDEO_HEVC;
+-        C2Config::profile_t minProfile = static_cast<C2Config::profile_t>(
+-                *std::min_element(profiles.begin(), profiles.end()));
++        C2Config::profile_t defaultProfile =
++                preferredProfile(profiles, {C2Config::PROFILE_HEVC_MAIN});
+         addParameter(
+                 DefineParam(mProfileLevel, C2_PARAMKEY_PROFILE_LEVEL)
+                         .withDefault(new C2StreamProfileLevelInfo::output(
+-                                0u, minProfile, C2Config::LEVEL_HEVC_MAIN_4_1))
++                                0u, defaultProfile, C2Config::LEVEL_HEVC_MAIN_4_1))
+                         .withFields(
+                                 {C2F(mProfileLevel, profile).oneOf(profiles),
+                                  C2F(mProfileLevel, level)
+-- 
+2.43.0
+

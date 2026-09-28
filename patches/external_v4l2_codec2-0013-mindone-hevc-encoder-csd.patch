@@ -1,0 +1,242 @@
+From 08a75e6b5f995f2317bef3d978923168c7df278e Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sat, 26 Sep 2026 08:22:39 +0300
+Subject: [PATCH] v4l2: extract VPS/SPS/PPS as CSD for HEVC too
+
+8487150 ("v4l2: request a joined header for every codec, not just
+H.264") fixed the abort, but the resulting file is unplayable: CamRig
+video 2560x1440x10 hevc 24 with the patched libv4l2_codec2_v4l2.so gives
+285 frames at 29.21 fps in logcat with none of the old crashes, but
+`ffprobe -show_streams` on the output reports codec_name=unknown,
+width=0, height=0 - the muxer never got an hvcC.
+
+Root cause: EncodeComponent::onOutputBufferDone() only ever extracts CSD
+when mExtractCSD is true, and V4L2EncodeComponent::initializeEncoder()
+set that flag to isH264Profile(outputProfile) with no HEVC case
+(V4L2EncodeComponent.cpp:69) - HEVC never got a
+C2StreamInitDataInfo::output, so MediaMuxer/MPEG4Writer had nothing to
+build the trak's hvcC box from, even though the actual joined buffer
+already carries VPS+SPS+PPS+IDR in-band (confirmed by walking the
+length-prefixed NALs at the start of mdat in the produced
+hevc-0012.mp4: offset 3350 len=23 type=32 (VPS), offset 3377 len=37
+type=33 (SPS), offset 3418 len=7 type=34 (PPS), offset 3429 len=115005
+type=19 (IDR), and the same VPS/SPS/PPS/IDR sequence again at the next
+keyframe - exactly the shape extractCSDInfo() already handles for
+H.264, just with HEVC's NAL types).
+
+extractCSDInfo()/extractSPSPPS() (EncodeHelpers.cpp) can't be reused
+as-is: they run H264NalParser, whose type() computes data[0] & 0x1f.
+HEVC's nal_unit_type sits in bits 1-6 of the first byte, so that mask
+can only ever produce an even value for a real HEVC NAL header
+(2*type mod 32) and can never equal kSPSType(7) - H264NalParser could
+never find HEVC's SPS.
+
+This repo already carries a full HEVCNalParser (common/HEVCNalParser.h/
+.cpp) for the HEVC decoder path (V4L2Decoder.cpp, DecodeComponent.cpp),
+with a correct type() = (data[0] & 0x7e) >> 1 and its own kSPSType(33)/
+kIDRType(19). Added kVPSType(32) and kPPSType(34) next to them
+(HEVCNalParser.h) and reused the class instead of writing a new parser.
+
+Added extractVPSSPSPPS()/extractCSDInfoHevc() (EncodeHelpers.cpp/.h),
+mirroring extractSPSPPS()/extractCSDInfo() but scanning for VPS/SPS/PPS
+with HEVCNalParser and concatenating all three (with the same 4-byte
+Annex-B start code copyNALUPrependingStartCode() already uses for
+H.264) into one C2StreamInitDataInfo. This is the same shape AOSP's own
+C2SoftHevcEnc (frameworks/av/media/codec2/components/hevc/
+C2SoftHevcEnc.cpp:1140-1160) hands to MediaMuxer as csd-0 for HEVC -
+there it comes straight from ihevce_encode_header(); here it has to be
+parsed back out of the driver's joined header+frame buffer because this
+driver doesn't get a dedicated header call in JOINED_WITH_1ST_FRAME
+mode. Left the original buffer's bytes completely untouched - the
+in-band VPS+SPS+PPS+IDR keeps flowing to the client exactly like AVC's
+own in-band SPS+PPS+IDR already does.
+
+EncodeComponent::onOutputBufferDone() (components/EncodeComponent.cpp)
+now checks isValidProfileForCodec(VideoCodec::HEVC, outputProfile)
+(already used by components/EncodeInterface.cpp, common/Common.cpp) at
+its one CSD-extraction call site and calls extractCSDInfoHevc() instead
+of extractCSDInfo() for HEVC; unchanged for every other profile.
+V4L2EncodeComponent::initializeEncoder() now sets
+mExtractCSD = isH264Profile(outputProfile) ||
+isValidProfileForCodec(VideoCodec::HEVC, outputProfile).
+
+No Android.bp changes: libv4l2_codec2_common (HEVCNalParser.cpp,
+Common.cpp, EncodeHelpers.cpp) is already a shared_libs dependency of
+both libv4l2_codec2_components and libv4l2_codec2_v4l2, and
+isValidProfileForCodec() is already called from components/
+EncodeInterface.cpp today.
+
+Verified so far: walked the length-prefixed NALs in the existing broken
+hevc-0012.mp4's mdat by hand (byte offsets/types above) to confirm the
+real MTK joined buffer has exactly the VPS(32)/SPS(33)/PPS(34)/IDR(19)
+shape extractVPSSPSPPS() scans for, and cross-checked the target CSD
+format (raw Annex-B VPS+SPS+PPS, one blob) against C2SoftHevcEnc's own
+csd-0 construction. Not yet run through the actual encoder - the main
+thread will redo the same CamRig HEVC capture with this build. AVC path
+is untouched (isH264Profile() branch unchanged, only an isHevc dispatch
+added beside it).
+
+Change-Id: Icbd08bbde0f5cec5ecc336679d7172c2d0130ef8
+---
+ common/EncodeHelpers.cpp                      | 50 +++++++++++++++++++
+ .../v4l2_codec2/common/EncodeHelpers.h        |  6 +++
+ .../v4l2_codec2/common/HEVCNalParser.h        |  2 +
+ components/EncodeComponent.cpp                |  6 ++-
+ v4l2/V4L2EncodeComponent.cpp                  |  5 +-
+ 5 files changed, 66 insertions(+), 3 deletions(-)
+
+diff --git a/common/EncodeHelpers.cpp b/common/EncodeHelpers.cpp
+index c1a9425..bdb02ad 100644
+--- a/common/EncodeHelpers.cpp
++++ b/common/EncodeHelpers.cpp
+@@ -15,6 +15,7 @@
+ #include <utils/Log.h>
+ 
+ #include <v4l2_codec2/common/H264NalParser.h>
++#include <v4l2_codec2/common/HEVCNalParser.h>
+ 
+ namespace android {
+ 
+@@ -151,6 +152,55 @@ bool extractCSDInfo(std::unique_ptr<C2StreamInitDataInfo::output>* const csd, co
+            copyNALUPrependingStartCode(pps.data(), pps.size(), &csdBuffer, &configDataLength);
+ }
+ 
++bool extractVPSSPSPPS(const uint8_t* data, size_t length, std::vector<uint8_t>* vps,
++                      std::vector<uint8_t>* sps, std::vector<uint8_t>* pps) {
++    bool foundVPS = false;
++    bool foundSPS = false;
++    bool foundPPS = false;
++    HEVCNalParser parser(data, length);
++    while (!(foundVPS && foundSPS && foundPPS) && parser.locateNextNal()) {
++        switch (parser.type()) {
++        case HEVCNalParser::kVPSType:
++            vps->resize(parser.length());
++            memcpy(vps->data(), parser.data(), parser.length());
++            foundVPS = true;
++            break;
++        case HEVCNalParser::kSPSType:
++            sps->resize(parser.length());
++            memcpy(sps->data(), parser.data(), parser.length());
++            foundSPS = true;
++            break;
++        case HEVCNalParser::kPPSType:
++            pps->resize(parser.length());
++            memcpy(pps->data(), parser.data(), parser.length());
++            foundPPS = true;
++            break;
++        }
++    }
++    return foundVPS && foundSPS && foundPPS;
++}
++
++bool extractCSDInfoHevc(std::unique_ptr<C2StreamInitDataInfo::output>* const csd,
++                        const uint8_t* data, size_t length) {
++    csd->reset();
++
++    std::vector<uint8_t> vps;
++    std::vector<uint8_t> sps;
++    std::vector<uint8_t> pps;
++    if (!extractVPSSPSPPS(data, length, &vps, &sps, &pps)) {
++        return false;
++    }
++
++    size_t configDataLength = vps.size() + sps.size() + pps.size() + (3u * kH264StartCodeSize);
++    ALOGV("Extracted codec config data: length=%zu", configDataLength);
++
++    *csd = C2StreamInitDataInfo::output::AllocUnique(configDataLength, 0u);
++    uint8_t* csdBuffer = (*csd)->m.value;
++    return copyNALUPrependingStartCode(vps.data(), vps.size(), &csdBuffer, &configDataLength) &&
++           copyNALUPrependingStartCode(sps.data(), sps.size(), &csdBuffer, &configDataLength) &&
++           copyNALUPrependingStartCode(pps.data(), pps.size(), &csdBuffer, &configDataLength);
++}
++
+ size_t prependSPSPPSToIDR(const uint8_t* src, size_t srcSize, uint8_t* dst, size_t dstSize,
+                           std::vector<uint8_t>* sps, std::vector<uint8_t>* pps) {
+     bool foundStreamParams = false;
+diff --git a/common/include/v4l2_codec2/common/EncodeHelpers.h b/common/include/v4l2_codec2/common/EncodeHelpers.h
+index 832ac91..0f38e07 100644
+--- a/common/include/v4l2_codec2/common/EncodeHelpers.h
++++ b/common/include/v4l2_codec2/common/EncodeHelpers.h
+@@ -48,12 +48,18 @@ android_ycbcr getGraphicBlockInfo(const C2ConstGraphicBlock& block);
+ bool extractSPSPPS(const uint8_t* data, size_t length, std::vector<uint8_t>* sps,
+                    std::vector<uint8_t>* pps);
+ 
++bool extractVPSSPSPPS(const uint8_t* data, size_t length, std::vector<uint8_t>* vps,
++                      std::vector<uint8_t>* sps, std::vector<uint8_t>* pps);
++
+ // When encoding a video the codec-specific data (CSD; e.g. SPS and PPS for H264 encoding) will be
+ // concatenated to the first encoded slice. This function extracts the CSD out of the bitstream and
+ // stores it into |csd|. Returns whether extracting CSD info was successful.
+ bool extractCSDInfo(std::unique_ptr<C2StreamInitDataInfo::output>* const csd, const uint8_t* data,
+                     size_t length);
+ 
++bool extractCSDInfoHevc(std::unique_ptr<C2StreamInitDataInfo::output>* const csd,
++                        const uint8_t* data, size_t length);
++
+ // Prepend the specified |sps| and |pps| NAL units (without start codes) to the H.264 |data| stream.
+ // The result is copied into |dst|. The provided |sps| and |pps| data will be updated if an SPS or
+ // PPS NAL unit is encountered. Returns the size of the new data, will be 0 if an error occurred.
+diff --git a/common/include/v4l2_codec2/common/HEVCNalParser.h b/common/include/v4l2_codec2/common/HEVCNalParser.h
+index 0f4574a..729ab65 100644
+--- a/common/include/v4l2_codec2/common/HEVCNalParser.h
++++ b/common/include/v4l2_codec2/common/HEVCNalParser.h
+@@ -16,7 +16,9 @@ class HEVCNalParser : public NalParser {
+ public:
+     // Type of a SPS NAL unit.
+     static constexpr uint8_t kIDRType = 19;  //IDR_W_RADL
++    static constexpr uint8_t kVPSType = 32;
+     static constexpr uint8_t kSPSType = 33;
++    static constexpr uint8_t kPPSType = 34;
+ 
+     HEVCNalParser(const uint8_t* data, size_t length);
+     ~HEVCNalParser() = default;
+diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
+index cf6a679..49b6ecd 100644
+--- a/components/EncodeComponent.cpp
++++ b/components/EncodeComponent.cpp
+@@ -30,6 +30,7 @@
+ #include <utils/Trace.h>
+ #include <vndk/hardware_buffer.h>
+ 
++#include <v4l2_codec2/common/Common.h>
+ #include <v4l2_codec2/common/EncodeHelpers.h>
+ #include <v4l2_codec2/common/FormatConverter.h>
+ #include <v4l2_codec2/common/H264.h>
+@@ -928,7 +929,10 @@ void EncodeComponent::onOutputBufferDone(size_t dataSize, int64_t timestamp, boo
+         ALOGV("No CSD submitted yet, extracting CSD");
+         std::unique_ptr<C2StreamInitDataInfo::output> csd;
+         C2ReadView view = constBlock.map().get();
+-        if (!extractCSDInfo(&csd, view.data(), view.capacity())) {
++        bool isHevc = isValidProfileForCodec(VideoCodec::HEVC, mInterface->getOutputProfile());
++        bool extracted = isHevc ? extractCSDInfoHevc(&csd, view.data(), view.capacity())
++                                : extractCSDInfo(&csd, view.data(), view.capacity());
++        if (!extracted) {
+             ALOGE("Failed to extract CSD");
+             reportError(C2_CORRUPTED);
+             return;
+diff --git a/v4l2/V4L2EncodeComponent.cpp b/v4l2/V4L2EncodeComponent.cpp
+index e3b9b14..9549398 100644
+--- a/v4l2/V4L2EncodeComponent.cpp
++++ b/v4l2/V4L2EncodeComponent.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include <cutils/properties.h>
+ 
++#include <v4l2_codec2/common/Common.h>
+ #include <v4l2_codec2/common/H264.h>
+ #include <v4l2_codec2/components/BitstreamBuffer.h>
+ #include <v4l2_codec2/components/EncodeInterface.h>
+@@ -65,8 +66,8 @@ bool V4L2EncodeComponent::initializeEncoder() {
+     // Get the requested profile and level.
+     C2Config::profile_t outputProfile = mInterface->getOutputProfile();
+ 
+-    // CSD only needs to be extracted when using an H.264 profile.
+-    mExtractCSD = isH264Profile(outputProfile);
++    mExtractCSD = isH264Profile(outputProfile) ||
++                  isValidProfileForCodec(VideoCodec::HEVC, outputProfile);
+ 
+     std::optional<uint8_t> h264Level;
+     if (isH264Profile(outputProfile)) {
+-- 
+2.43.0
+

@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Mon, 28 Sep 2026 02:31:38 +0300
+Subject: [PATCH 22/27] v4l2: pass the gralloc share_fd (data[1]) as the MDP
+ destination
+
+Change-Id: I28455db079729b5975571164089b95a01d260d58
+---
+ components/VideoFrame.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+index dd83030..c8e2211 100644
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -129,7 +129,7 @@ bool VideoFrame::detileFrom(ImageConverter* primaryConverter, ImageConverter* fa
+     if (primaryConverter) {
+         const C2Handle* const handle = mGraphicBlock->handle();
+         bool queried = false;
+-        if (handle && handle->numFds > 0) {
++        if (handle && handle->numFds > 1) {
+             NV12PlaneGeometry geometry;
+             NV12PlaneGeometryKey key;
+             uint32_t allocWidth = 0, allocHeight = 0, generation = 0, igbpSlot = 0;
+@@ -178,7 +178,7 @@ bool VideoFrame::detileFrom(ImageConverter* primaryConverter, ImageConverter* fa
+             }
+             if (geometry.valid) {
+                 NV12WritableImage dst;
+-                dst.dmaBufFd = handle->data[0];
++                dst.dmaBufFd = handle->data[1];
+                 dst.strideY = geometry.strideY;
+                 dst.offsetY = geometry.offsetY;
+                 dst.sizeY = geometry.sizeY;
+-- 
+2.43.0
+

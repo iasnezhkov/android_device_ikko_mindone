@@ -1,21 +1,13 @@
 #!/usr/bin/env -S PYTHONPATH=../../../tools/extract-utils python3
-#
-# SPDX-FileCopyrightText: The LineageOS Project
-# SPDX-License-Identifier: Apache-2.0
-#
-# Adapted from a LineageOS device tree for the same chipset (MT6789). blob_fixups/
-# lib_fixups below are MT6789-platform/AOSP-ABI renames (keymint-trustkernel, wifi-hal,
-# codec2 formatter, sensors hals.conf, ...), not specific to that device — several are
-# already confirmed present on OUR device (e.g. android.hardware.security.keymint-
-# service.trustkernel, seen live in our own boot log F3400/F3403). Kept verbatim until
-# proven wrong against a dump of this device's own partitions.
-# The blob lists have since been reconciled against a dump taken from this device: of the
-# entries in proprietary-files.txt, the large majority were confirmed present on the real
-# partition, and entries that are deliberately not taken carry the reason inline.
+import os
+
 from audio_param_tuning import (
     tune_speech_audio_param,
     tune_speech_vol_audio_param,
 )
+from camera_metastore_fixup import fix_imx766_stream_table
+from camerahalserver_instance_fixup import fix_provider_instance_name
+from halsensor_poweron_fixup import drop_poweron_sleep
 
 from extract_utils.fixups_blob import (
     blob_fixup,
@@ -51,6 +43,19 @@ def fixup_speech_audio_param(ctx, file, file_path, *args, **kwargs):
     tune_speech_audio_param(file_path)
 
 
+def fixup_camera_metastore(ctx, file, file_path, *args, **kwargs):
+    fix_imx766_stream_table(file_path)
+
+
+def fixup_camerahalserver_instance(ctx, file, file_path, *args, **kwargs):
+    if os.environ.get('MINDONE_CAMERA_PROXY') == 'true':
+        fix_provider_instance_name(file_path)
+
+
+def fixup_halsensor_poweron(ctx, file, file_path, *args, **kwargs):
+    drop_poweron_sleep(file_path)
+
+
 def fixup_speech_vol_audio_param(ctx, file, file_path, *args, **kwargs):
     """Back off the handset uplink gain in the device's own volume tables."""
     tune_speech_vol_audio_param(file_path)
@@ -68,10 +73,19 @@ blob_fixups: blob_fixups_user_type = {
         'vendor/etc/audio_param/SpeechVol_AudioParam.xml',
     ): blob_fixup()
         .call(fixup_speech_vol_audio_param, need_tmp_dir=False),
+    (
+        'vendor/lib64/libmtkcam_metastore.so',
+    ): blob_fixup()
+        .call(fixup_camera_metastore, need_tmp_dir=False),
+    (
+        'vendor/bin/hw/camerahalserver',
+    ): blob_fixup()
+        .call(fixup_camerahalserver_instance, need_tmp_dir=False),
+    (
+        'vendor/lib64/libcam.halsensor.so',
+    ): blob_fixup()
+        .call(fixup_halsensor_poweron, need_tmp_dir=False),
 
-    # ImsService.apk: the apktool patch in ims-patches/ does not apply to this device's
-    # ImsService (hunk #2 rejected, 03.09); IMS/VoLTE is a placeholder on kernel 6.1 (F2574),
-    # so the apk is copied as-is until IMS is brought up.
     (
         'vendor/bin/hw/android.hardware.gnss-service.mediatek',
         'vendor/lib64/hw/android.hardware.gnss-impl-mediatek.so',
@@ -234,7 +248,6 @@ blob_fixups: blob_fixups_user_type = {
         .replace_needed('libkeymaster_portable.so', 'libkeymaster_portable_mtk.so'),
     (
         'vendor/bin/hw/android.hardware.media.c2@1.2-mediatek',
-        'vendor/bin/hw/android.hardware.media.c2@1.2-mediatek-64b',
     ): blob_fixup()
         .replace_needed('libavservices_minijail_vendor.so', 'libavservices_minijail.so')
         .add_needed('libstagefright_foundation-v33.so'),

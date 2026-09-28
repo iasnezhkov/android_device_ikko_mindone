@@ -1,0 +1,609 @@
+From 1e5390604e349d27430ea39e4b6c56a2fc9715eb Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Wed, 23 Sep 2026 11:41:29 +0300
+Subject: [PATCH 5/6] v4l2: detile the driver native MTK block CAPTURE format
+ to NV12
+
+Measured live on the device (task brief, 23.09): mtk-vcodec-dec_v1
+CAPTURE output is always its proprietary block/UFO tiled layout (luma
+16x32 tiles, chroma 16x16 tiles, chroma right after luma in a single
+plane sized to the driver own fb_sz[0], i.e. width x 32-aligned-height
+x 1.5) regardless of what VIDIOC_S_FMT negotiates - stock v4l2_codec2
+has no awareness of this and expects the driver to write one of its
+own kSupportedOutputFourccs (NV12/YV12/I420/P010 family) straight into
+the gralloc-backed C2 graphic block it queues as the CAPTURE buffer.
+Queuing the client block directly, as today code does, would hand the
+client a block full of tiled garbage interpreted as linear NV12.
+
+Stop importing the pool-allocated block as the CAPTURE buffer. Queue a
+separate, internally-owned DMA-BUF (TiledCaptureBufferPool, one per
+V4L2 buffer slot, /dev/dma_heap/system with the mtk_mm heaps as
+fallback, sized to the driver own reported sizeimage) instead, and
+after each DQBUF, detile that buffer CPU mapping into the pool block
+CPU mapping (VideoFrame::detileFrom) before handing the frame to the
+client. DMA_BUF_IOCTL_SYNC brackets the CPU read of the tiled buffer,
+matching tools/rigs/v4l2dec.c, which already proved this exact
+approach bit-exact against ffmpeg on 30/30 real device frames.
+
+The conversion itself sits behind a small ImageConverter interface
+(common/ImageConverter.h) with one implementation today,
+LibyuvImageConverter, wrapping libyuv MM21ToNV12 - the same function
+and tile geometry external/libyuv already ships and this driver
+output matches exactly (confirmed against source/convert.cc and the
+NEON row functions comments). This is the seam a future MDP
+hardware-backed converter is meant to replace: same dmabuf-in,
+gralloc-mapped-out shape, no change needed above VideoFrame.
+
+Copies: one, CPU-side, tiled dmabuf mapping straight into the gralloc
+block mapping libyuv writes NV12 to directly - no bounce buffer.
+Scope of this patch: 8-bit single-plane MM21 only, matching what has
+actually been measured on the device; the 10-bit tiled families
+(MT2110/MT21C10/MT21S10/MT10, part 1.1 of the design doc) would need
+a second ImageConverter path and are left for later. The destination
+block chroma plane is required to be interleaved (colInc=2, i.e. a
+real NV12-shaped YCBCR_420_888 allocation) - detileFrom() fails
+cleanly instead of writing garbage if gralloc ever backs it as fully
+planar I420 on this device, which part 3 of the design doc already
+flagged as unconfirmed and worth a live AHardwareBuffer check.
+
+Change-Id: Ib89676a0c37bea7befeac214bf3cd99a25a2c7aa
+---
+ common/Android.bp                             |   1 +
+ common/LibyuvImageConverter.cpp               |  29 ++++
+ .../v4l2_codec2/common/ImageConverter.h       |  33 ++++
+ .../v4l2_codec2/common/LibyuvImageConverter.h |  19 +++
+ components/VideoFrame.cpp                     |  34 ++++
+ .../v4l2_codec2/components/VideoFrame.h       |   4 +
+ v4l2/Android.bp                               |   1 +
+ v4l2/TiledCaptureBuffer.cpp                   | 152 ++++++++++++++++++
+ v4l2/V4L2Decoder.cpp                          |  57 ++++++-
+ .../v4l2_codec2/v4l2/TiledCaptureBuffer.h     |  57 +++++++
+ v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h   |   6 +
+ 11 files changed, 391 insertions(+), 2 deletions(-)
+ create mode 100644 common/LibyuvImageConverter.cpp
+ create mode 100644 common/include/v4l2_codec2/common/ImageConverter.h
+ create mode 100644 common/include/v4l2_codec2/common/LibyuvImageConverter.h
+ create mode 100644 v4l2/TiledCaptureBuffer.cpp
+ create mode 100644 v4l2/include/v4l2_codec2/v4l2/TiledCaptureBuffer.h
+
+diff --git a/common/Android.bp b/common/Android.bp
+index 6b571c9..207cf76 100644
+--- a/common/Android.bp
++++ b/common/Android.bp
+@@ -23,6 +23,7 @@ cc_library {
+         "H264.cpp",
+         "H264NalParser.cpp",
+         "HEVCNalParser.cpp",
++        "LibyuvImageConverter.cpp",
+         "NalParser.cpp",
+         "VideoTypes.cpp",
+         "VideoPixelFormat.cpp",
+diff --git a/common/LibyuvImageConverter.cpp b/common/LibyuvImageConverter.cpp
+new file mode 100644
+index 0000000..4d16c83
+--- /dev/null
++++ b/common/LibyuvImageConverter.cpp
+@@ -0,0 +1,29 @@
++#define LOG_TAG "LibyuvImageConverter"
++
++#include <v4l2_codec2/common/LibyuvImageConverter.h>
++
++#include <libyuv/convert.h>
++#include <log/log.h>
++
++namespace android {
++
++bool LibyuvImageConverter::convertMM21ToNV12(const TiledMM21Image& src,
++                                             const NV12WritableImage& dst, int width,
++                                             int height) {
++    if (!src.y || !src.uv || !dst.y || !dst.uv || width <= 0 || height <= 0) {
++        ALOGE("convertMM21ToNV12: invalid arguments, width=%d height=%d", width, height);
++        return false;
++    }
++
++    const int ret = libyuv::MM21ToNV12(src.y, static_cast<int>(src.strideY), src.uv,
++                                       static_cast<int>(src.strideUV), dst.y,
++                                       static_cast<int>(dst.strideY), dst.uv,
++                                       static_cast<int>(dst.strideUV), width, height);
++    if (ret != 0) {
++        ALOGE("libyuv::MM21ToNV12 failed, ret=%d", ret);
++        return false;
++    }
++    return true;
++}
++
++}  // namespace android
+diff --git a/common/include/v4l2_codec2/common/ImageConverter.h b/common/include/v4l2_codec2/common/ImageConverter.h
+new file mode 100644
+index 0000000..e5bfbf6
+--- /dev/null
++++ b/common/include/v4l2_codec2/common/ImageConverter.h
+@@ -0,0 +1,33 @@
++#ifndef ANDROID_V4L2_CODEC2_COMMON_IMAGE_CONVERTER_H
++#define ANDROID_V4L2_CODEC2_COMMON_IMAGE_CONVERTER_H
++
++#include <cstddef>
++#include <cstdint>
++
++namespace android {
++
++struct TiledMM21Image {
++    const uint8_t* y = nullptr;
++    const uint8_t* uv = nullptr;
++    size_t strideY = 0;
++    size_t strideUV = 0;
++};
++
++struct NV12WritableImage {
++    uint8_t* y = nullptr;
++    uint8_t* uv = nullptr;
++    size_t strideY = 0;
++    size_t strideUV = 0;
++};
++
++class ImageConverter {
++public:
++    virtual ~ImageConverter() = default;
++
++    virtual bool convertMM21ToNV12(const TiledMM21Image& src, const NV12WritableImage& dst,
++                                   int width, int height) = 0;
++};
++
++}  // namespace android
++
++#endif  // ANDROID_V4L2_CODEC2_COMMON_IMAGE_CONVERTER_H
+diff --git a/common/include/v4l2_codec2/common/LibyuvImageConverter.h b/common/include/v4l2_codec2/common/LibyuvImageConverter.h
+new file mode 100644
+index 0000000..79b40d7
+--- /dev/null
++++ b/common/include/v4l2_codec2/common/LibyuvImageConverter.h
+@@ -0,0 +1,19 @@
++#ifndef ANDROID_V4L2_CODEC2_COMMON_LIBYUV_IMAGE_CONVERTER_H
++#define ANDROID_V4L2_CODEC2_COMMON_LIBYUV_IMAGE_CONVERTER_H
++
++#include <v4l2_codec2/common/ImageConverter.h>
++
++namespace android {
++
++class LibyuvImageConverter : public ImageConverter {
++public:
++    LibyuvImageConverter() = default;
++    ~LibyuvImageConverter() override = default;
++
++    bool convertMM21ToNV12(const TiledMM21Image& src, const NV12WritableImage& dst, int width,
++                           int height) override;
++};
++
++}  // namespace android
++
++#endif  // ANDROID_V4L2_CODEC2_COMMON_LIBYUV_IMAGE_CONVERTER_H
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+index b7481ad..87be9bf 100644
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -54,4 +54,38 @@ C2ConstGraphicBlock VideoFrame::getGraphicBlock() {
+     return mGraphicBlock->share(C2Rect(mVisibleRect.width(), mVisibleRect.height()), C2Fence());
+ }
+ 
++bool VideoFrame::detileFrom(ImageConverter* converter, const TiledMM21Image& src, int width,
++                            int height) {
++    if (!converter || !mGraphicBlock) {
++        return false;
++    }
++
++    C2Acquirable<C2GraphicView> writable = mGraphicBlock->map();
++    C2GraphicView view = writable.get();
++    if (view.error() != C2_OK) {
++        ALOGE("Failed to map graphic block for detile, error=%d", view.error());
++        return false;
++    }
++
++    const C2PlanarLayout layout = view.layout();
++    if (layout.numPlanes < 2) {
++        ALOGE("Graphic block has %u planes, cannot detile into it", layout.numPlanes);
++        return false;
++    }
++    if (layout.planes[C2PlanarLayout::PLANE_U].colInc != 2) {
++        ALOGE("Graphic block chroma colInc=%d is not interleaved, cannot detile into it",
++              layout.planes[C2PlanarLayout::PLANE_U].colInc);
++        return false;
++    }
++
++    uint8_t* const* data = view.data();
++    NV12WritableImage dst;
++    dst.y = data[C2PlanarLayout::PLANE_Y];
++    dst.uv = data[C2PlanarLayout::PLANE_U];
++    dst.strideY = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
++    dst.strideUV = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
++
++    return converter->convertMM21ToNV12(src, dst, width, height);
++}
++
+ }  // namespace android
+diff --git a/components/include/v4l2_codec2/components/VideoFrame.h b/components/include/v4l2_codec2/components/VideoFrame.h
+index b5d7b99..6c1d533 100644
+--- a/components/include/v4l2_codec2/components/VideoFrame.h
++++ b/components/include/v4l2_codec2/components/VideoFrame.h
+@@ -12,6 +12,8 @@
+ 
+ #include <ui/Rect.h>
+ 
++#include <v4l2_codec2/common/ImageConverter.h>
++
+ namespace android {
+ 
+ // Wrap C2GraphicBlock and provide essential information from C2GraphicBlock.
+@@ -35,6 +37,8 @@ public:
+     // Get the read-only C2GraphicBlock, should be called after calling setVisibleRect().
+     C2ConstGraphicBlock getGraphicBlock();
+ 
++    bool detileFrom(ImageConverter* converter, const TiledMM21Image& src, int width, int height);
++
+ private:
+     VideoFrame(std::shared_ptr<C2GraphicBlock> block, std::vector<int> fds);
+ 
+diff --git a/v4l2/Android.bp b/v4l2/Android.bp
+index fe8043b..e2524a0 100644
+--- a/v4l2/Android.bp
++++ b/v4l2/Android.bp
+@@ -25,6 +25,7 @@ cc_library {
+         "V4L2DevicePoller.cpp",
+         "V4L2Encoder.cpp",
+         "V4L2EncodeComponent.cpp",
++        "TiledCaptureBuffer.cpp",
+     ],
+     export_include_dirs: [
+         "include",
+diff --git a/v4l2/TiledCaptureBuffer.cpp b/v4l2/TiledCaptureBuffer.cpp
+new file mode 100644
+index 0000000..ff51c05
+--- /dev/null
++++ b/v4l2/TiledCaptureBuffer.cpp
+@@ -0,0 +1,152 @@
++#define LOG_TAG "TiledCaptureBuffer"
++
++#include <v4l2_codec2/v4l2/TiledCaptureBuffer.h>
++
++#include <errno.h>
++#include <fcntl.h>
++#include <linux/dma-buf.h>
++#include <linux/dma-heap.h>
++#include <string.h>
++#include <sys/ioctl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++
++#include <log/log.h>
++
++namespace android {
++
++namespace {
++
++constexpr const char* kDmaHeapCandidates[] = {
++        "/dev/dma_heap/system",
++        "/dev/dma_heap/mtk_mm",
++        "/dev/dma_heap/mtk_mm-uncached",
++};
++
++int allocFromAnyHeap(size_t size) {
++    for (const char* heapPath : kDmaHeapCandidates) {
++        int heapFd = open(heapPath, O_RDWR | O_CLOEXEC);
++        if (heapFd < 0) {
++            continue;
++        }
++
++        struct dma_heap_allocation_data data = {};
++        data.len = size;
++        data.fd_flags = O_RDWR | O_CLOEXEC;
++        data.heap_flags = 0;
++
++        const int ret = ioctl(heapFd, DMA_HEAP_IOCTL_ALLOC, &data);
++        close(heapFd);
++        if (ret < 0) {
++            continue;
++        }
++        return static_cast<int>(data.fd);
++    }
++    ALOGE("Failed to allocate %zu bytes from any DMA-BUF heap", size);
++    return -1;
++}
++
++bool syncDmaBuf(int fd, uint64_t flags) {
++    struct dma_buf_sync sync = {};
++    sync.flags = flags;
++    if (ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync) != 0) {
++        ALOGE("DMA_BUF_IOCTL_SYNC failed on fd %d, flags=0x%llx", fd,
++              static_cast<unsigned long long>(flags));
++        return false;
++    }
++    return true;
++}
++
++}  // namespace
++
++TiledCaptureBuffer::~TiledCaptureBuffer() {
++    release();
++}
++
++TiledCaptureBuffer::TiledCaptureBuffer(TiledCaptureBuffer&& other) noexcept
++      : mFd(other.mFd), mMapping(other.mMapping), mSize(other.mSize) {
++    other.mFd = -1;
++    other.mMapping = nullptr;
++    other.mSize = 0;
++}
++
++TiledCaptureBuffer& TiledCaptureBuffer::operator=(TiledCaptureBuffer&& other) noexcept {
++    if (this != &other) {
++        release();
++        mFd = other.mFd;
++        mMapping = other.mMapping;
++        mSize = other.mSize;
++        other.mFd = -1;
++        other.mMapping = nullptr;
++        other.mSize = 0;
++    }
++    return *this;
++}
++
++bool TiledCaptureBuffer::allocate(size_t size) {
++    release();
++
++    const int fd = allocFromAnyHeap(size);
++    if (fd < 0) {
++        return false;
++    }
++
++    void* addr = mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0);
++    if (addr == MAP_FAILED) {
++        ALOGE("mmap failed for tiled CAPTURE buffer of %zu bytes: %s", size, strerror(errno));
++        close(fd);
++        return false;
++    }
++
++    mFd = fd;
++    mMapping = static_cast<uint8_t*>(addr);
++    mSize = size;
++    return true;
++}
++
++void TiledCaptureBuffer::release() {
++    if (mMapping) {
++        munmap(mMapping, mSize);
++        mMapping = nullptr;
++    }
++    if (mFd >= 0) {
++        close(mFd);
++        mFd = -1;
++    }
++    mSize = 0;
++}
++
++bool TiledCaptureBuffer::syncStartRead() const {
++    return isValid() && syncDmaBuf(mFd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ);
++}
++
++bool TiledCaptureBuffer::syncEndRead() const {
++    return isValid() && syncDmaBuf(mFd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ);
++}
++
++bool TiledCaptureBufferPool::allocate(size_t count, size_t bufferSize) {
++    reset();
++
++    std::vector<TiledCaptureBuffer> buffers(count);
++    for (size_t i = 0; i < count; i++) {
++        if (!buffers[i].allocate(bufferSize)) {
++            ALOGE("Failed to allocate tiled CAPTURE buffer %zu/%zu", i, count);
++            return false;
++        }
++    }
++    mBuffers = std::move(buffers);
++    return true;
++}
++
++void TiledCaptureBufferPool::reset() {
++    mBuffers.clear();
++}
++
++TiledCaptureBuffer* TiledCaptureBufferPool::bufferAt(size_t index) {
++    if (index >= mBuffers.size()) {
++        return nullptr;
++    }
++    return &mBuffers[index];
++}
++
++}  // namespace android
+diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
+index c998037..5b894a0 100644
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -23,6 +23,7 @@
+ #include <v4l2_codec2/common/Fourcc.h>
+ #include <v4l2_codec2/common/H264NalParser.h>
+ #include <v4l2_codec2/common/HEVCNalParser.h>
++#include <v4l2_codec2/common/LibyuvImageConverter.h>
+ #include <v4l2_codec2/plugin_store/DmabufHelpers.h>
+ 
+ namespace android {
+@@ -88,6 +89,7 @@ V4L2Decoder::V4L2Decoder(uint32_t debugStreamId,
+       : mDebugStreamId(debugStreamId), mTaskRunner(std::move(taskRunner)) {
+     ALOGV("%s()", __func__);
+ 
++    mImageConverter = std::make_unique<LibyuvImageConverter>();
+     mWeakThis = mWeakThisFactory.GetWeakPtr();
+ }
+ 
+@@ -342,6 +344,18 @@ bool V4L2Decoder::startOutputQueue(size_t minOutputBuffersCount, enum v4l2_memor
+     }
+ 
+     ALOGV("Allocated %zu output buffers.", adjustedNumOutputBuffers);
++
++    mCaptureStrideY = adjustedFormat->fmt.pix_mp.plane_fmt[0].bytesperline;
++    if (mCaptureStrideY == 0) {
++        mCaptureStrideY = static_cast<uint32_t>(mCodedSize.width);
++    }
++    const uint32_t captureBufferSize = adjustedFormat->fmt.pix_mp.plane_fmt[0].sizeimage;
++    if (!mTiledCaptureBuffers.allocate(adjustedNumOutputBuffers, captureBufferSize)) {
++        ALOGE("Failed to allocate %zu internal tiled CAPTURE buffers of %u bytes.",
++              adjustedNumOutputBuffers, captureBufferSize);
++        return false;
++    }
++
+     if (!mOutputQueue->streamon()) {
+         ALOGE("Failed to streamon output queue.");
+         return false;
+@@ -674,6 +688,30 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
+         mFrameAtDevice.erase(it);
+ 
+         if (bytesUsed > 0) {
++            TiledCaptureBuffer* decodedTiled = mTiledCaptureBuffers.bufferAt(bufferId);
++            if (!decodedTiled || !decodedTiled->isValid()) {
++                ALOGE("No internal tiled CAPTURE buffer for bufferId=%zu", bufferId);
++                onError();
++                return;
++            }
++
++            decodedTiled->syncStartRead();
++            TiledMM21Image tiledImage;
++            tiledImage.y = decodedTiled->data();
++            tiledImage.uv = decodedTiled->data() +
++                            static_cast<size_t>(mCaptureStrideY) * mCodedSize.height;
++            tiledImage.strideY = mCaptureStrideY;
++            tiledImage.strideUV = mCaptureStrideY;
++            const bool detiled = frame->detileFrom(mImageConverter.get(), tiledImage,
++                                                    mCodedSize.width, mCodedSize.height);
++            decodedTiled->syncEndRead();
++
++            if (!detiled) {
++                ALOGE("Failed to detile CAPTURE bufferId=%zu into output frame", bufferId);
++                onError();
++                return;
++            }
++
+             ALOGV("Send output frame(bitstreamId=%d) to client", bitstreamId);
+             frame->setBitstreamId(bitstreamId);
+             frame->setVisibleRect(mVisibleRect);
+@@ -686,7 +724,15 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
+             auto outputBuffer = mOutputQueue->getFreeBuffer(bufferId);
+             ALOG_ASSERT(outputBuffer, "V4L2 output queue slot %zu is not freed.", bufferId);
+ 
+-            if (!std::move(*outputBuffer).queueDMABuf(frame->getFDs())) {
++            TiledCaptureBuffer* recycledTiled = mTiledCaptureBuffers.bufferAt(bufferId);
++            if (!recycledTiled || !recycledTiled->isValid()) {
++                ALOGE("%s(): No internal tiled CAPTURE buffer for bufferId=%zu.", __func__,
++                      bufferId);
++                onError();
++                return;
++            }
++            std::vector<int> recycledFds = {recycledTiled->fd()};
++            if (!std::move(*outputBuffer).queueDMABuf(recycledFds)) {
+                 ALOGE("%s(): Failed to recycle empty buffer to output queue.", __func__);
+                 onError();
+                 return;
+@@ -899,7 +945,14 @@ void V4L2Decoder::onVideoFrameReady(
+     uint32_t v4l2Id = outputBuffer->bufferId();
+     ALOGV("QBUF to output queue, blockId=%u, V4L2Id=%u", blockId, v4l2Id);
+ 
+-    if (!std::move(*outputBuffer).queueDMABuf(frame->getFDs())) {
++    TiledCaptureBuffer* tiledBuffer = mTiledCaptureBuffers.bufferAt(v4l2Id);
++    if (!tiledBuffer || !tiledBuffer->isValid()) {
++        ALOGE("%s(): No internal tiled CAPTURE buffer for V4L2Id=%u", __func__, v4l2Id);
++        onError();
++        return;
++    }
++    std::vector<int> tiledFds = {tiledBuffer->fd()};
++    if (!std::move(*outputBuffer).queueDMABuf(tiledFds)) {
+         ALOGE("%s(): Failed to QBUF to output queue, blockId=%u, V4L2Id=%u", __func__, blockId,
+               v4l2Id);
+         onError();
+diff --git a/v4l2/include/v4l2_codec2/v4l2/TiledCaptureBuffer.h b/v4l2/include/v4l2_codec2/v4l2/TiledCaptureBuffer.h
+new file mode 100644
+index 0000000..a106cc7
+--- /dev/null
++++ b/v4l2/include/v4l2_codec2/v4l2/TiledCaptureBuffer.h
+@@ -0,0 +1,57 @@
++#ifndef ANDROID_V4L2_CODEC2_V4L2_TILED_CAPTURE_BUFFER_H
++#define ANDROID_V4L2_CODEC2_V4L2_TILED_CAPTURE_BUFFER_H
++
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++namespace android {
++
++class TiledCaptureBuffer {
++public:
++    TiledCaptureBuffer() = default;
++    ~TiledCaptureBuffer();
++
++    TiledCaptureBuffer(const TiledCaptureBuffer&) = delete;
++    TiledCaptureBuffer& operator=(const TiledCaptureBuffer&) = delete;
++    TiledCaptureBuffer(TiledCaptureBuffer&& other) noexcept;
++    TiledCaptureBuffer& operator=(TiledCaptureBuffer&& other) noexcept;
++
++    bool allocate(size_t size);
++    void release();
++
++    int fd() const { return mFd; }
++    const uint8_t* data() const { return mMapping; }
++    size_t size() const { return mSize; }
++    bool isValid() const { return mFd >= 0 && mMapping != nullptr; }
++
++    bool syncStartRead() const;
++    bool syncEndRead() const;
++
++private:
++    int mFd = -1;
++    uint8_t* mMapping = nullptr;
++    size_t mSize = 0;
++};
++
++class TiledCaptureBufferPool {
++public:
++    TiledCaptureBufferPool() = default;
++    ~TiledCaptureBufferPool() = default;
++
++    TiledCaptureBufferPool(const TiledCaptureBufferPool&) = delete;
++    TiledCaptureBufferPool& operator=(const TiledCaptureBufferPool&) = delete;
++
++    bool allocate(size_t count, size_t bufferSize);
++    void reset();
++
++    TiledCaptureBuffer* bufferAt(size_t index);
++    size_t count() const { return mBuffers.size(); }
++
++private:
++    std::vector<TiledCaptureBuffer> mBuffers;
++};
++
++}  // namespace android
++
++#endif  // ANDROID_V4L2_CODEC2_V4L2_TILED_CAPTURE_BUFFER_H
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+index c825f74..35ca612 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+@@ -19,11 +19,13 @@
+ #include <ui/Rect.h>
+ #include <ui/Size.h>
+ #include <v4l2_codec2/common/Fourcc.h>
++#include <v4l2_codec2/common/ImageConverter.h>
+ #include <v4l2_codec2/common/VideoTypes.h>
+ #include <v4l2_codec2/components/VideoDecoder.h>
+ #include <v4l2_codec2/components/VideoFrame.h>
+ #include <v4l2_codec2/components/VideoFramePool.h>
+ #include <v4l2_codec2/plugin_store/DmabufHelpers.h>
++#include <v4l2_codec2/v4l2/TiledCaptureBuffer.h>
+ #include <v4l2_codec2/v4l2/V4L2Device.h>
+ 
+ namespace android {
+@@ -140,6 +142,10 @@ private:
+     ui::Size mCodedSize;
+     Rect mVisibleRect;
+ 
++    std::unique_ptr<ImageConverter> mImageConverter;
++    TiledCaptureBufferPool mTiledCaptureBuffers;
++    uint32_t mCaptureStrideY = 0;
++
+     // Currently enqueued frame at the deocder device, mapped using V4L2 buffer ID.
+     std::map<size_t, std::unique_ptr<VideoFrame>> mFrameAtDevice;
+ 

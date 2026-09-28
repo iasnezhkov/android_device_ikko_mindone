@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 27 Sep 2026 12:28:32 +0300
+Subject: [PATCH 18/27] v4l2: import the graphic block before querying its
+ plane layouts
+
+VideoFrame::detileFrom asked GraphicBufferMapper::getPlaneLayouts for the raw
+C2Handle of the output block. Gralloc4 metadata get() works only on a handle
+imported in this process, so every call failed with BAD_BUFFER (err=2,
+"Buffer ... has not been registered with Gralloc") and the decoder fell back
+to the CPU libyuv detile for every frame; the MDP converter was never reached.
+
+The C2HandleGralloc is now unwrapped (UnwrapNativeCodec2GrallocHandle, as
+FormatConverter and EncodeHelpers do), imported with importBufferNoValidate,
+queried, and freed after the conversion on every path.
+
+Measured with CodecRig decode on MindOne (L15, live-swapped libs, 1080p30,
+150 frames each), CPU detile before -> MDP after:
+AVC 41.71 -> 70.36 fps, first frame 1010 -> 249 ms;
+HEVC 74.59 -> 78.82 fps; Main10 (P010, not MDP) 37.75 -> 37.70 fps; 0 errors,
+150/150 surface images; logcat "MDP replay capture armed for 1920x1088".
+Needs the seccomp additions of the device tree (getpriority, sched_getparam
+and others called by the MDP library), else the service dies with SIGSYS.
+
+Change-Id: Ieced4d41d92aec3fae6f6a864d1d3b13c83b3546
+---
+ components/VideoFrame.cpp | 56 +++++++++++++++++++++++++--------------
+ 1 file changed, 36 insertions(+), 20 deletions(-)
+
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+index 8836fc8..d5fb3ae 100644
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -72,28 +72,44 @@ bool VideoFrame::detileFrom(ImageConverter* primaryConverter, ImageConverter* fa
+         const C2Handle* const handle = mGraphicBlock->handle();
+         bool queried = false;
+         if (handle && handle->numFds > 0) {
+-            std::vector<ui::PlaneLayout> planeLayouts;
+-            const status_t err = GraphicBufferMapper::get().getPlaneLayouts(
+-                    const_cast<native_handle_t*>(
+-                            reinterpret_cast<const native_handle_t*>(handle)),
+-                    &planeLayouts);
+-            if (err == NO_ERROR && planeLayouts.size() >= 2) {
+-                NV12WritableImage dst;
+-                dst.dmaBufFd = handle->data[0];
+-                dst.strideY = static_cast<size_t>(planeLayouts[0].strideInBytes);
+-                dst.offsetY = static_cast<size_t>(planeLayouts[0].offsetInBytes);
+-                dst.sizeY = static_cast<size_t>(planeLayouts[0].totalSizeInBytes);
+-                dst.strideUV = static_cast<size_t>(planeLayouts[1].strideInBytes);
+-                dst.offsetUV = static_cast<size_t>(planeLayouts[1].offsetInBytes);
+-                dst.sizeUV = static_cast<size_t>(planeLayouts[1].totalSizeInBytes);
+-                queried = true;
+-                if (primaryConverter->convertMM21ToNV12(src, dst, width, height)) {
+-                    return true;
++            native_handle_t* unwrapped = UnwrapNativeCodec2GrallocHandle(handle);
++            buffer_handle_t imported = nullptr;
++            const status_t importErr =
++                    unwrapped ? GraphicBufferMapper::get().importBufferNoValidate(unwrapped,
++                                                                                  &imported)
++                              : BAD_VALUE;
++            if (unwrapped) {
++                native_handle_delete(unwrapped);
++            }
++            if (importErr == NO_ERROR) {
++                std::vector<ui::PlaneLayout> planeLayouts;
++                const status_t err =
++                        GraphicBufferMapper::get().getPlaneLayouts(imported, &planeLayouts);
++                if (err == NO_ERROR && planeLayouts.size() >= 2) {
++                    NV12WritableImage dst;
++                    dst.dmaBufFd = handle->data[0];
++                    dst.strideY = static_cast<size_t>(planeLayouts[0].strideInBytes);
++                    dst.offsetY = static_cast<size_t>(planeLayouts[0].offsetInBytes);
++                    dst.sizeY = static_cast<size_t>(planeLayouts[0].totalSizeInBytes);
++                    dst.strideUV = static_cast<size_t>(planeLayouts[1].strideInBytes);
++                    dst.offsetUV = static_cast<size_t>(planeLayouts[1].offsetInBytes);
++                    dst.sizeUV = static_cast<size_t>(planeLayouts[1].totalSizeInBytes);
++                    queried = true;
++                    const bool converted =
++                            primaryConverter->convertMM21ToNV12(src, dst, width, height);
++                    GraphicBufferMapper::get().freeBuffer(imported);
++                    if (converted) {
++                        return true;
++                    }
++                } else {
++                    GraphicBufferMapper::get().freeBuffer(imported);
++                    ALOGE("Failed to query gralloc plane layouts for the zero-copy path, err=%d "
++                          "planes=%zu",
++                          err, planeLayouts.size());
+                 }
+             } else {
+-                ALOGE("Failed to query gralloc plane layouts for the zero-copy path, err=%d "
+-                      "planes=%zu",
+-                      err, planeLayouts.size());
++                ALOGE("Failed to import the graphic block for the zero-copy path, err=%d",
++                      importErr);
+             }
+         }
+         if (!queried) {
+-- 
+2.43.0
+

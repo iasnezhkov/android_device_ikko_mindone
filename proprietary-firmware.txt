@@ -1,15 +1,3 @@
-# SPDX-FileCopyrightText: The LineageOS Project
-# SPDX-License-Identifier: Apache-2.0
-# Whole-partition firmware images (not /vendor/firmware/*.bin files — those are covered by
-# proprietary-files.txt). Adapted from a LineageOS device tree for the same chipset
-# (lineage-23.2, same MT6789 chipset) — ALL 10 verified present under the exact same names
-# in a full dump of this device (${name}_a.bin/${name}_b.bin, read back with an SoC flash tool, F3360-F3362):
-# dpm, gz, lk, mcupm, md1img, pi_img, scp, spmfw, sspm, tee. No guessing needed here —
-# these are standard MediaTek platform GPT partition names, identical across MT6789 devices.
-#
-# 🔴 The actual binary blobs are never committed here, by policy (MediaTek/iKKO
-# blobs — personal use only, never committed/published). This file only names partitions for
-# the extract_utils tooling — no binary content here.
 
 dpm.img;AB
 gz.img;AB

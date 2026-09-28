@@ -1,0 +1,2 @@
+options hynitron_touch async_probe=1
+options haptic_nv async_probe=1

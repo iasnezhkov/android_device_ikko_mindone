@@ -1,1530 +1,1320 @@
-/*
- * SPDX-FileCopyrightText: The LineageOS Project
- * SPDX-License-Identifier: Apache-2.0
- */
-/*
- * mindone_mux -- an open, from-scratch replacement for the stock
- * /vendor/bin/gsm0710muxd blob on iKKO MindOne (MT6789/Helio G99).
- *
- * WHAT THIS REPLACES AND WHY (recovered stock contract, all cited):
- *
- *   Command line, confirmed two independent ways -- (a) the shipped
- *   service definition, (b) a live /proc/<pid>/cmdline read on-device
- *   14.09.2026 (pid 24391, `ps -A` showed `radio ... gsm0710muxd`):
- *       /vendor/bin/gsm0710muxd -s /dev/ttyC0 -f 512 -n 8 -m basic
- *   Source: vendor/ikko/mindone/proprietary/vendor/etc/init/
- *   gsm0710muxd.rc (`service vendor.gsm0710muxd ... -s /dev/ttyC0 -f 512
- *   -n 8 -m basic`, `class main`, `user radio`, `group radio cache inet
- *   misc`, `disabled`, `oneshot`).
- *
- *   `-m basic` is confirmed the *only* mode this board uses (the binary's
- *   own usage string also offers "advanced", but our board's .rc hardcodes
- *   basic) -- i.e. plain GSM 07.10 / 3GPP TS 27.010 "basic option" framing:
- *   flag 0xF9, no byte-stuffing/transparency, EA-encoded length field,
- *   FCS covering only Address+Control+Length (not the Information field)
- *   for UIH frames. This implementation supports ONLY the basic option;
- *   `-m advanced` is refused with a logged, non-zero-exit error rather
- *   than silently degrading (advanced option needs HDLC-style byte
- *   stuffing this code does not implement).
- *
- *   The AT-level MUX bring-up is MediaTek's own reduced handshake, not
- *   full 3GPP `AT+CMUX=<mode>,<subset>,<port_speed>,<N1>,<T1>,<N2>,<T2>,
- *   <T3>,<k>`. Confirmed by `strings -a` on the actual shipped binary
- *   (vendor/ikko/mindone/proprietary/vendor/bin/gsm0710muxd,
- *   70392 bytes, ELF32 ARM, stripped, 14.09.2026 dump, saved this session
- *   as /tmp/muxstrings.txt in the build environment):
- *     "ATZ", "ATE0"                     -- plain AT reset/echo-off first
- *     "AT+CMUX=1"                       -- literal command actually sent
- *     "chatCmux"                        -- internal chat-script tag
- *     "+CMUX: READY"                    -- URC from a "new" modem meaning
- *                                          "control channel ready, start
- *                                          SABM now"
- *     "%d:%s(): Received CMUX: READY, it is new modem, start to init
- *      control channel"
- *     "%d:%s(): Received OK, it is old modem, so sleep(1)"
- *     "AT+CMUX=%d,%d,%d,%d"             -- a 4-parameter sprintf format
- *                                          ALSO present but never seen as
- *                                          a literal on-wire string; not
- *                                          used on this board (basic mode
- *                                          only sends the literal
- *                                          "AT+CMUX=1") -- kept here only
- *                                          as a documented, unimplemented
- *                                          alternate path (see mux_start()).
- *   This mux implements the "AT+CMUX=1" / "+CMUX: READY" (or plain "OK"
- *   + 1s settle) handshake exactly as observed, not generic 27.010 PN.
- *
- *   PTY naming (the actual RIL compatibility contract) -- confirmed BOTH
- *   from the binary's literal string table AND from a live listing:
- *       adb shell '/debug_ramdisk/su -c "ls -la /dev/radio/"'   (14.09.2026)
- *   gave, live and open (owned radio:radio unless noted):
- *     pttycmd1, pttycmd2, pttycmd3, pttycmd4, pttycmd7, pttycmd8,
- *     pttycmd9, pttycmd10, pttycmd11, pttynoti, pttynwcmd, pttynwurc,
- *     atci1 -- all pts/N symlinks under /dev/radio, all opened by
- *     mtkfusionrild (confirmed via `ls -la /proc/<rild-pid>/fd`, pid
- *     24623: fds map 1:1 onto exactly this set plus pttyims).
- *   Exhaustive `grep -oE 'pttycmd[0-9]+'` / `ptty[0-9]cmd[0-9]+'` /
- *   'atci[0-9]+'` over the FULL string table additionally proves:
- *     - "pttycmd5" and "pttycmd6" DO NOT EXIST ANYWHERE in the string
- *       table, for MD1 or for the ptty2/ptty3/ptty4 (MD2/MD3/MD4,
- *       confirmed dead-instance families sharing the identical cmd1-4,
- *       7-11 numbering gap) -- i.e. the 5/6 gap is a genuine, deliberate
- *       property of the naming scheme, not a live/SIM-state artifact.
- *     - "atci1".."atci4" all exist as literal strings; only atci1 is
- *       live right now (opened by rild), atci2-4 are included here for
- *       completeness (same family, not independently live-verified).
- *     - "pttyims"/"ptty2ims"/"ptty3ims" are live on THIS device (owned
- *       system:system, not radio:radio) but are NOT literal strings
- *       anywhere in gsm0710muxd's own binary, and gsm0710muxd's own
- *       /proc/<pid>/fd table (13 /dev/ptmx masters) is 3 short of the 16
- *       live /dev/radio/ pty symlinks -- exactly the pttyims/ptty2ims/
- *       ptty3ims gap. Conclusion: those three are created by a DIFFERENT
- *       process (not gsm0710muxd) -- volte_imcb (confirmed via its own
- *       /proc/<pid>/fd: it opens /dev/ccci_imsc directly, a raw CCCI
- *       channel, matching MODEM-STACK-1409 S4.4's "IMS is binary
- *       CCCI, not the AT mux" finding) does NOT hold them either, so the
- *       actual owner is unresolved and OUT OF SCOPE here (IMS/VoLTE is a
- *       documented non-goal of this project, MODEM-STACK-1409
- *       S7/S8). mindone_mux therefore implements only the channels
- *       gsm0710muxd itself is proven to own.
- *
- *   DLCI numbers: NOT recoverable from strings alone (the binary is
- *   stripped, no symbol table, and no numeric DLCI ever appears in a log
- *   string -- only %d placeholders). This implementation assigns DLCI
- *   1..16 sequentially to the table below, in the fixed order listed.
- *   This is a documented ASSUMPTION, not a confirmed fact, justified by:
- *   the kernel's own MIPC alternative (`ttyCMIPC0`..`ttyCMIPC9`,
- *   MODEM-STACK-1409 S2.1) exposes textually-identical, mutually
- *   interchangeable raw AT channels straight from CCCI hardware queues
- *   with no per-channel semantic distinction on the MD side -- i.e. the
- *   MD firmware's AT parser instances are symmetric, and channel
- *   "purpose" (cmd vs noti vs nwcmd) is a pure AP/RIL-side convention
- *   (which /dev/radio/ path the RIL happens to read/write), not
- *   something the MD encodes into the DLCI number itself. If live testing
- *   ever shows otherwise, only this one table needs to change.
- *
- *   Flow control / power saving: `-m basic` implies no PSC use by the
- *   stock daemon (confirmed by exhaustive case-insensitive grep for
- *   "psc" over the full string table -- zero hits). Per-DLC flow control
- *   IS used: strings "Notify by FC On siganl,try to read data and to send
- *   it", "Set FC_OFF_SENDING and rx_fc_off as 1", "Frames allowed, channel
- *   id=%d,tx_fc_off=%d" / "No frames allowed...tx_fc_off=%d", plus the
- *   full "MSC" vocabulary ("start to send msc response", "The mobile
- *   station receives acknowledgment of MSC msg", "tx_msc_response_cache
- *   is invalid/null") together prove the stock daemon implements 07.10's
- *   per-DLC Modem Status Command (MSC) FC bit as its flow-control
- *   mechanism, not the global CMD_FCON/CMD_FCOFF control-channel command
- *   pair (also implemented below anyway, since it is cheap given the
- *   control-command dispatcher already exists, and it is a real,
- *   spec-mandated feature, not a stub). PSC is explicitly NOT
- *   implemented as something we send; if the peer ever sends it to us we
- *   reply CMD_NSC (Non-Supported Command) and log loudly, rather than
- *   falsely ACKing a power-saving state transition we do not actually
- *   provide.
- *
- *   Wire-format constants (SABM/UA/DM/DISC/UIH, the 07.10 control-channel
- *   command type-field values CMD_MSC/CMD_FCON/CMD_FCOFF/CMD_TEST/
- *   CMD_PSC/CMD_NSC/CMD_CLD, the EA/CR/PF bit positions, the virtual
- *   modem-status bits, and the reflected CRC-8 FCS) are mandated by
- *   3GPP TS 07.10 / 27.010 itself -- not MediaTek- or gsm0710muxd-
- *   specific, and not copyrightable expression. To get exact, verified
- *   numeric values (rather than fallible hand-recollection) this file
- *   cites our OWN git-tracked kernel source, which already implements
- *   the identical standard: kernel612-common/drivers/tty/n_gsm.c
- *   (mainline Linux `n_gsm` line discipline, GPL-2.0). Every constant
- *   below carries its source line number. NO CODE from n_gsm.c is
- *   reproduced -- this daemon is a single-threaded poll()-based userspace
- *   design, structurally unrelated to n_gsm's tty-layer/workqueue
- *   architecture, and unrelated to gsm0710muxd's own (unread, proprietary)
- *   object code. Real prior art exists for this class of daemon --
- *   Tuukka Karvonen's 2003 GPL `gsmMuxd`, the documented common ancestor
- *   of MediaTek's own mux (MODEM-STACK-1409 S6.5) -- used here
- *   only as a design reference for overall shape (single AT tty in,
- *   N pseudo-ttys out, a control DLC plus data DLCs), not as source.
- *
- * See README-INTEGRATION.md for the A/B test plan and exact citations
- * for the sepolicy labels and startup ordering.
- */
-#define _GNU_SOURCE
 #include <android/log.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <grp.h>
+#include <limits.h>
 #include <poll.h>
-#include <pwd.h>
 #include <signal.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
-#include <sys/time.h>
-#include <sys/types.h>
+#include <sys/system_properties.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
-#define LOG_TAG "mindone_mux"
+#define TAG "mindone_mux"
+#define AID_RADIO 1001
 
-/* ------------------------------------------------------------------ */
-/* Wire-format constants, cited against kernel612-common/drivers/tty/  */
-/* n_gsm.c (GPL-2.0, mainline Linux n_gsm) -- values only, no code.    */
-/* ------------------------------------------------------------------ */
+#define MUX_FLAG 0xF9
+#define ADDR_EA 0x01
+#define ADDR_CR 0x02
+#define CTRL_PF 0x10
+#define CTRL_SABM 0x2F
+#define CTRL_UA 0x63
+#define CTRL_DM 0x0F
+#define CTRL_DISC 0x43
+#define CTRL_UIH 0xEF
+#define CTRL_UI 0x03
+#define CMD_CR 0x02
+#define CMD_PN 0x81
+#define CMD_PSC 0x41
+#define CMD_CLD 0xC1
+#define CMD_TEST 0x21
+#define CMD_MSC 0xE1
+#define CMD_NSC 0x11
+#define MSC_FC 0x02
+#define MSC_SIGNALS 0x8D
 
-#define MUX_FLAG	0xF9	/* n_gsm.c:405 GSM0_SOF */
-#define MUX_EA		0x01	/* n_gsm.c:369 */
-#define MUX_CR		0x02	/* n_gsm.c:368 */
-#define MUX_PF		0x10	/* n_gsm.c:370 */
+#define MAX_DLCI 64
+#define MAX_SIMS 4
+#define KINDS 11
+#define DLCI_NWCMD 45
+#define DLCI_NWURC 44
+#define MAX_CHANS (MAX_SIMS * KINDS + 2)
+#define MAX_FRAME 32767
+#define FRAME_OVERHEAD 7
+#define PTY_CHUNK 1024
+#define PENDING_CAP 4096
+#define TXQ_CAP 65536
+#define RX_CAP 65536
+#define CHAT_CAP 4096
+#define TX_RETRY_MS 10
+#define CHAT_TIMEOUT_MS 5000
+#define SETUP_TIMEOUT_MS 30000
+#define CLOSE_WAIT_MS 2000
+#define EXIT_FLUSH_MS 500
+#define RESTART_DELAY_MS 5000
+#define REPORT_WAIT_MS 5000
+#define EIND_WAIT_MS 20000
+#define EIND_WAIT_USER_MS 10000
 
-/* Control field values, n_gsm.c:373-381 */
-#define CTRL_SABM	0x2F
-#define CTRL_DISC	0x43
-#define CTRL_UA		0x63
-#define CTRL_DM		0x0F
-#define CTRL_UIH	0xEF
+#define LOG(prio, ...) __android_log_print(prio, TAG, __VA_ARGS__)
+#define LOGE(...) LOG(ANDROID_LOG_ERROR, __VA_ARGS__)
+#define LOGW(...) LOG(ANDROID_LOG_WARN, __VA_ARGS__)
+#define LOGI(...) LOG(ANDROID_LOG_INFO, __VA_ARGS__)
+#define LOGD(...) do { if (verbose) LOG(ANDROID_LOG_DEBUG, __VA_ARGS__); } while (0)
 
-/*
- * 07.10 control-channel command "base" values, n_gsm.c:384-393. These
- * are pre-shift-by-one values as n_gsm's own gsm_control_command()/
- * gsm_control_reply() consume them (n_gsm.c:1454-1470, :1482-1493):
- *   outgoing COMMAND octet  = (base << 1) | CR | EA
- *   outgoing RESPONSE octet = ((base & 0xFE) << 1) | EA
- * Derivation independently verified in this session: CMD_MSC (0x71) as
- * a command -> (0x71<<1)|0x02|0x01 = 0xE3, the value widely documented
- * for the MSC command octet in 07.10 traces.
- */
-#define CBASE_NSC	0x09
-#define CBASE_TEST	0x11
-#define CBASE_PSC	0x21
-#define CBASE_RLS	0x29
-#define CBASE_FCOFF	0x31
-#define CBASE_PN	0x41
-#define CBASE_RPN	0x49
-#define CBASE_FCON	0x51
-#define CBASE_CLD	0x61
-#define CBASE_SNC	0x69
-#define CBASE_MSC	0x71
+enum mux_state { ST_SETUP, ST_RUN, ST_CLOSING, ST_PEER_CLOSING };
 
-#define CTYPE_CMD(base) ((uint8_t)(((base) << 1) | MUX_CR | MUX_EA))
-#define CTYPE_RSP(base) ((uint8_t)((((base) & 0xFE) << 1) | MUX_EA))
-
-/* Virtual modem status bits carried in an MSC command, n_gsm.c:397-401 */
-#define MDM_FC		0x01
-#define MDM_RTC		0x02
-#define MDM_RTR		0x04
-#define MDM_IC		0x20
-#define MDM_DV		0x40
-
-#define INIT_FCS	0xFF
-#define GOOD_FCS	0xCF	/* n_gsm.c:453 */
-
-/* ------------------------------------------------------------------ */
-/* Channel table -- the confirmed stock /dev/radio/ names this daemon    */
-/* creates. DLCI = array index + 1. See header comment for citations.  */
-/* ------------------------------------------------------------------ */
-
-#define MAX_CHANNELS	16
-#define MAX_FRAME_DATA	2048	/* hard cap; must be >= configured -f */
-#define DEFAULT_FRAMESIZE 512
-#define RADIO_DEV_DIR	"/dev/radio"
-
-struct chan_def {
-	const char *name;	/* leaf name under /dev/radio/ */
-};
-
-static const struct chan_def g_chan_defs[MAX_CHANNELS] = {
-	{ "pttycmd1"  },	/* DLCI 1  -- live-confirmed */
-	{ "pttycmd2"  },	/* DLCI 2  -- live-confirmed */
-	{ "pttycmd3"  },	/* DLCI 3  -- live-confirmed */
-	{ "pttycmd4"  },	/* DLCI 4  -- live-confirmed */
-	{ "pttycmd7"  },	/* DLCI 5  -- live-confirmed (cmd5/cmd6 do not exist, see header) */
-	{ "pttycmd8"  },	/* DLCI 6  -- live-confirmed */
-	{ "pttycmd9"  },	/* DLCI 7  -- live-confirmed */
-	{ "pttycmd10" },	/* DLCI 8  -- live-confirmed */
-	{ "pttycmd11" },	/* DLCI 9  -- live-confirmed */
-	{ "pttynoti"  },	/* DLCI 10 -- live-confirmed, URC channel */
-	{ "pttynwcmd" },	/* DLCI 11 -- live-confirmed */
-	{ "pttynwurc" },	/* DLCI 12 -- live-confirmed */
-	{ "atci1"     },	/* DLCI 13 -- live-confirmed */
-	{ "atci2"     },	/* DLCI 14 -- string-confirmed only, not live */
-	{ "atci3"     },	/* DLCI 15 -- string-confirmed only, not live */
-	{ "atci4"     },	/* DLCI 16 -- string-confirmed only, not live */
-};
-
-enum chan_state { CH_CLOSED = 0, CH_OPENING, CH_OPEN, CH_CLOSING };
-
-struct channel {
+struct chan {
 	uint8_t dlci;
-	const char *name;
-	enum chan_state state;
-	int master_fd;			/* /dev/ptmx master, -1 if none */
-	char link_path[64];		/* /dev/radio/<name> */
-	bool peer_fc_off;		/* peer's MSC told us: stop sending on this DLC */
-	bool local_fc_off;		/* we told peer: stop sending to us on this DLC */
-	/* single pending write from serial->pty, for backpressure */
-	uint8_t pend_buf[MAX_FRAME_DATA];
-	size_t pend_len, pend_off;
-	int sabm_retries;
-	struct timeval sabm_sent_at;
-	bool gave_up;	/* N2 SABM retries exhausted, permanently skipped */
+	bool atci;
+	char name[16];
+	char link[PATH_MAX];
+	char slave[64];
+	int fd;
+	bool sabm_sent;
+	bool open;
+	bool disc_sent;
+	bool refused;
+	bool refused_logged;
+	bool peer_fc;
+	bool local_fc;
+	uint8_t *pending;
+	size_t pending_len;
 };
 
-static struct channel g_chan[MAX_CHANNELS];
-static int g_serial_fd = -1;
-static bool g_ctrl_open = false;
-static bool g_shutting_down = false;
-static FILE *g_logfile = NULL;
-static int g_frame_size = DEFAULT_FRAMESIZE;
-static int g_silence_timeout_s = 0;	/* -t, 0 = disabled */
-static int g_ping_max = 0;		/* -p, 0 = disabled */
-static uid_t g_radio_uid = 1001;	/* AID_RADIO fallback */
-static gid_t g_radio_gid = 1001;
+static const uint8_t sim_dlci[MAX_SIMS][KINDS] = {
+	{ 1, 2, 3, 4, 5, 26, 61, 60, 59, 58, 43 },
+	{ 6, 7, 8, 9, 10, 27, 57, 56, 55, 54, 42 },
+	{ 11, 12, 13, 14, 15, 28, 53, 52, 51, 50, 41 },
+	{ 16, 17, 18, 19, 20, 29, 49, 48, 47, 46, 40 },
+};
 
-/* ------------------------------------------------------------------ */
-/* Logging                                                             */
-/* ------------------------------------------------------------------ */
+static const char *const kind_name[KINDS] = {
+	"cmd4", "noti", "cmd1", "cmd2", "cmd3", NULL, "cmd7", "cmd8", "cmd9", "cmd10", "cmd11",
+};
 
-static void mux_log(int prio, const char *fmt, ...)
+static const char *serial_path = "/dev/ttyC0";
+static const char *link_dir = "/dev/radio";
+static int frame_size = 512;
+static int baud_index = 5;
+static int pin = -1;
+static bool verbose;
+
+static struct chan ctl;
+static struct chan chans[MAX_CHANS];
+static int nchans;
+static struct chan *by_dlci[MAX_DLCI];
+
+static int serial_fd = -1;
+static uint8_t txq[TXQ_CAP];
+static size_t txq_len;
+static bool tx_blocked;
+static uint8_t rxb[RX_CAP];
+static size_t rx_len;
+static char chat_buf[CHAT_CAP];
+static size_t chat_len;
+static uint8_t crc_table[256];
+
+static enum mux_state state;
+static bool pf_echo;
+static int unresolved;
+static bool setup_done;
+static bool ril_started;
+static int64_t setup_deadline;
+static volatile sig_atomic_t term_signal;
+
+static int64_t now_ms(void)
 {
-	va_list ap;
-	va_start(ap, fmt);
-	__android_log_vprint(prio, LOG_TAG, fmt, ap);
-	va_end(ap);
-	if (g_logfile) {
-		va_list ap2;
-		va_start(ap2, fmt);
-		time_t now = time(NULL);
-		struct tm tmv;
-		localtime_r(&now, &tmv);
-		fprintf(g_logfile, "%02d:%02d:%02d ", tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
-		vfprintf(g_logfile, fmt, ap2);
-		fputc('\n', g_logfile);
-		fflush(g_logfile);
-		va_end(ap2);
-	}
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
-#define LOGI(...) mux_log(ANDROID_LOG_INFO, __VA_ARGS__)
-#define LOGW(...) mux_log(ANDROID_LOG_WARN, __VA_ARGS__)
-#define LOGE(...) mux_log(ANDROID_LOG_ERROR, __VA_ARGS__)
 
-/* ------------------------------------------------------------------ */
-/* FCS (reflected CRC-8, polynomial 0xE0). Generated at startup rather */
-/* than transcribed as a 256-byte literal table, to avoid a copy-paste */
-/* error in a table that is safety-critical (a wrong table silently    */
-/* drops every single frame). Cross-checked in design against the      */
-/* first two entries of kernel612-common/drivers/tty/n_gsm.c's own      */
-/* gsm_fcs8[] (n_gsm.c:417-449, GPL, values only): table[0] must be     */
-/* 0x00 for any CRC (identity), table[1] must be 0x91 -- both verified  */
-/* by hand for this exact generator during development of this file.   */
-/* ------------------------------------------------------------------ */
+static void prop_get(const char *key, char *value, const char *def)
+{
+	if (__system_property_get(key, value) <= 0)
+		snprintf(value, PROP_VALUE_MAX, "%s", def);
+}
 
-static uint8_t g_fcs_table[256];
+static void prop_set(const char *key, const char *value)
+{
+	if (__system_property_set(key, value))
+		LOGE("setprop %s %s failed", key, value);
+}
 
-static void fcs_table_init(void)
+static bool user_build(void)
+{
+	char v[PROP_VALUE_MAX];
+
+	prop_get("vendor.ril.emulation.userload", v, "0");
+	if (v[0] == '1')
+		return true;
+	prop_get("ro.build.type", v, "");
+	return !strcmp(v, "user");
+}
+
+static int sim_count(void)
+{
+	char v[PROP_VALUE_MAX];
+
+	prop_get("ro.boot.opt_sim_count", v, "0");
+	if (v[0] >= '1' && v[0] <= '4')
+		return v[0] - '0';
+	prop_get("persist.radio.multisim.config", v, "ss");
+	if (!strcmp(v, "dsds") || !strcmp(v, "dsda"))
+		return 2;
+	if (!strcmp(v, "tsts"))
+		return 3;
+	if (!strcmp(v, "qsqs"))
+		return 4;
+	return 1;
+}
+
+static void crc_init(void)
 {
 	for (int i = 0; i < 256; i++) {
-		uint8_t crc = (uint8_t)i;
-		for (int b = 0; b < 8; b++) {
-			if (crc & 1)
-				crc = (uint8_t)((crc >> 1) ^ 0xE0);
+		uint8_t c = (uint8_t)i;
+
+		for (int b = 0; b < 8; b++)
+			c = (c & 1) ? (uint8_t)((c >> 1) ^ 0xE0) : (uint8_t)(c >> 1);
+		crc_table[i] = c;
+	}
+}
+
+static uint8_t crc_update(uint8_t crc, const uint8_t *p, size_t n)
+{
+	while (n--)
+		crc = crc_table[crc ^ *p++];
+	return crc;
+}
+
+static void chan_init(struct chan *c, uint8_t dlci, const char *name, bool atci)
+{
+	memset(c, 0, sizeof(*c));
+	c->dlci = dlci;
+	c->atci = atci;
+	c->fd = -1;
+	snprintf(c->name, sizeof(c->name), "%s", name);
+	snprintf(c->link, sizeof(c->link), "%s/%s", link_dir, name);
+	by_dlci[dlci] = c;
+}
+
+static int build_channels(int sims)
+{
+	char name[16];
+
+	chan_init(&ctl, 0, "control", false);
+	for (int s = 0; s < sims; s++) {
+		for (int k = 0; k < KINDS; k++) {
+			if (!kind_name[k])
+				snprintf(name, sizeof(name), "atci%d", s + 1);
+			else if (s)
+				snprintf(name, sizeof(name), "ptty%d%s", s + 1, kind_name[k]);
 			else
-				crc = (uint8_t)(crc >> 1);
-		}
-		g_fcs_table[i] = crc;
-	}
-	if (g_fcs_table[0] != 0x00 || g_fcs_table[1] != 0x91) {
-		LOGE("FCS table self-check FAILED (table[0]=0x%02x table[1]=0x%02x) -- aborting",
-		     g_fcs_table[0], g_fcs_table[1]);
-		exit(70);
-	}
-}
-
-static inline uint8_t fcs_add(uint8_t fcs, uint8_t c)
-{
-	return g_fcs_table[fcs ^ c];
-}
-
-static uint8_t fcs_block(const uint8_t *p, size_t len)
-{
-	uint8_t fcs = INIT_FCS;
-	while (len--)
-		fcs = fcs_add(fcs, *p++);
-	return fcs;
-}
-
-/* ------------------------------------------------------------------ */
-/* TX queue -- FIFO of complete framed byte blocks awaiting write(2)   */
-/* to the serial fd. Single-threaded, no locking needed.               */
-/* ------------------------------------------------------------------ */
-
-struct txframe {
-	struct txframe *next;
-	size_t len, off;
-	uint8_t data[];
-};
-
-static struct txframe *g_tx_head, *g_tx_tail;
-
-static void tx_enqueue(const uint8_t *buf, size_t len)
-{
-	struct txframe *f = malloc(sizeof(*f) + len);
-	if (!f) {
-		LOGE("tx_enqueue: out of memory (len=%zu), frame dropped", len);
-		return;
-	}
-	f->next = NULL;
-	f->len = len;
-	f->off = 0;
-	memcpy(f->data, buf, len);
-	if (g_tx_tail)
-		g_tx_tail->next = f;
-	else
-		g_tx_head = f;
-	g_tx_tail = f;
-}
-
-static void tx_flush(int fd)
-{
-	while (g_tx_head) {
-		ssize_t n = write(fd, g_tx_head->data + g_tx_head->off,
-				   g_tx_head->len - g_tx_head->off);
-		if (n < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK)
-				return;
-			if (errno == EINTR)
-				continue;
-			LOGE("tx_flush: write(ttyC0) failed: %s", strerror(errno));
-			return;
-		}
-		g_tx_head->off += (size_t)n;
-		if (g_tx_head->off >= g_tx_head->len) {
-			struct txframe *nx = g_tx_head->next;
-			free(g_tx_head);
-			g_tx_head = nx;
-			if (!g_tx_head)
-				g_tx_tail = NULL;
-		} else {
-			return; /* partial write, wait for next POLLOUT */
+				snprintf(name, sizeof(name), "ptty%s", kind_name[k]);
+			chan_init(&chans[nchans++], sim_dlci[s][k], name, !kind_name[k]);
 		}
 	}
+	chan_init(&chans[nchans++], DLCI_NWCMD, "pttynwcmd", false);
+	chan_init(&chans[nchans++], DLCI_NWURC, "pttynwurc", false);
+	for (int i = 0; i < nchans; i++) {
+		chans[i].pending = malloc(PENDING_CAP + (size_t)frame_size);
+		if (!chans[i].pending)
+			return -1;
+	}
+	return 0;
 }
 
-static bool tx_pending(void) { return g_tx_head != NULL; }
-
-/* ------------------------------------------------------------------ */
-/* Frame builder                                                       */
-/* ------------------------------------------------------------------ */
-
-/*
- * build_and_send -- build one basic-option 07.10 frame and enqueue it.
- * @dlci: target DLCI (0 = control channel)
- * @addr_cr: address-field C/R bit. Since we are always the mux
- *   initiator (matches gsm0710muxd's own AP-master role), the correct
- *   value per n_gsm.c:1112-1118 (__gsm_data_queue) is: 1 for every
- *   frame type EXCEPT a UA/DM we send in response to a peer-initiated
- *   DISC/SABM (which get 0). Callers pass this explicitly rather than
- *   this function guessing from control type, to keep the rule visible
- *   at each call site.
- */
-static void build_and_send(uint8_t dlci, int addr_cr, uint8_t control,
-			    const uint8_t *data, size_t len)
+static size_t txq_room(void)
 {
-	uint8_t hdr[4]; /* addr + control + up to 2 EA length bytes */
-	size_t hlen = 0;
-	uint8_t out[MAX_FRAME_DATA + 8];
-	size_t pos = 0;
+	return sizeof(txq) - txq_len;
+}
 
-	if (len > MAX_FRAME_DATA) {
-		LOGE("build_and_send: refusing to send %zu byte frame on DLCI %u (max %d)",
-		     len, dlci, MAX_FRAME_DATA);
-		return;
+static bool tx_frame(uint8_t dlci, uint8_t ctrl, const uint8_t *data, size_t len)
+{
+	uint8_t hdr[5];
+	size_t h = 0;
+	uint8_t crc;
+
+	if (len > (size_t)frame_size) {
+		LOGE("refusing a %zu byte frame on dlci %u, frame size is %d", len, dlci, frame_size);
+		return false;
 	}
-
-	hdr[hlen++] = (uint8_t)((dlci << 2) | (addr_cr ? (MUX_CR | MUX_EA) : MUX_EA));
-	hdr[hlen++] = control;
+	if ((ctrl == CTRL_UIH || ctrl == CTRL_UI) && pf_echo && len && (data[0] & ~CMD_CR) == CMD_MSC) {
+		ctrl |= CTRL_PF;
+		pf_echo = false;
+	}
+	hdr[h++] = MUX_FLAG;
+	hdr[h++] = (uint8_t)(dlci << 2 | ADDR_CR | ADDR_EA);
+	hdr[h++] = ctrl;
 	if (len < 128) {
-		hdr[hlen++] = (uint8_t)((len << 1) | MUX_EA);
+		hdr[h++] = (uint8_t)(len << 1 | 1);
 	} else {
-		/*
-		 * Two-byte EA length. Encoding is the mathematical inverse
-		 * of the well-tested general EA reader (n_gsm.c:506-513,
-		 * gsm_read_ea: `*val = (*val << 7) | (c >> 1)` per byte,
-		 * terminated by EA=1): first byte carries the high bits
-		 * with EA=0 ("more follows"), second byte carries the low
-		 * 7 bits with EA=1 ("last byte"). NOTE: this deliberately
-		 * does NOT copy n_gsm.c's own two-byte GSM_BASIC_OPT branch
-		 * (__gsm_data_queue, n_gsm.c:1104-1107), which never sets
-		 * an EA=1 terminator bit on either byte of that branch --
-		 * that looks like a latent bug/dead path in that exact
-		 * kernel version, not a spec requirement, so it is not
-		 * reproduced here.
-		 */
-		uint8_t b0 = (uint8_t)((len >> 7) << 1);
-		uint8_t b1 = (uint8_t)(((len & 0x7F) << 1) | MUX_EA);
-		hdr[hlen++] = b0;
-		hdr[hlen++] = b1;
+		hdr[h++] = (uint8_t)(len << 1);
+		hdr[h++] = (uint8_t)(len >> 7);
 	}
-
-	uint8_t fcs = (uint8_t)(0xFF - fcs_block(hdr, hlen));
-
-	if (hlen + len + 3 > sizeof(out)) {
-		LOGE("build_and_send: frame too large to assemble (dlci=%u len=%zu)", dlci, len);
-		return;
+	crc = crc_update(0xFF, hdr + 1, h - 1);
+	if ((ctrl & ~CTRL_PF) == CTRL_UI)
+		crc = crc_update(crc, data, len);
+	if (txq_room() < h + len + 2) {
+		LOGE("tx queue full, dropping a %zu byte frame on dlci %u", len, dlci);
+		return false;
 	}
-	out[pos++] = MUX_FLAG;
-	memcpy(out + pos, hdr, hlen); pos += hlen;
+	memcpy(txq + txq_len, hdr, h);
+	txq_len += h;
 	if (len)
-		memcpy(out + pos, data, len);
-	pos += len;
-	out[pos++] = fcs;
-	out[pos++] = MUX_FLAG;
-
-	tx_enqueue(out, pos);
+		memcpy(txq + txq_len, data, len);
+	txq_len += len;
+	txq[txq_len++] = (uint8_t)~crc;
+	txq[txq_len++] = MUX_FLAG;
+	LOGD("tx dlci %u ctrl 0x%02x len %zu", dlci, ctrl, len);
+	return true;
 }
 
-static void send_sabm(uint8_t dlci) { build_and_send(dlci, 1, CTRL_SABM | MUX_PF, NULL, 0); }
-static void send_disc(uint8_t dlci) { build_and_send(dlci, 1, CTRL_DISC | MUX_PF, NULL, 0); }
-static void send_ua(uint8_t dlci)   { build_and_send(dlci, 0, CTRL_UA | MUX_PF, NULL, 0); }
-static void send_dm(uint8_t dlci)   { build_and_send(dlci, 0, CTRL_DM | MUX_PF, NULL, 0); }
-
-/* Send a UIH frame. addr_cr is always 1 for us: n_gsm.c:1112-1114,
- * `if (gsm->initiator) *--dp = (msg->addr << 2) | CR | EA;` -- we are
- * always the initiator. */
-static void send_uih(uint8_t dlci, const uint8_t *data, size_t len)
+static int tx_flush(void)
 {
-	build_and_send(dlci, 1, CTRL_UIH, data, len);
-}
+	while (txq_len) {
+		ssize_t n = write(serial_fd, txq, txq_len);
 
-/* Send a control-channel (DLCI 0) command or response TLV inside a UIH
- * frame. is_cmd selects CTYPE_CMD() vs CTYPE_RSP() encoding of `base`. */
-static void send_ctrl(int is_cmd, uint8_t base, const uint8_t *val, size_t vlen)
-{
-	uint8_t payload[MAX_FRAME_DATA];
-	size_t p = 0;
-
-	payload[p++] = is_cmd ? CTYPE_CMD(base) : CTYPE_RSP(base);
-	if (vlen < 64) {
-		payload[p++] = (uint8_t)((vlen << 1) | MUX_EA);
-	} else {
-		LOGE("send_ctrl: control value too long (%zu), refusing", vlen);
-		return;
-	}
-	memcpy(payload + p, val, vlen);
-	p += vlen;
-	send_uih(0, payload, p);
-}
-
-/* Encode our virtual modem-status bits for a DLC. We are always the
- * AP/initiator side, so DV (carrier detect) is always asserted, matching
- * the "gsm->initiator" special case in n_gsm.c's gsm_encode_modem
- * (n_gsm.c:544-563: `if (... || dlci->gsm->initiator) modembits |= MDM_DV;`).
- * RTC/RTR (DTR/RTS) are asserted once a channel is open, matching
- * "port is up and ready", and cleared while closing. */
-static uint8_t encode_modem_bits(const struct channel *ch)
-{
-	uint8_t bits = MDM_DV;
-	if (ch->state == CH_OPEN) {
-		bits |= MDM_RTC | MDM_RTR;
-		if (ch->local_fc_off)
-			bits |= MDM_FC;
-	}
-	return bits;
-}
-
-/* Send an MSC command describing DLC `dlci`'s current virtual modem
- * lines. Payload layout verified against n_gsm.c:4140-4180
- * (gsm_modem_send_initial_msc / gsm_modem_upd_via_msc): byte0 =
- * (target_dlci<<2)|CR|EA (a fixed "valid DLCI address" octet, NOT
- * subject to the initiator C/R-toggle rule -- n_gsm hardcodes `| 2 | EA`
- * here regardless of role), byte1 = (modembits<<1)|EA. */
-static void send_msc_cmd(uint8_t dlci)
-{
-	uint8_t val[2];
-	val[0] = (uint8_t)((dlci << 2) | MUX_CR | MUX_EA);
-	val[1] = (uint8_t)((encode_modem_bits(&g_chan[dlci - 1]) << 1) | MUX_EA);
-	send_ctrl(1, CBASE_MSC, val, 2);
-}
-
-/* ------------------------------------------------------------------ */
-/* PTY / /dev/radio/<name> setup                                       */
-/* ------------------------------------------------------------------ */
-
-static int open_channel_pty(struct channel *ch)
-{
-	int mfd = open("/dev/ptmx", O_RDWR | O_NONBLOCK | O_NOCTTY);
-	if (mfd < 0) {
-		LOGE("open(/dev/ptmx) for %s failed: %s", ch->name, strerror(errno));
+		if (n > 0) {
+			memmove(txq, txq + n, txq_len - (size_t)n);
+			txq_len -= (size_t)n;
+			continue;
+		}
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n < 0 && (errno == EAGAIN || errno == EBUSY)) {
+			tx_blocked = true;
+			return 0;
+		}
+		if (n < 0 && (errno == ETXTBSY || errno == ENODEV)) {
+			LOGE("modem is not accepting data (%s), dropping %zu queued bytes", strerror(errno), txq_len);
+			prop_set("vendor.ril.mux.ee.md1", "1");
+			txq_len = 0;
+			break;
+		}
+		LOGE("write %s: %s", serial_path, n < 0 ? strerror(errno) : "nothing written");
 		return -1;
 	}
-	if (grantpt(mfd) != 0)
-		LOGW("grantpt(%s) failed: %s (continuing, matches bionic's stub grantpt)",
-		     ch->name, strerror(errno));
-	if (unlockpt(mfd) != 0) {
-		LOGE("unlockpt(%s) failed: %s", ch->name, strerror(errno));
-		close(mfd);
-		return -1;
-	}
-	char slave[64];
-	if (ptsname_r(mfd, slave, sizeof(slave)) != 0) {
-		LOGE("ptsname_r(%s) failed: %s", ch->name, strerror(errno));
-		close(mfd);
-		return -1;
-	}
-	if (chown(slave, g_radio_uid, g_radio_gid) != 0)
-		LOGW("chown(%s -> radio:radio) failed: %s", slave, strerror(errno));
-	if (chmod(slave, 0660) != 0)
-		LOGW("chmod(%s, 0660) failed: %s", slave, strerror(errno));
-
-	snprintf(ch->link_path, sizeof(ch->link_path), "%s/%s", RADIO_DEV_DIR, ch->name);
-	unlink(ch->link_path); /* drop a stale symlink from a prior run, if any */
-	if (symlink(slave, ch->link_path) != 0) {
-		LOGE("symlink(%s -> %s) failed: %s", ch->link_path, slave, strerror(errno));
-		close(mfd);
-		return -1;
-	}
-	LOGI("DLCI %u: %s -> %s (radio:radio, 0660)", ch->dlci, ch->link_path, slave);
-	ch->master_fd = mfd;
+	tx_blocked = false;
 	return 0;
 }
 
-static void close_channel_pty(struct channel *ch)
+static int tx_drain(int64_t deadline)
 {
-	if (ch->master_fd >= 0) {
-		close(ch->master_fd);
-		ch->master_fd = -1;
-	}
-	if (ch->link_path[0]) {
-		unlink(ch->link_path);
-		ch->link_path[0] = '\0';
-	}
-}
+	while (txq_len) {
+		struct pollfd p = { .fd = serial_fd, .events = POLLOUT };
+		int64_t left = deadline - now_ms();
 
-/* ------------------------------------------------------------------ */
-/* Control-channel (DLCI 0) command dispatch                           */
-/* ------------------------------------------------------------------ */
-
-static void handle_control_frame(const uint8_t *data, size_t len)
-{
-	if (len < 2) {
-		LOGW("control frame too short (%zu bytes), ignoring", len);
-		return;
-	}
-	uint8_t type = data[0];
-	int is_cmd = (type & MUX_CR) != 0;
-	uint8_t base = (uint8_t)((type >> 1) & 0x7F); /* undo the <<1, keep EA-cleared base+CR */
-	if (!(data[1] & MUX_EA)) {
-		/* Multi-byte EA length on a control-channel TLV: none of the
-		 * commands we implement (MSC/TEST/FCON/FCOFF/PSC/NSC) ever
-		 * need >63 bytes of value, so a real peer sending this would
-		 * be unexpected. Logged, not silently misparsed. */
-		LOGW("control frame with multi-byte EA length not supported, dropping");
-		return;
-	}
-	unsigned vlen = data[1] >> 1;
-	const uint8_t *val = data + 2;
-	size_t have = (len >= 2) ? len - 2 : 0;
-	if (vlen > have) {
-		LOGW("control frame value length mismatch (says %u, have %zu), truncating",
-		     vlen, have);
-		vlen = (unsigned)have;
-	}
-
-	/* Recover the CBASE_* value regardless of command/response framing:
-	 * CTYPE_CMD(base)=(base<<1)|3, CTYPE_RSP(base)=((base&0xFE)<<1)|1.
-	 * In both cases (type>>1) equals base with its own low bit forced
-	 * to (CR for cmd, 0 for rsp) -- compare against CBASE_* with the
-	 * low bit masked off on both sides. */
-	uint8_t base_bits = (uint8_t)(base & 0xFE);
-
-	if (!is_cmd) {
-		/* A response to a command we sent (MSC ack, CLD ack, ...). */
-		LOGI("control response 0x%02x (base~0x%02x), %u byte value", type, base_bits, vlen);
-		return;
-	}
-
-	if (base_bits == (CBASE_MSC & 0xFE)) {
-		if (vlen < 2) {
-			LOGW("MSC command too short (%u), ignoring", vlen);
-			return;
-		}
-		uint8_t target_dlci = (uint8_t)(val[0] >> 2);
-		uint8_t bits = (uint8_t)(val[1] >> 1);
-		if (target_dlci == 0 || target_dlci > MAX_CHANNELS) {
-			LOGW("MSC for out-of-range DLCI %u, ignoring", target_dlci);
-		} else {
-			struct channel *ch = &g_chan[target_dlci - 1];
-			bool fc = (bits & MDM_FC) != 0;
-			if (fc != ch->peer_fc_off)
-				LOGI("DLCI %u: peer MSC sets FC=%d (%s sending on this DLC)",
-				     target_dlci, fc, fc ? "peer asks us to STOP" : "peer allows us to RESUME");
-			ch->peer_fc_off = fc;
-		}
-		send_ctrl(0, CBASE_MSC, val, vlen);
-		return;
-	}
-	if (base_bits == (CBASE_TEST & 0xFE)) {
-		LOGI("control TEST command (keep-alive probe), echoing back");
-		send_ctrl(0, CBASE_TEST, val, vlen);
-		return;
-	}
-	if (base_bits == (CBASE_FCON & 0xFE)) {
-		LOGI("control FCON: peer asks us to resume ALL DLCs");
-		for (int i = 0; i < MAX_CHANNELS; i++)
-			g_chan[i].peer_fc_off = false;
-		send_ctrl(0, CBASE_FCON, NULL, 0);
-		return;
-	}
-	if (base_bits == (CBASE_FCOFF & 0xFE)) {
-		LOGI("control FCOFF: peer asks us to stop ALL DLCs");
-		for (int i = 0; i < MAX_CHANNELS; i++)
-			g_chan[i].peer_fc_off = true;
-		send_ctrl(0, CBASE_FCOFF, NULL, 0);
-		return;
-	}
-	if (base_bits == (CBASE_PSC & 0xFE)) {
-		/*
-		 * Power Saving Control -- NOT implemented (no evidence the
-		 * stock daemon ever uses it, see header comment; and we
-		 * have no actual low-power UART sleep/wake path to offer).
-		 * Per this task's "no silent stubs" rule: reply the
-		 * standard Non-Supported-Command response, do not fake a
-		 * PSC ack.
-		 */
-		LOGW("control PSC received -- NOT SUPPORTED (no power-saving path implemented), replying NSC");
-		uint8_t nsc_val = type;
-		send_ctrl(0, CBASE_NSC, &nsc_val, 1);
-		return;
-	}
-	/* CBASE_PN / CBASE_RPN / CBASE_SNC / CBASE_RLS / anything else: not
-	 * implemented (basic-option static config needs no parameter
-	 * renegotiation; remote line settings and multiplexer-level
-	 * service negotiation are not used by the stock daemon either).
-	 * Explicit, logged Non-Supported-Command reply -- not silent. */
-	LOGW("control command 0x%02x (base~0x%02x) NOT SUPPORTED, replying NSC", type, base_bits);
-	uint8_t nsc_val = type;
-	send_ctrl(0, CBASE_NSC, &nsc_val, 1);
-}
-
-/* ------------------------------------------------------------------ */
-/* Per-DLC data delivery                                                */
-/* ------------------------------------------------------------------ */
-
-static void deliver_to_pty(struct channel *ch, const uint8_t *data, size_t len)
-{
-	if (ch->master_fd < 0 || ch->state != CH_OPEN) {
-		LOGW("DLCI %u: data frame for a channel that is not open, dropping %zu bytes",
-		     ch->dlci, len);
-		return;
-	}
-	if (ch->pend_len > ch->pend_off) {
-		/* Still flushing a previous frame -- this new one has to
-		 * wait. If it doesn't fit, ask the peer to pause via MSC
-		 * FC rather than silently losing data. */
-		if (len > sizeof(ch->pend_buf) - (ch->pend_len - ch->pend_off)) {
-			if (!ch->local_fc_off) {
-				ch->local_fc_off = true;
-				LOGW("DLCI %u: pty backpressure, asserting local FC (asking peer to pause)",
-				     ch->dlci);
-				send_msc_cmd(ch->dlci);
-			}
-			LOGW("DLCI %u: pty write queue full, dropping %zu bytes", ch->dlci, len);
-			return;
-		}
-		memmove(ch->pend_buf, ch->pend_buf + ch->pend_off, ch->pend_len - ch->pend_off);
-		ch->pend_len -= ch->pend_off;
-		ch->pend_off = 0;
-		memcpy(ch->pend_buf + ch->pend_len, data, len);
-		ch->pend_len += len;
-		return;
-	}
-	ssize_t n = write(ch->master_fd, data, len);
-	if (n < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-			n = 0;
-		else {
-			LOGW("DLCI %u: write(pty) failed: %s", ch->dlci, strerror(errno));
-			return;
-		}
-	}
-	if ((size_t)n < len) {
-		size_t rem = len - (size_t)n;
-		if (rem > sizeof(ch->pend_buf)) {
-			LOGW("DLCI %u: %zu bytes don't fit pending buffer, dropping tail", ch->dlci, rem);
-			rem = sizeof(ch->pend_buf);
-		}
-		memcpy(ch->pend_buf, data + n, rem);
-		ch->pend_len = rem;
-		ch->pend_off = 0;
-	}
-}
-
-static void flush_pending_pty(struct channel *ch)
-{
-	if (ch->pend_len <= ch->pend_off)
-		return;
-	ssize_t n = write(ch->master_fd, ch->pend_buf + ch->pend_off, ch->pend_len - ch->pend_off);
-	if (n < 0) {
-		if (errno != EAGAIN && errno != EWOULDBLOCK)
-			LOGW("DLCI %u: flush write(pty) failed: %s", ch->dlci, strerror(errno));
-		return;
-	}
-	ch->pend_off += (size_t)n;
-	if (ch->pend_off >= ch->pend_len) {
-		ch->pend_len = ch->pend_off = 0;
-		if (ch->local_fc_off) {
-			ch->local_fc_off = false;
-			LOGI("DLCI %u: pty queue drained, clearing local FC (peer may resume)", ch->dlci);
-			send_msc_cmd(ch->dlci);
-		}
-	}
-}
-
-/* ------------------------------------------------------------------ */
-/* Frame reception state machine                                       */
-/* ------------------------------------------------------------------ */
-
-enum rx_state {
-	RX_WAIT_FLAG = 0,
-	RX_ADDR,
-	RX_CTRL,
-	RX_LEN1,
-	RX_LEN2,
-	RX_DATA,
-	RX_SKIP,
-	RX_FCS,
-	RX_WAIT_END,
-};
-
-struct rx_parser {
-	enum rx_state state;
-	uint8_t dlci;
-	int addr_cr;
-	uint8_t control;
-	unsigned int length;
-	unsigned int len_high;
-	uint8_t data[MAX_FRAME_DATA];
-	unsigned int data_pos;
-	unsigned int skip_remaining;
-	uint8_t fcs;
-	unsigned long frames_ok, frames_dropped;
-};
-
-static struct rx_parser g_rx;
-
-static void on_open_confirmed(struct channel *ch)
-{
-	ch->state = CH_OPEN;
-	ch->sabm_retries = 0;
-	LOGI("DLCI %u (%s): logical channel opened", ch->dlci, ch->name);
-	if (open_channel_pty(ch) != 0) {
-		LOGE("DLCI %u: failed to set up pty, closing channel", ch->dlci);
-		send_disc(ch->dlci);
-		ch->state = CH_CLOSING;
-		return;
-	}
-	send_msc_cmd(ch->dlci);
-}
-
-static void on_frame_complete(void)
-{
-	g_rx.frames_ok++;
-
-	if (g_rx.dlci == 0) {
-		if (g_rx.control == (CTRL_UA | MUX_PF) || g_rx.control == CTRL_UA) {
-			if (!g_ctrl_open) {
-				g_ctrl_open = true;
-				LOGI("DLCI 0: control channel opened (UA received)");
-			} else {
-				LOGI("DLCI 0: UA received while already open (retransmit?), ignoring");
-			}
-			return;
-		}
-		if (g_rx.control == (CTRL_DM | MUX_PF) || g_rx.control == CTRL_DM) {
-			LOGE("DLCI 0: peer rejected control channel setup (DM) -- cannot continue");
-			return;
-		}
-		if (g_rx.control == (CTRL_DISC | MUX_PF) || g_rx.control == CTRL_DISC) {
-			LOGW("DLCI 0: peer sent DISC on the control channel -- multiplexer shutting down");
-			send_ua(0);
-			g_ctrl_open = false;
-			g_shutting_down = true;
-			return;
-		}
-		if (g_rx.control == CTRL_UIH || g_rx.control == (CTRL_UIH | MUX_PF)) {
-			handle_control_frame(g_rx.data, g_rx.data_pos);
-			return;
-		}
-		LOGW("DLCI 0: unexpected control field 0x%02x, ignoring frame", g_rx.control);
-		return;
-	}
-
-	if (g_rx.dlci > MAX_CHANNELS) {
-		LOGW("frame for out-of-range DLCI %u, ignoring", g_rx.dlci);
-		return;
-	}
-	struct channel *ch = &g_chan[g_rx.dlci - 1];
-
-	if (g_rx.control == (CTRL_UA | MUX_PF) || g_rx.control == CTRL_UA) {
-		if (ch->state == CH_OPENING)
-			on_open_confirmed(ch);
-		else if (ch->state == CH_CLOSING) {
-			LOGI("DLCI %u: UA for our DISC, channel closed", ch->dlci);
-			ch->state = CH_CLOSED;
-			close_channel_pty(ch);
-		} else {
-			LOGI("DLCI %u: unexpected UA (state=%d), ignoring", ch->dlci, ch->state);
-		}
-		return;
-	}
-	if (g_rx.control == (CTRL_DM | MUX_PF) || g_rx.control == CTRL_DM) {
-		LOGW("DLCI %u: peer sent DM (channel refused/already closed)", ch->dlci);
-		ch->state = CH_CLOSED;
-		close_channel_pty(ch);
-		return;
-	}
-	if (g_rx.control == (CTRL_SABM | MUX_PF) || g_rx.control == CTRL_SABM) {
-		/* Peer-initiated open -- not expected (we are the initiator
-		 * and open every DLC ourselves at startup) but handled per
-		 * spec rather than ignored. A channel we already gave up on
-		 * (N2 SABM retries exhausted, see the startup loop) is
-		 * refused with DM rather than silently reopened. */
-		if (ch->gave_up) {
-			LOGW("DLCI %u: peer-initiated SABM on a channel we gave up on, refusing (DM)",
-			     ch->dlci);
-			send_dm(ch->dlci);
-			return;
-		}
-		LOGW("DLCI %u: unexpected peer-initiated SABM, accepting", ch->dlci);
-		send_ua(ch->dlci);
-		if (ch->state != CH_OPEN)
-			on_open_confirmed(ch);
-		return;
-	}
-	if (g_rx.control == (CTRL_DISC | MUX_PF) || g_rx.control == CTRL_DISC) {
-		LOGW("DLCI %u: peer sent DISC, closing and scheduling one SABM retry", ch->dlci);
-		send_ua(ch->dlci);
-		close_channel_pty(ch);
-		ch->state = CH_CLOSED;
-		return;
-	}
-	if (g_rx.control == CTRL_UIH || g_rx.control == (CTRL_UIH | MUX_PF)) {
-		deliver_to_pty(ch, g_rx.data, g_rx.data_pos);
-		return;
-	}
-	LOGW("DLCI %u: unexpected control field 0x%02x, ignoring frame", ch->dlci, g_rx.control);
-}
-
-static void rx_reset(void)
-{
-	g_rx.state = RX_WAIT_FLAG;
-}
-
-static void rx_feed(uint8_t c)
-{
-	switch (g_rx.state) {
-	case RX_WAIT_FLAG:
-		if (c == MUX_FLAG)
-			g_rx.state = RX_ADDR;
-		break;
-	case RX_ADDR:
-		if (c == MUX_FLAG)
-			break; /* repeated flag between frames -- a no-op */
-		g_rx.dlci = (uint8_t)((c >> 2) & 0x3F);
-		g_rx.addr_cr = (c >> 1) & 1;
-		g_rx.fcs = fcs_add(INIT_FCS, c);
-		g_rx.data_pos = 0;
-		g_rx.state = RX_CTRL;
-		break;
-	case RX_CTRL:
-		if (c == MUX_FLAG) {
-			LOGW("unexpected flag while awaiting control field, resyncing");
-			g_rx.state = RX_ADDR;
-			break;
-		}
-		g_rx.control = c;
-		g_rx.fcs = fcs_add(g_rx.fcs, c);
-		g_rx.state = RX_LEN1;
-		break;
-	case RX_LEN1:
-		if (c == MUX_FLAG) {
-			LOGW("unexpected flag while awaiting length field, resyncing");
-			g_rx.state = RX_ADDR;
-			break;
-		}
-		g_rx.fcs = fcs_add(g_rx.fcs, c);
-		if (c & MUX_EA) {
-			g_rx.length = c >> 1;
-			g_rx.state = (g_rx.length == 0) ? RX_FCS :
-				(g_rx.length <= MAX_FRAME_DATA ? RX_DATA : RX_SKIP);
-			if (g_rx.length > MAX_FRAME_DATA) {
-				LOGW("Dropping frame: DLCI=%u, length field indicated=%u, max=%d allowed",
-				     g_rx.dlci, g_rx.length, MAX_FRAME_DATA);
-				g_rx.skip_remaining = g_rx.length;
-			}
-		} else {
-			g_rx.len_high = c >> 1;
-			g_rx.state = RX_LEN2;
-		}
-		break;
-	case RX_LEN2:
-		if (c == MUX_FLAG) {
-			LOGW("unexpected flag while awaiting 2nd length byte, resyncing");
-			g_rx.state = RX_ADDR;
-			break;
-		}
-		g_rx.fcs = fcs_add(g_rx.fcs, c);
-		if (!(c & MUX_EA)) {
-			LOGW("Dropping frame: 3+ byte EA length not supported (DLCI=%u)", g_rx.dlci);
-			g_rx.state = RX_WAIT_FLAG;
-			g_rx.frames_dropped++;
-			break;
-		}
-		g_rx.length = (g_rx.len_high << 7) | (c >> 1);
-		if (g_rx.length == 0) {
-			g_rx.state = RX_FCS;
-		} else if (g_rx.length <= MAX_FRAME_DATA) {
-			g_rx.state = RX_DATA;
-		} else {
-			LOGW("Dropping frame: DLCI=%u, length field indicated=%u, max=%d allowed",
-			     g_rx.dlci, g_rx.length, MAX_FRAME_DATA);
-			g_rx.skip_remaining = g_rx.length;
-			g_rx.state = RX_SKIP;
-		}
-		break;
-	case RX_DATA:
-		/* Basic option has no byte-stuffing: a data byte equal to
-		 * MUX_FLAG is real data, NOT a frame delimiter. We rely
-		 * exclusively on the length field parsed above. */
-		g_rx.data[g_rx.data_pos++] = c;
-		if (g_rx.data_pos >= g_rx.length)
-			g_rx.state = RX_FCS;
-		break;
-	case RX_SKIP:
-		if (--g_rx.skip_remaining == 0)
-			g_rx.state = RX_FCS;
-		break;
-	case RX_FCS:
-		g_rx.fcs = fcs_add(g_rx.fcs, c);
-		if (g_rx.fcs != GOOD_FCS) {
-			LOGW("Dropping frame: FCS mismatch (DLCI=%u ctrl=0x%02x len=%u)",
-			     g_rx.dlci, g_rx.control, g_rx.length);
-			g_rx.frames_dropped++;
-			g_rx.state = RX_WAIT_FLAG;
-			break;
-		}
-		g_rx.state = RX_WAIT_END;
-		break;
-	case RX_WAIT_END:
-		if (c == MUX_FLAG) {
-			on_frame_complete();
-			g_rx.state = RX_ADDR; /* this flag doubles as next frame's start */
-		} else {
-			LOGW("expected end flag after FCS, got 0x%02x -- resyncing", c);
-			on_frame_complete(); /* FCS already validated; still act on it */
-			g_rx.state = RX_WAIT_FLAG;
-		}
-		break;
-	}
-}
-
-/* ------------------------------------------------------------------ */
-/* AT chat helpers for the pre-mux handshake                            */
-/* ------------------------------------------------------------------ */
-
-static int at_write(int fd, const char *cmd)
-{
-	char buf[128];
-	int n = snprintf(buf, sizeof(buf), "%s\r", cmd);
-	if (n < 0 || (size_t)n >= sizeof(buf)) {
-		LOGE("at_write: command too long, refusing (\"%s\")", cmd);
-		return -1;
-	}
-	ssize_t w = write(fd, buf, (size_t)n);
-	return (w == n) ? 0 : -1;
-}
-
-/* Reads until a line is seen or timeout_ms elapses. Returns line length
- * (>=0, possibly 0) on a line, -1 on timeout/error. Strips CR/LF. */
-static int at_read_line(int fd, char *out, size_t outcap, int timeout_ms)
-{
-	size_t pos = 0;
-	struct timeval start, now;
-	gettimeofday(&start, NULL);
-	for (;;) {
-		gettimeofday(&now, NULL);
-		long elapsed_ms = (now.tv_sec - start.tv_sec) * 1000 +
-				   (now.tv_usec - start.tv_usec) / 1000;
-		int remaining = timeout_ms - (int)elapsed_ms;
-		if (remaining <= 0)
+		if (tx_flush())
 			return -1;
-		struct pollfd pfd = { .fd = fd, .events = POLLIN };
-		int pr = poll(&pfd, 1, remaining);
-		if (pr < 0) {
-			if (errno == EINTR)
-				continue;
+		if (!txq_len)
+			break;
+		if (left <= 0)
 			return -1;
-		}
-		if (pr == 0)
-			return -1;
-		char c;
-		ssize_t n = read(fd, &c, 1);
-		if (n <= 0) {
-			if (n < 0 && errno == EAGAIN)
-				continue;
-			return -1;
-		}
-		if (c == '\r' || c == '\n') {
-			if (pos == 0)
-				continue; /* skip leading CR/LF */
-			out[pos] = '\0';
-			return (int)pos;
-		}
-		if (pos + 1 < outcap)
-			out[pos++] = c;
-	}
-}
-
-/*
- * mux_start -- the pre-framing AT handshake, exactly as recovered from
- * the stock binary's own strings (see file header comment): ATZ, ATE0,
- * then the literal "AT+CMUX=1" (NOT the generic 4+-parameter 3GPP
- * AT+CMUX), branching on whether the modem answers with the URC
- * "+CMUX: READY" (new modem -- proceed immediately) or a plain "OK"
- * (old modem -- sleep 1s first, matching the stock log strings
- * "Received CMUX: READY, it is new modem, start to init control channel"
- * / "Received OK, it is old modem, so sleep(1)").
- */
-static int mux_start(int fd)
-{
-	char line[256];
-
-	if (at_write(fd, "ATZ") != 0) {
-		LOGE("mux_start: write(ATZ) failed: %s", strerror(errno));
-		return -1;
-	}
-	if (at_read_line(fd, line, sizeof(line), 3000) < 0) {
-		LOGE("mux_start: no response to ATZ (modem not ready?)");
-		return -1;
-	}
-	LOGI("mux_start: ATZ -> \"%s\"", line);
-
-	if (at_write(fd, "ATE0") != 0) {
-		LOGE("mux_start: write(ATE0) failed: %s", strerror(errno));
-		return -1;
-	}
-	if (at_read_line(fd, line, sizeof(line), 3000) < 0) {
-		LOGW("mux_start: no response to ATE0, continuing anyway");
-	} else {
-		LOGI("mux_start: ATE0 -> \"%s\"", line);
-	}
-
-	if (at_write(fd, "AT+CMUX=1") != 0) {
-		LOGE("mux_start: write(AT+CMUX=1) failed: %s", strerror(errno));
-		return -1;
-	}
-	if (at_read_line(fd, line, sizeof(line), 5000) < 0) {
-		LOGE("mux_start: no response to AT+CMUX=1 -- modem may already be in mux mode or exception");
-		return -1;
-	}
-	LOGI("mux_start: AT+CMUX=1 -> \"%s\"", line);
-	if (strstr(line, "CMUX") && strstr(line, "READY")) {
-		LOGI("mux_start: new-modem path (+CMUX: READY) -- starting control channel now");
-	} else if (strstr(line, "OK")) {
-		LOGI("mux_start: old-modem path (plain OK) -- sleeping 1s before control channel");
-		sleep(1);
-	} else if (strstr(line, "ERROR")) {
-		LOGE("mux_start: modem returned ERROR to AT+CMUX=1");
-		return -1;
-	} else {
-		LOGW("mux_start: unrecognized AT+CMUX=1 response \"%s\", proceeding anyway", line);
+		poll(&p, 1, left < TX_RETRY_MS ? (int)left : TX_RETRY_MS);
 	}
 	return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Serial port setup                                                   */
-/* ------------------------------------------------------------------ */
-
-static int open_serial(const char *path)
+static void send_msc(struct chan *c, bool fc)
 {
-	int fd = open(path, O_RDWR | O_NOCTTY);
+	uint8_t v[4] = {
+		CMD_MSC | CMD_CR,
+		2 << 1 | 1,
+		(uint8_t)(c->dlci << 2 | ADDR_CR | ADDR_EA),
+		(uint8_t)(MSC_SIGNALS | (fc ? MSC_FC : 0)),
+	};
+
+	tx_frame(0, CTRL_UIH | CTRL_PF, v, sizeof(v));
+}
+
+static void chan_close_pty(struct chan *c)
+{
+	if (c->fd >= 0) {
+		unlink(c->link);
+		close(c->fd);
+		c->fd = -1;
+	}
+	c->slave[0] = 0;
+	c->pending_len = 0;
+	c->peer_fc = false;
+	c->local_fc = false;
+}
+
+static int chan_open_pty(struct chan *c)
+{
+	struct termios t;
+	int fd = open("/dev/ptmx", O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+
 	if (fd < 0) {
-		LOGE("open(%s) failed: %s", path, strerror(errno));
+		LOGE("%s: open /dev/ptmx: %s", c->name, strerror(errno));
 		return -1;
 	}
-	struct termios tio;
-	if (tcgetattr(fd, &tio) == 0) {
-		cfmakeraw(&tio);
-		tio.c_cflag |= CLOCAL | CREAD;
-		tcsetattr(fd, TCSANOW, &tio);
-	} else {
-		LOGW("tcgetattr(%s) failed: %s (continuing, this is a CCCI virtual tty)",
-		     path, strerror(errno));
+	if (ptsname_r(fd, c->slave, sizeof(c->slave))) {
+		LOGE("%s: ptsname: %s", c->name, strerror(errno));
+		goto fail;
 	}
-	tcflush(fd, TCIOFLUSH);
-	return fd;
+	if (tcgetattr(fd, &t)) {
+		LOGE("%s: tcgetattr: %s", c->name, strerror(errno));
+		goto fail;
+	}
+	t.c_iflag = IGNPAR;
+	t.c_oflag = 0;
+	t.c_cflag = CS8 | CREAD | CLOCAL;
+	t.c_lflag = 0;
+	memset(t.c_cc, 0, sizeof(t.c_cc));
+	t.c_cc[VMIN] = 1;
+	t.c_cc[VTIME] = 0;
+	cfsetispeed(&t, B460800);
+	cfsetospeed(&t, B460800);
+	if (tcflush(fd, TCIFLUSH) || tcsetattr(fd, TCSANOW, &t)) {
+		LOGE("%s: termios: %s", c->name, strerror(errno));
+		goto fail;
+	}
+	if (grantpt(fd) || unlockpt(fd)) {
+		LOGE("%s: unlock %s: %s", c->name, c->slave, strerror(errno));
+		goto fail;
+	}
+	if (chown(c->slave, AID_RADIO, AID_RADIO))
+		LOGD("%s: chown %s: %s", c->name, c->slave, strerror(errno));
+	if (chmod(c->slave, 0660)) {
+		LOGE("%s: chmod %s: %s", c->name, c->slave, strerror(errno));
+		goto fail;
+	}
+	if (unlink(c->link) && errno != ENOENT)
+		LOGW("%s: unlink %s: %s", c->name, c->link, strerror(errno));
+	if (symlink(c->slave, c->link)) {
+		LOGE("%s: symlink %s -> %s: %s", c->name, c->link, c->slave, strerror(errno));
+		goto fail;
+	}
+	c->fd = fd;
+	c->pending_len = 0;
+	c->peer_fc = false;
+	c->local_fc = false;
+	LOGD("%s: dlci %u on %s", c->name, c->dlci, c->slave);
+	return 0;
+fail:
+	close(fd);
+	c->slave[0] = 0;
+	return -1;
 }
 
-/* ------------------------------------------------------------------ */
-/* Startup / shutdown                                                   */
-/* ------------------------------------------------------------------ */
+static void close_all_ptys(void)
+{
+	for (int i = 0; i < nchans; i++) {
+		chan_close_pty(&chans[i]);
+		chans[i].open = false;
+		chans[i].sabm_sent = false;
+		chans[i].disc_sent = false;
+		chans[i].refused = false;
+		chans[i].refused_logged = false;
+	}
+	ctl.open = false;
+	ctl.sabm_sent = false;
+	ctl.disc_sent = false;
+}
 
-static void drop_privileges(void)
+static void close_serial(void)
+{
+	if (serial_fd >= 0)
+		close(serial_fd);
+	serial_fd = -1;
+	txq_len = 0;
+	rx_len = 0;
+	chat_len = 0;
+	tx_blocked = false;
+	pf_echo = false;
+}
+
+static void on_signal(int sig)
+{
+	term_signal = sig;
+}
+
+static void wait_ms(int ms)
+{
+	int64_t end = now_ms() + ms;
+	int64_t left;
+
+	while (!term_signal && (left = end - now_ms()) > 0)
+		poll(NULL, 0, (int)left);
+}
+
+static void report_and_exit(const char *why)
+{
+	LOGE("%s; asking muxreport to recover the modem", why);
+	close_all_ptys();
+	close_serial();
+	prop_set("vendor.ril.mux.report.case", "1");
+	prop_set("vendor.ril.muxreport", "1");
+	wait_ms(REPORT_WAIT_MS);
+	if (!term_signal) {
+		prop_set("vendor.ril.mux.report.case", "2");
+		prop_set("vendor.ril.muxreport", "1");
+	}
+	exit(0);
+}
+
+static void modem_exception_exit(void)
+{
+	LOGE("modem is in exception, leaving (%s)", strerror(errno));
+	prop_set("vendor.ril.mux.ee.md1", "1");
+	close_all_ptys();
+	close_serial();
+	exit(0);
+}
+
+static int serial_wait(int64_t deadline)
+{
+	for (;;) {
+		struct pollfd p = { .fd = serial_fd, .events = POLLIN };
+		int64_t left = deadline - now_ms();
+		int r;
+
+		if (term_signal)
+			return -1;
+		if (left <= 0)
+			return 0;
+		r = poll(&p, 1, (int)left);
+		if (r > 0)
+			return 1;
+		if (r < 0 && errno != EINTR) {
+			LOGE("poll %s: %s", serial_path, strerror(errno));
+			return -1;
+		}
+	}
+}
+
+static void log_text(const char *dir, const char *p, size_t n)
+{
+	char out[256];
+	size_t o = 0;
+
+	for (size_t i = 0; i < n && o + 5 < sizeof(out); i++) {
+		unsigned char ch = (unsigned char)p[i];
+
+		if (ch == '\r')
+			o += (size_t)snprintf(out + o, sizeof(out) - o, "\\r");
+		else if (ch == '\n')
+			o += (size_t)snprintf(out + o, sizeof(out) - o, "\\n");
+		else if (ch >= 0x20 && ch < 0x7F)
+			out[o++] = (char)ch;
+		else
+			o += (size_t)snprintf(out + o, sizeof(out) - o, "\\x%02x", ch);
+	}
+	out[o] = 0;
+	LOGI("%s %s%s", dir, out, o + 5 >= sizeof(out) ? "..." : "");
+}
+
+static int chat_read(void)
+{
+	ssize_t n;
+
+	if (chat_len >= sizeof(chat_buf) - 1) {
+		memmove(chat_buf, chat_buf + sizeof(chat_buf) / 2, chat_len - sizeof(chat_buf) / 2);
+		chat_len -= sizeof(chat_buf) / 2;
+	}
+	n = read(serial_fd, chat_buf + chat_len, sizeof(chat_buf) - 1 - chat_len);
+	if (n < 0 && (errno == EAGAIN || errno == EINTR))
+		return 0;
+	if (n <= 0) {
+		LOGE("read %s: %s", serial_path, n ? strerror(errno) : "end of file");
+		return -1;
+	}
+	chat_len += (size_t)n;
+	chat_buf[chat_len] = 0;
+	for (size_t i = 0; i < chat_len; i++)
+		if (!chat_buf[i])
+			chat_buf[i] = ' ';
+	return 0;
+}
+
+static void chat_clear(void)
+{
+	chat_len = 0;
+	chat_buf[0] = 0;
+}
+
+static void chat_log(void)
+{
+	log_text("<", chat_buf, chat_len);
+	chat_clear();
+}
+
+static void wait_modem_ready(int ms)
+{
+	int64_t deadline = now_ms() + ms;
+
+	LOGI("waiting up to %d s for +EIND: 128 on %s", ms / 1000, serial_path);
+	while (!strstr(chat_buf, "+EIND: 128")) {
+		if (serial_wait(deadline) <= 0 || chat_read()) {
+			chat_log();
+			LOGW("no +EIND: 128, continuing");
+			return;
+		}
+	}
+	chat_log();
+}
+
+static int chat_write(const char *cmd)
+{
+	char line[128];
+	int len = snprintf(line, sizeof(line), "%s\r", cmd);
+	int off = 0;
+	int64_t deadline = now_ms() + CHAT_TIMEOUT_MS;
+
+	log_text(">", line, (size_t)len);
+	while (off < len) {
+		ssize_t n = write(serial_fd, line + off, (size_t)(len - off));
+
+		if (n > 0) {
+			off += (int)n;
+			continue;
+		}
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n < 0 && (errno == ETXTBSY || errno == ENODEV))
+			modem_exception_exit();
+		if (n < 0 && (errno == EAGAIN || errno == EBUSY) && now_ms() < deadline) {
+			poll(NULL, 0, TX_RETRY_MS);
+			continue;
+		}
+		LOGE("write %s to %s: %s", cmd, serial_path, n < 0 ? strerror(errno) : "nothing written");
+		return -1;
+	}
+	return 0;
+}
+
+static int chat(const char *cmd)
+{
+	chat_clear();
+	if (chat_write(cmd))
+		return -1;
+	for (;;) {
+		int r = serial_wait(now_ms() + CHAT_TIMEOUT_MS);
+
+		if (r <= 0) {
+			chat_log();
+			LOGE("%s: %s", cmd, r ? "interrupted" : "no answer");
+			return -1;
+		}
+		if (chat_read())
+			return -1;
+		if (strstr(chat_buf, "OK")) {
+			chat_log();
+			return 0;
+		}
+		if (strstr(chat_buf, "ERROR")) {
+			chat_log();
+			LOGE("%s: ERROR", cmd);
+			return -1;
+		}
+	}
+}
+
+static int chat_cmux(const char *cmd)
+{
+	bool ready = false;
+
+	chat_clear();
+	if (chat_write(cmd))
+		return -1;
+	for (;;) {
+		int r = serial_wait(now_ms() + CHAT_TIMEOUT_MS);
+
+		if (r <= 0) {
+			chat_log();
+			LOGE("%s: %s", cmd, r ? "interrupted" : "no answer");
+			return -1;
+		}
+		if (chat_read())
+			return -1;
+		if (strstr(chat_buf, "OK")) {
+			chat_log();
+			if (!ready)
+				wait_ms(1000);
+			return 0;
+		}
+		if (strstr(chat_buf, "+CMUX: READY")) {
+			ready = true;
+			chat_log();
+			continue;
+		}
+		if (strstr(chat_buf, "ERROR")) {
+			chat_log();
+			LOGE("%s: ERROR", cmd);
+			return -1;
+		}
+	}
+}
+
+static void send_close_down(void)
+{
+	static const uint8_t cld[2] = { CMD_CLD | CMD_CR, 1 };
+
+	tx_frame(0, CTRL_UIH, cld, sizeof(cld));
+}
+
+static int open_serial(void)
+{
+	serial_fd = open(serial_path, O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+	if (serial_fd < 0) {
+		LOGE("open %s: %s", serial_path, strerror(errno));
+		return -1;
+	}
+	return 0;
+}
+
+static int modem_handshake(void)
+{
+	char cmd[64];
+
+	wait_modem_ready(user_build() ? EIND_WAIT_USER_MS : EIND_WAIT_MS);
+	if (chat("AT") && chat("AT"))
+		return -1;
+	if (chat("ATZ") || chat("ATE0"))
+		return -1;
+	if (pin >= 0) {
+		snprintf(cmd, sizeof(cmd), "AT+CPIN=%04d", pin);
+		if (chat(cmd))
+			return -1;
+	}
+	snprintf(cmd, sizeof(cmd), "AT+CMUX=0,0,%d,%d", baud_index, frame_size);
+	LOGI("starting mux mode: %s", cmd);
+	return chat_cmux(cmd);
+}
+
+static void drop_root(void)
 {
 	if (getuid() != 0)
-		return; /* already unprivileged, e.g. launched by init as user radio */
+		return;
+	prctl(PR_SET_KEEPCAPS, 1, 0, 0, 0);
+	if (setuid(AID_RADIO))
+		LOGE("setuid radio: %s", strerror(errno));
+	else
+		LOGI("switched to user radio");
+}
 
-	struct passwd *pw = getpwnam("radio");
-	if (pw) {
-		g_radio_uid = pw->pw_uid;
-		g_radio_gid = pw->pw_gid;
+static void setup_complete(void)
+{
+	int refused = 0;
+
+	for (int i = 0; i < nchans; i++)
+		refused += chans[i].refused;
+	setup_done = true;
+	state = ST_RUN;
+	LOGI("mux channel setup finished: %d channels, %d refused by the modem", nchans, refused);
+	if (ril_started)
+		return;
+	ril_started = true;
+	prop_set("vendor.ril.mux.start", "1");
+	prop_set("vendor.ril.mtk", "1");
+	LOGI("vendor.ril.mtk=1, the RIL may start");
+	drop_root();
+}
+
+static void resolve(void)
+{
+	if (unresolved > 0 && !--unresolved && !setup_done)
+		setup_complete();
+}
+
+static int mux_open(void)
+{
+	setup_done = false;
+	state = ST_SETUP;
+	unresolved = nchans + 1;
+	setup_deadline = now_ms() + SETUP_TIMEOUT_MS;
+	ctl.sabm_sent = true;
+	tx_frame(0, CTRL_SABM | CTRL_PF, NULL, 0);
+	for (int i = 0; i < nchans; i++) {
+		if (chan_open_pty(&chans[i]))
+			return -1;
+		chans[i].sabm_sent = true;
+		tx_frame(chans[i].dlci, CTRL_SABM | CTRL_PF, NULL, 0);
+	}
+	return tx_flush();
+}
+
+static void chan_reopen(struct chan *c)
+{
+	bool had_fc = c->local_fc;
+
+	LOGI("%s: the application closed %s, recreating it", c->name, c->link);
+	chan_close_pty(c);
+	if (had_fc)
+		send_msc(c, false);
+	if (chan_open_pty(c))
+		report_and_exit("cannot recreate a channel pty");
+}
+
+static void chan_drain(struct chan *c)
+{
+	while (c->pending_len) {
+		ssize_t n = write(c->fd, c->pending, c->pending_len);
+
+		if (n > 0) {
+			memmove(c->pending, c->pending + n, c->pending_len - (size_t)n);
+			c->pending_len -= (size_t)n;
+			continue;
+		}
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n < 0 && errno == EAGAIN)
+			return;
+		chan_reopen(c);
+		return;
+	}
+	if (c->local_fc) {
+		c->local_fc = false;
+		send_msc(c, false);
+		LOGD("%s: drained, flow control released", c->name);
+	}
+}
+
+static void deliver(struct chan *c, const uint8_t *data, size_t len)
+{
+	ssize_t n = 0;
+
+	if (c->fd < 0) {
+		LOGW("%s: %zu bytes for a channel without a pty, dropped", c->name, len);
+		return;
+	}
+	if (c->pending_len) {
+		if (c->pending_len + len > PENDING_CAP) {
+			LOGE("%s: application is not reading, dropping %zu bytes", c->name, len);
+			return;
+		}
+		memcpy(c->pending + c->pending_len, data, len);
+		c->pending_len += len;
+		return;
+	}
+	while (len) {
+		n = write(c->fd, data, len);
+		if (n > 0) {
+			data += n;
+			len -= (size_t)n;
+			continue;
+		}
+		if (n < 0 && errno == EINTR)
+			continue;
+		break;
+	}
+	if (!len)
+		return;
+	if (n < 0 && errno != EAGAIN) {
+		LOGW("%s: write %s: %s", c->name, c->slave, strerror(errno));
+		chan_reopen(c);
+		return;
+	}
+	memcpy(c->pending, data, len);
+	c->pending_len = len;
+	if (!c->local_fc) {
+		c->local_fc = true;
+		send_msc(c, true);
+		LOGD("%s: application is slow, asking the modem to pause", c->name);
+	}
+}
+
+static void reply_echo(const uint8_t *data, size_t len)
+{
+	uint8_t r[MAX_FRAME];
+
+	memcpy(r, data, len);
+	r[0] &= (uint8_t)~CMD_CR;
+	tx_frame(0, CTRL_UIH, r, len);
+}
+
+static void apply_msc(uint8_t dlci, uint8_t signals)
+{
+	struct chan *c = dlci < MAX_DLCI ? by_dlci[dlci] : NULL;
+	bool fc = signals & MSC_FC;
+
+	if (!c || !c->open)
+		return;
+	if (fc != c->peer_fc)
+		LOGD("%s: modem %s", c->name, fc ? "paused the channel" : "resumed the channel");
+	c->peer_fc = fc;
+}
+
+static void control_command(const uint8_t *data, size_t len)
+{
+	size_t tl = 0;
+	size_t i;
+	uint8_t type;
+
+	while (tl < len && !(data[tl] & 1))
+		tl++;
+	if (tl >= len) {
+		LOGW("malformed control message of %zu bytes", len);
+		return;
+	}
+	tl++;
+	type = data[0];
+	i = tl;
+	while (i < len && !(data[i++] & 1))
+		;
+	if (!(type & CMD_CR)) {
+		if ((type & ~CMD_CR) == CMD_NSC)
+			LOGW("modem does not support a command we sent");
+		else
+			LOGD("modem acknowledged command 0x%02x", type);
+		return;
+	}
+	switch (type & ~CMD_CR) {
+	case CMD_TEST:
+	case CMD_PSC:
+	case CMD_PN:
+		reply_echo(data, len);
+		break;
+	case CMD_CLD:
+		LOGI("modem closed the multiplexer");
+		reply_echo(data, len);
+		state = ST_PEER_CLOSING;
+		break;
+	case CMD_MSC:
+		if (len - i >= 2)
+			apply_msc(data[i] >> 2, data[i + 1]);
+		else
+			LOGW("modem status command without a channel and signals");
+		reply_echo(data, len);
+		break;
+	default: {
+		uint8_t r[2 + 8];
+
+		if (tl > 8)
+			tl = 8;
+		LOGW("unsupported control command 0x%02x", type);
+		r[0] = CMD_NSC;
+		r[1] = (uint8_t)(tl << 1 | 1);
+		memcpy(r + 2, data, tl);
+		tx_frame(0, CTRL_UIH, r, 2 + tl);
+		break;
+	}
+	}
+}
+
+static void on_ua(struct chan *c)
+{
+	if (c->open) {
+		if (c->disc_sent) {
+			c->disc_sent = false;
+			c->open = false;
+			LOGD("%s: closed", c->name);
+		}
+		return;
+	}
+	if (c->sabm_sent) {
+		c->sabm_sent = false;
+		c->open = true;
+		LOGD("%s: dlci %u open", c->name, c->dlci);
+		resolve();
+		return;
+	}
+	c->disc_sent = false;
+}
+
+static void on_dm(struct chan *c)
+{
+	if (c->open) {
+		c->open = false;
+		c->disc_sent = false;
+		LOGI("%s: modem closed dlci %u", c->name, c->dlci);
+		if (c == &ctl)
+			state = ST_PEER_CLOSING;
+		else
+			chan_close_pty(c);
+		return;
+	}
+	if (c == &ctl) {
+		LOGE("modem refused the control channel");
+		state = ST_CLOSING;
+		return;
+	}
+	if (!c->sabm_sent)
+		return;
+	c->sabm_sent = false;
+	c->refused = true;
+	LOGE("%s: modem refused dlci %u", c->name, c->dlci);
+	if (c->atci)
+		prop_set("vendor.lackof.atci.channel", "1");
+	resolve();
+}
+
+static void on_disc(uint8_t dlci, struct chan *c)
+{
+	if (!c || !c->open) {
+		tx_frame(dlci, CTRL_DM | CTRL_PF, NULL, 0);
+		return;
+	}
+	c->open = false;
+	tx_frame(dlci, CTRL_UA | CTRL_PF, NULL, 0);
+	if (c == &ctl) {
+		LOGI("modem disconnected the control channel");
+		state = ST_PEER_CLOSING;
 	} else {
-		LOGW("getpwnam(radio) failed, falling back to hardcoded AID_RADIO=1001");
+		LOGI("%s: modem disconnected dlci %u", c->name, dlci);
+		chan_close_pty(c);
 	}
-
-	if (setgid(g_radio_gid) != 0) {
-		LOGE("setgid(%u) failed: %s", g_radio_gid, strerror(errno));
-		exit(71);
-	}
-	if (setuid(g_radio_uid) != 0) {
-		LOGE("setuid(%u) failed: %s", g_radio_uid, strerror(errno));
-		exit(71);
-	}
-	LOGI("muxd switch to user radio (uid=%u gid=%u)", g_radio_uid, g_radio_gid);
 }
 
-static void teardown(int exit_code)
+static void handle_frame(uint8_t dlci, uint8_t ctrl, const uint8_t *data, size_t len)
 {
-	LOGI("tearing down: closing all DLCs");
-	for (int i = 0; i < MAX_CHANNELS; i++) {
-		struct channel *ch = &g_chan[i];
-		if (ch->state == CH_OPEN || ch->state == CH_OPENING) {
-			send_disc(ch->dlci);
-			ch->state = CH_CLOSING;
-		}
-		close_channel_pty(ch);
+	struct chan *c = by_dlci[dlci];
+
+	LOGD("rx dlci %u ctrl 0x%02x len %zu", dlci, ctrl, len);
+	switch (ctrl & ~CTRL_PF) {
+	case CTRL_UIH:
+	case CTRL_UI:
+		if (ctrl & CTRL_PF)
+			pf_echo = true;
+		if (!dlci)
+			control_command(data, len);
+		else if (c)
+			deliver(c, data, len);
+		else
+			LOGW("%zu bytes on unknown dlci %u, dropped", len, dlci);
+		break;
+	case CTRL_UA:
+		if (c)
+			on_ua(c);
+		break;
+	case CTRL_DM:
+		if (c)
+			on_dm(c);
+		break;
+	case CTRL_SABM:
+		if (c)
+			c->open = true;
+		tx_frame(dlci, CTRL_UA | CTRL_PF, NULL, 0);
+		break;
+	case CTRL_DISC:
+		on_disc(dlci, c);
+		break;
+	default:
+		LOGW("frame with control 0x%02x on dlci %u ignored", ctrl, dlci);
+		break;
 	}
-	if (g_serial_fd >= 0) {
-		if (g_ctrl_open)
-			send_disc(0);
-		/* best-effort final flush, short timeout */
-		struct pollfd pfd = { .fd = g_serial_fd, .events = POLLOUT };
-		for (int i = 0; i < 20 && tx_pending(); i++) {
-			if (poll(&pfd, 1, 50) > 0)
-				tx_flush(g_serial_fd);
-		}
-		close(g_serial_fd);
-	}
-	if (g_logfile)
-		fclose(g_logfile);
-	exit(exit_code);
 }
 
-static volatile sig_atomic_t g_sig_received = 0;
-static void on_signal(int signum) { g_sig_received = signum; }
-
-static void usage(const char *prog, int frame_size, int nports)
+static void rx_parse(void)
 {
-	fprintf(stderr, "Usage: %s [options]\n", prog);
-	fprintf(stderr, "\t-s <serial port name>: Serial port device to connect to [/dev/ttyC0]\n");
-	fprintf(stderr, "\t-n <number of ports>: Number of virtual ports to create, must be in range 1-%d [%d]\n",
-		MAX_CHANNELS, nports);
-	fprintf(stderr, "\t-f <framesize>: Frame size [%d]\n", frame_size);
-	fprintf(stderr, "\t-m <modem>: Mode (basic) [basic] -- \"advanced\" is refused, not implemented\n");
-	fprintf(stderr, "\t-t <timeout>: reset modem after this number of seconds of silence [0=off]\n");
-	fprintf(stderr, "\t-p <number>: ping (CMD_TEST) and exit after this number of unanswered pings [0=off]\n");
-	fprintf(stderr, "\t-d: Fork, get a daemon\n");
-	fprintf(stderr, "\t-o <output log to file>: also log to this file\n");
-	fprintf(stderr, "\t-h: Show this help message\n");
+	size_t i = 0;
+
+	for (;;) {
+		size_t p, hl, len;
+		uint8_t ctrl, crc;
+
+		while (i < rx_len && rxb[i] != MUX_FLAG)
+			i++;
+		while (i + 1 < rx_len && rxb[i + 1] == MUX_FLAG)
+			i++;
+		if (rx_len - i < 4)
+			break;
+		p = i + 1;
+		ctrl = rxb[p + 1];
+		len = rxb[p + 2] >> 1;
+		hl = 3;
+		if (!(rxb[p + 2] & 1)) {
+			if (rx_len - p < 4)
+				break;
+			len |= (size_t)rxb[p + 3] << 7;
+			hl = 4;
+		}
+		if (len > (size_t)frame_size) {
+			LOGE("dropping a frame on dlci %u: length %zu over %d", rxb[p] >> 2, len, frame_size);
+			i = p;
+			continue;
+		}
+		if (rx_len - p < hl + len + 2)
+			break;
+		crc = crc_update(0xFF, rxb + p, hl);
+		if ((ctrl & ~CTRL_PF) == CTRL_UI)
+			crc = crc_update(crc, rxb + p + hl, len);
+		if ((uint8_t)(crc ^ rxb[p + hl + len]) != 0xFF) {
+			LOGE("dropping a frame on dlci %u: FCS mismatch", rxb[p] >> 2);
+			i = p;
+			continue;
+		}
+		if (rxb[p + hl + len + 1] != MUX_FLAG) {
+			LOGE("dropping a frame on dlci %u: no closing flag", rxb[p] >> 2);
+			i = p;
+			continue;
+		}
+		handle_frame(rxb[p] >> 2, ctrl, rxb + p + hl, len);
+		i = p + hl + len + 1;
+	}
+	memmove(rxb, rxb + i, rx_len - i);
+	rx_len -= i;
+}
+
+static ssize_t serial_read(void)
+{
+	ssize_t total = 0;
+
+	for (;;) {
+		ssize_t n = read(serial_fd, rxb + rx_len, sizeof(rxb) - rx_len);
+
+		if (n > 0) {
+			rx_len += (size_t)n;
+			total += n;
+			rx_parse();
+			if (rx_len == sizeof(rxb)) {
+				LOGE("%zu bytes without a complete frame, dropped", rx_len);
+				rx_len = 0;
+			}
+			continue;
+		}
+		if (n < 0 && errno == EAGAIN)
+			return total;
+		if (n < 0 && errno == EINTR)
+			continue;
+		LOGE("read %s: %s", serial_path, n ? strerror(errno) : "end of file");
+		return -1;
+	}
+}
+
+static void chan_read(struct chan *c)
+{
+	uint8_t buf[PTY_CHUNK];
+	ssize_t n = read(c->fd, buf, sizeof(buf));
+
+	if (n < 0 && (errno == EAGAIN || errno == EINTR))
+		return;
+	if (n <= 0) {
+		chan_reopen(c);
+		return;
+	}
+	if (c->refused) {
+		if (!c->refused_logged)
+			LOGW("%s: the modem refused this channel, discarding what the application writes", c->name);
+		c->refused_logged = true;
+		return;
+	}
+	for (ssize_t off = 0; off < n; off += frame_size) {
+		size_t chunk = (size_t)(n - off) < (size_t)frame_size ? (size_t)(n - off) : (size_t)frame_size;
+
+		tx_frame(c->dlci, CTRL_UIH, buf + off, chunk);
+	}
+}
+
+static bool can_take_pty_data(void)
+{
+	return txq_room() >= PTY_CHUNK + (PTY_CHUNK / (size_t)frame_size + 1) * FRAME_OVERHEAD;
+}
+
+static void close_mux(void)
+{
+	int64_t deadline = now_ms() + CLOSE_WAIT_MS;
+	bool waiting = false;
+
+	for (int i = 0; i < nchans; i++) {
+		if (!chans[i].open)
+			continue;
+		chans[i].disc_sent = true;
+		waiting = true;
+		tx_frame(chans[i].dlci, CTRL_DISC | CTRL_PF, NULL, 0);
+	}
+	tx_drain(deadline);
+	while (waiting && !term_signal) {
+		waiting = false;
+		for (int i = 0; i < nchans; i++)
+			waiting |= chans[i].disc_sent;
+		if (!waiting || serial_wait(deadline) <= 0 || serial_read() < 0)
+			break;
+	}
+	send_close_down();
+	tx_drain(now_ms() + EXIT_FLUSH_MS);
+}
+
+static void graceful_exit(void)
+{
+	LOGI("signal %d, leaving", (int)term_signal);
+	close_all_ptys();
+	close_serial();
+	exit(0);
+}
+
+static void run(void)
+{
+	struct pollfd pfd[1 + MAX_CHANS];
+	struct chan *pc[1 + MAX_CHANS];
+
+	for (;;) {
+		int n = 0;
+		int timeout = -1;
+		int r;
+
+		if (term_signal)
+			graceful_exit();
+		if (state == ST_CLOSING || state == ST_PEER_CLOSING)
+			return;
+		pfd[n].fd = serial_fd;
+		pfd[n].events = POLLIN | (txq_len && !tx_blocked ? POLLOUT : 0);
+		pc[n++] = NULL;
+		for (int i = 0; i < nchans; i++) {
+			struct chan *c = &chans[i];
+
+			if (c->fd < 0)
+				continue;
+			pfd[n].fd = c->fd;
+			pfd[n].events = 0;
+			if (setup_done && (c->open || c->refused) && !c->peer_fc && can_take_pty_data())
+				pfd[n].events |= POLLIN;
+			if (c->pending_len)
+				pfd[n].events |= POLLOUT;
+			pc[n++] = c;
+		}
+		if (txq_len)
+			timeout = TX_RETRY_MS;
+		if (!setup_done) {
+			int64_t left = setup_deadline - now_ms();
+
+			if (left <= 0)
+				report_and_exit("channel setup did not finish");
+			if (timeout < 0 || left < timeout)
+				timeout = (int)left;
+		}
+		r = poll(pfd, (nfds_t)n, timeout);
+		if (r < 0 && errno != EINTR)
+			report_and_exit("poll failed");
+		if (r > 0 && pfd[0].revents & POLLNVAL)
+			report_and_exit("the modem port is not open");
+		if (r > 0 && pfd[0].revents & (POLLIN | POLLERR | POLLHUP)) {
+			ssize_t got = serial_read();
+
+			if (got < 0)
+				report_and_exit("reading the modem port failed");
+			if (!got && !(pfd[0].revents & POLLIN))
+				report_and_exit("the modem port reports an error");
+		}
+		for (int k = 1; r > 0 && k < n; k++) {
+			struct chan *c = pc[k];
+			short ev = pfd[k].revents;
+
+			if (c->fd != pfd[k].fd || !ev)
+				continue;
+			if (ev & POLLOUT)
+				chan_drain(c);
+			if (c->fd != pfd[k].fd)
+				continue;
+			if (ev & POLLIN)
+				chan_read(c);
+			else if (ev & (POLLHUP | POLLERR | POLLNVAL))
+				chan_reopen(c);
+		}
+		if (txq_len && tx_flush())
+			report_and_exit("writing the modem port failed");
+	}
+}
+
+static void usage(const char *argv0)
+{
+	fprintf(stderr,
+		"usage: %s [-s port] [-f frame_size] [-n ports] [-m basic] [-b baud_index] [-P pin] [-r link_dir] [-v]\n"
+		"GSM 07.10 basic-mode multiplexer for the MediaTek modem AT port. Channels and their DLCIs follow the\n"
+		"SIM count (ro.boot.opt_sim_count, persist.radio.multisim.config); -n is accepted and ignored.\n"
+		"After every channel is up it sets vendor.ril.mux.start=1 and vendor.ril.mtk=1, which starts the RIL.\n",
+		argv0);
+	exit(2);
 }
 
 int main(int argc, char **argv)
 {
-	const char *serial_path = "/dev/ttyC0";
-	int nports = MAX_CHANNELS;
-	const char *mode = "basic";
-	bool daemonize = false;
-	const char *logpath = NULL;
-	int ping_answered = 1;
-	int unanswered_pings = 0;
+	struct sigaction sa;
+	char v[PROP_VALUE_MAX];
 	int opt;
 
-	while ((opt = getopt(argc, argv, "s:f:n:m:t:p:P:b:o:dh")) != -1) {
+	while ((opt = getopt(argc, argv, "s:f:n:m:b:P:r:vdo")) != -1) {
 		switch (opt) {
-		case 's': serial_path = optarg; break;
-		case 'f': g_frame_size = atoi(optarg); break;
-		case 'n': nports = atoi(optarg); break;
-		case 'm': mode = optarg; break;
-		case 't': g_silence_timeout_s = atoi(optarg); break;
-		case 'p': g_ping_max = atoi(optarg); break;
-		case 'P': /* PIN code -- not handled here, SIM PIN belongs to the RIL */
-			LOGW("-P (PIN) is accepted for command-line compatibility but not acted on; "
-			     "SIM PIN unlock is the RIL's job, not the mux's");
+		case 's':
+			serial_path = optarg;
 			break;
-		case 'b': /* baudrate -- ttyC0 is a CCCI virtual tty, no real baud to set */
+		case 'f':
+			frame_size = atoi(optarg);
 			break;
-		case 'o': logpath = optarg; break;
-		case 'd': daemonize = true; break;
-		case 'h':
+		case 'n':
+		case 'd':
+		case 'o':
+			break;
+		case 'm':
+			if (strcmp(optarg, "basic")) {
+				fprintf(stderr, "only -m basic is supported\n");
+				return 2;
+			}
+			break;
+		case 'b':
+			baud_index = atoi(optarg);
+			break;
+		case 'P':
+			pin = atoi(optarg);
+			break;
+		case 'r':
+			link_dir = optarg;
+			break;
+		case 'v':
+			verbose = true;
+			break;
 		default:
-			usage(argv[0], DEFAULT_FRAMESIZE, MAX_CHANNELS);
-			return (opt == 'h') ? 0 : 2;
+			usage(argv[0]);
 		}
 	}
+	if (frame_size < 1 || frame_size > MAX_FRAME)
+		usage(argv[0]);
 
-	if (strcmp(mode, "basic") != 0) {
-		fprintf(stderr, "mindone_mux: -m %s is NOT SUPPORTED (only \"basic\" is implemented -- "
-				"advanced option needs HDLC byte-stuffing this build does not have)\n", mode);
-		return 2;
-	}
-	if (g_frame_size <= 0 || g_frame_size > MAX_FRAME_DATA) {
-		fprintf(stderr, "mindone_mux: -f %d out of range (1-%d)\n", g_frame_size, MAX_FRAME_DATA);
-		return 2;
-	}
-	if (nports <= 0 || nports > MAX_CHANNELS) {
-		fprintf(stderr, "mindone_mux: -n %d out of range (1-%d)\n", nports, MAX_CHANNELS);
-		return 2;
+	prop_get("ro.vendor.mtk_mipc_support", v, "0");
+	if (v[0] == '1') {
+		LOGI("MIPC is in use, the AT multiplexer is not needed");
+		return 0;
 	}
 
-	if (logpath) {
-		g_logfile = fopen(logpath, "a");
-		if (!g_logfile)
-			fprintf(stderr, "mindone_mux: fopen(%s) failed: %s (continuing, logcat only)\n",
-				logpath, strerror(errno));
-	}
-
-	if (daemonize) {
-		pid_t pid = fork();
-		if (pid < 0) {
-			fprintf(stderr, "mindone_mux: fork() failed: %s\n", strerror(errno));
-			return 1;
-		}
-		if (pid > 0)
-			return 0; /* parent exits */
-		setsid();
-		int devnull = open("/dev/null", O_RDWR);
-		if (devnull >= 0) {
-			dup2(devnull, STDIN_FILENO);
-			dup2(devnull, STDOUT_FILENO);
-			dup2(devnull, STDERR_FILENO);
-			if (devnull > STDERR_FILENO)
-				close(devnull);
-		}
-	}
-
-	signal(SIGTERM, on_signal);
-	signal(SIGINT, on_signal);
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_signal;
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
+	signal(SIGHUP, SIG_IGN);
+	signal(SIGUSR1, SIG_IGN);
+	signal(SIGUSR2, SIG_IGN);
+	umask(0);
 
-	fcs_table_init();
-	for (int i = 0; i < MAX_CHANNELS; i++) {
-		g_chan[i].dlci = (uint8_t)(i + 1);
-		g_chan[i].name = g_chan_defs[i].name;
-		g_chan[i].master_fd = -1;
-		g_chan[i].state = CH_CLOSED;
-	}
-	mkdir(RADIO_DEV_DIR, 0770);
-
-	LOGI("mindone_mux starting: %s -f %d -n %d -m %s%s", serial_path, g_frame_size, nports,
-	     mode, daemonize ? " -d" : "");
-
-	g_serial_fd = open_serial(serial_path);
-	if (g_serial_fd < 0)
-		return 1;
-
-	if (mux_start(g_serial_fd) != 0) {
-		LOGE("Could not open serial device and start muxer");
-		close(g_serial_fd);
+	prop_set("vendor.ril.muxreport.run", "0");
+	prop_set("vendor.ril.mux.ee.md1", "0");
+	crc_init();
+	if (build_channels(sim_count())) {
+		LOGE("out of memory");
 		return 1;
 	}
+	LOGI("%s on %s: %d channels, frame size %d", argv[0], serial_path, nchans, frame_size);
 
-	drop_privileges();
-
-	rx_reset();
-	LOGI("Init control channel");
-	send_sabm(0);
-
-	struct timeval last_rx;
-	gettimeofday(&last_rx, NULL);
-	bool channels_started = false;
-	int startup_dlc_idx = 0;
-
-	while (!g_shutting_down) {
-		if (g_sig_received) {
-			LOGI("received signal %d, shutting down", g_sig_received);
-			teardown(0);
+	for (;;) {
+		if (open_serial())
+			report_and_exit("cannot open the modem port");
+		if (modem_handshake()) {
+			if (term_signal)
+				graceful_exit();
+			report_and_exit("the modem did not enter mux mode");
 		}
-
-		if (g_ctrl_open && !channels_started) {
-			LOGI("Starting mux mode");
-			channels_started = true;
-		}
-		if (channels_started && startup_dlc_idx < nports) {
-			struct channel *ch = &g_chan[startup_dlc_idx];
-			if (ch->state == CH_CLOSED && !ch->gave_up) {
-				LOGI("Allocating logical channel %d/%d", startup_dlc_idx + 1, nports);
-				ch->state = CH_OPENING;
-				ch->sabm_retries = 0;
-				gettimeofday(&ch->sabm_sent_at, NULL);
-				send_sabm(ch->dlci);
-			} else if (ch->state == CH_OPENING) {
-				/* N2=3 retries at ~1.5s (a conservative T1), matching
-				 * the general n_gsm.c retry shape (gsm->n2/t2,
-				 * n_gsm.c:2033-2047) without depending on its code.
-				 * Prevents one unresponsive DLC from hanging the
-				 * whole startup sequence forever. */
-				struct timeval now;
-				gettimeofday(&now, NULL);
-				long ms = (now.tv_sec - ch->sabm_sent_at.tv_sec) * 1000 +
-					  (now.tv_usec - ch->sabm_sent_at.tv_usec) / 1000;
-				if (ms > 1500) {
-					if (ch->sabm_retries < 3) {
-						ch->sabm_retries++;
-						LOGW("DLCI %u (%s): no UA within 1.5s, retrying SABM (%d/3)",
-						     ch->dlci, ch->name, ch->sabm_retries);
-						gettimeofday(&ch->sabm_sent_at, NULL);
-						send_sabm(ch->dlci);
-					} else {
-						LOGE("DLCI %u (%s): Logical channel couldn't be opened, skipping",
-						     ch->dlci, ch->name);
-						ch->state = CH_CLOSED;
-						ch->gave_up = true;
-					}
-				}
-			}
-			if (ch->state == CH_OPEN || ch->state == CH_CLOSING || ch->gave_up)
-				startup_dlc_idx++;
-		}
-
-		struct pollfd fds[1 + MAX_CHANNELS];
-		int nfds = 0;
-		int serial_idx = nfds;
-		fds[nfds].fd = g_serial_fd;
-		fds[nfds].events = POLLIN | (tx_pending() ? POLLOUT : 0);
-		nfds++;
-
-		int chan_idx[MAX_CHANNELS];
-		for (int i = 0; i < MAX_CHANNELS; i++) {
-			chan_idx[i] = -1;
-			struct channel *ch = &g_chan[i];
-			if (ch->master_fd < 0 || ch->state != CH_OPEN)
-				continue;
-			short ev = 0;
-			if (!ch->peer_fc_off)
-				ev |= POLLIN;
-			if (ch->pend_len > ch->pend_off)
-				ev |= POLLOUT;
-			if (ev == 0)
-				continue;
-			chan_idx[i] = nfds;
-			fds[nfds].fd = ch->master_fd;
-			fds[nfds].events = ev;
-			nfds++;
-		}
-
-		/* Once the channels are up the only thing a poll timeout drives is the watchdog,
-		 * and the watchdog is off unless -t/-p were passed - which the stock-mirroring
-		 * invocation never does. Waking five times a second to run a disabled branch is
-		 * pure battery cost on a 1960 mAh device, so block until there is real input and
-		 * keep a one-second tick only when the watchdog is actually armed. The 50 ms
-		 * timeout before the channels are started is kept: that phase is short and does
-		 * drive retries. */
-		int timeout_ms;
-
-		if (!channels_started)
-			timeout_ms = 50;
-		else if (g_silence_timeout_s > 0 || g_ping_max > 0)
-			timeout_ms = 1000;
+		if (mux_open())
+			report_and_exit("cannot set up the channels");
+		run();
+		if (state == ST_CLOSING)
+			close_mux();
 		else
-			timeout_ms = -1;
-		int pr = poll(fds, (nfds_t)nfds, timeout_ms);
-		if (pr < 0) {
-			if (errno == EINTR)
-				continue;
-			LOGE("poll() failed: %s", strerror(errno));
-			break;
-		}
-
-		if (pr > 0 && (fds[serial_idx].revents & POLLIN)) {
-			uint8_t buf[4096];
-			ssize_t n = read(g_serial_fd, buf, sizeof(buf));
-			if (n > 0) {
-				gettimeofday(&last_rx, NULL);
-				for (ssize_t i = 0; i < n; i++)
-					rx_feed(buf[i]);
-			} else if (n == 0) {
-				LOGE("serial closed(EOF) -- modem gone");
-				break;
-			} else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-				LOGE("read(ttyC0) failed: %s", strerror(errno));
-				break;
-			}
-		}
-		if (pr > 0 && (fds[serial_idx].revents & POLLOUT))
-			tx_flush(g_serial_fd);
-
-		for (int i = 0; i < MAX_CHANNELS; i++) {
-			if (chan_idx[i] < 0)
-				continue;
-			struct pollfd *pf = &fds[chan_idx[i]];
-			struct channel *ch = &g_chan[i];
-			if (pr > 0 && (pf->revents & POLLOUT))
-				flush_pending_pty(ch);
-			if (pr > 0 && (pf->revents & POLLIN)) {
-				uint8_t buf[MAX_FRAME_DATA];
-				size_t chunk = (size_t)g_frame_size;
-				if (chunk > sizeof(buf))
-					chunk = sizeof(buf);
-				ssize_t n = read(ch->master_fd, buf, chunk);
-				if (n > 0) {
-					send_uih(ch->dlci, buf, (size_t)n);
-				} else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-					LOGW("DLCI %u: read(pty) failed: %s -- Set to be reopened",
-					     ch->dlci, strerror(errno));
-				}
-			}
-		}
-
-		if (g_silence_timeout_s > 0) {
-			struct timeval now;
-			gettimeofday(&now, NULL);
-			long idle_s = now.tv_sec - last_rx.tv_sec;
-			if (idle_s >= g_silence_timeout_s) {
-				LOGE("Modem does not respond to AT commands (%ld s silence), giving up",
-				     idle_s);
-				teardown(3);
-			}
-		}
-		if (g_ping_max > 0 && channels_started && pr == 0) {
-			/* very simple keep-alive: on each poll timeout while
-			 * idle, we don't spam CMD_TEST every 200ms -- gate it
-			 * with the silence timer's own cadence instead by
-			 * reusing g_silence_timeout_s as the ping period when
-			 * set; if not set, ping watchdog is a no-op (documented
-			 * limitation, not a silent stub: logged once). */
-			static bool warned_once = false;
-			if (g_silence_timeout_s == 0 && !warned_once) {
-				LOGW("-p given without -t: ping watchdog needs a period, "
-				     "pass -t <seconds> too; ping watchdog disabled");
-				warned_once = true;
-			} else if (g_silence_timeout_s > 0) {
-				struct timeval now;
-				gettimeofday(&now, NULL);
-				static struct timeval last_ping = {0, 0};
-				if (now.tv_sec - last_ping.tv_sec >= g_silence_timeout_s / 2 + 1) {
-					last_ping = now;
-					uint8_t ka = (uint8_t)(ping_answered ? ++unanswered_pings : unanswered_pings);
-					send_ctrl(1, CBASE_TEST, &ka, 1);
-					if (unanswered_pings > g_ping_max) {
-						LOGE("no ping reply for %d times, giving up", unanswered_pings);
-						teardown(4);
-					}
-				}
-			}
-		}
+			tx_drain(now_ms() + EXIT_FLUSH_MS);
+		close_all_ptys();
+		close_serial();
+		LOGI("multiplexer closed, starting again in %d s", RESTART_DELAY_MS / 1000);
+		wait_ms(RESTART_DELAY_MS);
+		if (term_signal)
+			graceful_exit();
 	}
-
-	teardown(0);
-	return 0;
 }

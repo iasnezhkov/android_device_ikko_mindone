@@ -2,17 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// OffloadBridge - AIDL IOffload (V1) -> HIDL IOffloadConfig@1.0 + IOffloadControl@1.1 (stock tetheroffloadservice).
-//
-// Review 14.09 (BRIDGES-REVIEW-1409):
-//  - binds through OffloadHidlConn instead of raw sp<>s, adding linkToDeath()+reconnect (the
-//    previous version bound once at process start and never handled the HAL dying);
-//  - tracks mInitialized and enforces the initOffload()/stopOffload() state machine IOffload.aidl
-//    documents (EX_ILLEGAL_STATE) for the six methods the spec says "may only be called after
-//    initOffload and before stopOffload" - the previous version had no such check anywhere and
-//    always reported a generic EX_SERVICE_SPECIFIC instead;
-//  - takes mLock in every method (previously only initOffload/stopOffload did), which matters
-//    once the connection's sp<>s can change out from under a live call after a reconnect.
 #pragma once
 
 #include <aidl/android/hardware/tetheroffload/BnOffload.h>

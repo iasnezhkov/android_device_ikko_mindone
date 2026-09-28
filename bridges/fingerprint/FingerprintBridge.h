@@ -2,12 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: AIDL IFingerprint (V4) over HIDL IBiometricsFingerprint@2.1.
-//
-// Review 14.09 (BRIDGES-REVIEW-1409): now holds a FingerprintHidlConn instead of a raw
-// sp<> so a HIDL crash can be detected (linkToDeath) and recovered from (background reconnect);
-// the previous version bound once at process start and never handled the HAL dying. Also tracks
-// the currently active session so a death notification can be forwarded to it.
 #pragma once
 #include <aidl/android/hardware/biometrics/fingerprint/BnFingerprint.h>
 

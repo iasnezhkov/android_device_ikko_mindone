@@ -3,11 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-// mindone (06.09, F3839): private wpa_supplicant driver-command library for MediaTek gen4m.
-// Without it Lineage links libdrivercmdfallback (all DRIVER commands are no-ops), and SETSUSPENDMODE 1 on
-// screen-off never reaches wlan_drv_gen4m: CONNSYS wakes the AP 2.6 times/s (F3838), 98 mA while idle (F3836).
-// The driver accepts commands via ioctl SIOCDEVPRIVATE+1 (struct android_wifi_priv_cmd, gl_wext_priv.c:15944).
-// Selected via: BoardConfig.mk -> $(call soong_config_set,wpa_supplicant_8,board_wpa_supplicant_private_lib,lib_driver_cmd_mt66xx)
 cc_library_static {
     name: "lib_driver_cmd_mt66xx",
     vendor: true,

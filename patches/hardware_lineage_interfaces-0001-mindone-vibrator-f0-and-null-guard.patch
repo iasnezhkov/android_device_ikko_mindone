@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Mon, 28 Sep 2026 11:57:03 +0300
+Subject: [PATCH] mindone: legacy AIDL vibrator reports the measured resonant
+ frequency
+
+The AWINIC haptic driver exposes the measured resonant frequency in
+tenths of a hertz (/sys/class/leds/vibrator/f0, 1784 = 178.4 Hz on the
+device). getResonantFrequency() was a stub returning UNSUPPORTED, so the
+framework had nothing to tune haptic playback against; it now reads f0
+and returns it in Hz, and stays UNSUPPORTED if the node is missing or
+unreadable.
+
+mDevice had no initializer: the constructor returns early without
+assigning it when hw_get_module() or vibrator_open() fails, and on()/off()
+dereferenced it unchecked. It now starts as nullptr and on()/off() return
+EX_ILLEGAL_STATE when the device was never opened.
+
+Change-Id: I16041cb101ba724af96148703b803c6227dbec5a
+---
+ vibrator/aidl-legacy/Vibrator.cpp | 27 +++++++++++++++++++++++++--
+ vibrator/aidl-legacy/Vibrator.h   |  2 +-
+ 2 files changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/vibrator/aidl-legacy/Vibrator.cpp b/vibrator/aidl-legacy/Vibrator.cpp
+index aca2ecc..d299492 100644
+--- a/vibrator/aidl-legacy/Vibrator.cpp
++++ b/vibrator/aidl-legacy/Vibrator.cpp
+@@ -5,6 +5,8 @@
+  * SPDX-License-Identifier: Apache-2.0
+  */
+ 
++#include <cstdio>
++
+ #include <log/log.h>
+ 
+ #include <hardware/hardware.h>
+@@ -43,6 +45,10 @@ ndk::ScopedAStatus Vibrator::getCapabilities(int32_t* _aidl_return) {
+ }
+ 
+ ndk::ScopedAStatus Vibrator::off() {
++    if (mDevice == nullptr) {
++        ALOGE("off: vibrator device not opened");
++        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
++    }
+     int32_t ret = mDevice->vibrator_off(mDevice);
+     if (ret != 0) {
+         ALOGE("off command failed : %s", strerror(-ret));
+@@ -52,6 +58,10 @@ ndk::ScopedAStatus Vibrator::off() {
+ }
+ 
+ ndk::ScopedAStatus Vibrator::on(int32_t timeoutMs, const std::shared_ptr<IVibratorCallback>& /*callback*/) {
++    if (mDevice == nullptr) {
++        ALOGE("on: vibrator device not opened");
++        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
++    }
+     int32_t ret = mDevice->vibrator_on(mDevice, timeoutMs);
+     if (ret != 0) {
+         ALOGE("on command failed : %s", strerror(-ret));
+@@ -108,8 +118,21 @@ ndk::ScopedAStatus Vibrator::alwaysOnDisable(int32_t /*id*/) {
+     return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+ }
+ 
+-ndk::ScopedAStatus Vibrator::getResonantFrequency(float* /*_aidl_return*/) {
+-    return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
++ndk::ScopedAStatus Vibrator::getResonantFrequency(float* _aidl_return) {
++    FILE* fp = fopen("/sys/class/leds/vibrator/f0", "r");
++    if (fp == nullptr) {
++        return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
++    }
++    int raw = 0;
++    int matched = fscanf(fp, "%d", &raw);
++    fclose(fp);
++    if (matched != 1 || raw <= 0) {
++        ALOGE("getResonantFrequency: unexpected f0 content");
++        return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
++    }
++    *_aidl_return = static_cast<float>(raw) / 10.0f;
++    ALOGI("getResonantFrequency: %.1f Hz (raw %d)", *_aidl_return, raw);
++    return ndk::ScopedAStatus::ok();
+ }
+ 
+ ndk::ScopedAStatus Vibrator::getQFactor(float* /*_aidl_return*/) {
+diff --git a/vibrator/aidl-legacy/Vibrator.h b/vibrator/aidl-legacy/Vibrator.h
+index 0bba403..8ffc42d 100644
+--- a/vibrator/aidl-legacy/Vibrator.h
++++ b/vibrator/aidl-legacy/Vibrator.h
+@@ -54,7 +54,7 @@ public:
+     ndk::ScopedAStatus composePwle(const std::vector<PrimitivePwle> &composite, const std::shared_ptr<IVibratorCallback> &callback) override;
+ 
+ private:
+-    vibrator_device_t *mDevice;
++    vibrator_device_t *mDevice = nullptr;
+ };
+ 
+ } // namespace vibrator
+-- 
+2.43.0
+

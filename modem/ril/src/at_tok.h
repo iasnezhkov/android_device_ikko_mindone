@@ -15,13 +15,6 @@
 ** See the License for the specific language governing permissions and
 ** limitations under the License.
 */
-/*
- * mind_one note (RIL-MINIMAL-1409): copied verbatim, unmodified, from
- * hardware/ril/reference-ril/at_tok.{h,c} present read-only in the LineageOS tree
- * (hardware/ril/reference-ril/). This is a tiny, self-contained AT-response
- * tokenizer with no project-specific assumptions -- there is nothing to adapt. Apache-2.0,
- * original AOSP copyright preserved above.
- */
 #ifndef AT_TOK_H
 #define AT_TOK_H 1
 

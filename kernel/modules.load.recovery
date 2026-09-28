@@ -11,6 +11,12 @@ mtk_wdt.ko
 sec_rng.ko
 device_apc_common.ko
 device_apc_mt6789.ko
+clk-mediatek.ko
+clk-mt6789.ko
+mtk-eint.ko
+pinctrl-mtk-common-v2.ko
+pinctrl-paris.ko
+pinctrl-mt6789.ko
 clk_mt6789_audiosys.ko
 clk_mt6789_cam.ko
 clk_mt6789_mmsys.ko
@@ -63,6 +69,8 @@ mt63xx_debug.ko
 mtk_spmi_pmic.ko
 spmi_mtk_pmif.ko
 mt6358_regulator.ko
+reset-ti-syscon.ko
+ufs-mediatek.ko
 cqhci.ko
 mtk_mmc_autok.ko
 mtk_mmc.ko
@@ -108,7 +116,6 @@ pmic_lvsys_notify.ko
 meta.ko
 mtk_sync.ko
 emi.ko
-emi_mpu.ko
 tinysys_scmi.ko
 mtk_mbox_mailbox.ko
 irq_dbg.ko

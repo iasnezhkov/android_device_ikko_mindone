@@ -25,23 +25,29 @@
 ## 🧬 Why this one is unusual
 
 No vendor kernel source, no vendor device tree, no reference BSP, no vendor support of any
-kind — none of it was available or offered. So the phone runs a **hand-ported Google ACK**
-(`android12-5.10` → 6.1 → **6.12**) with ~340 out-of-tree modules (290 loaded at boot), and this
-tree carries **~16 400 lines of working code** where a device tree normally carries only
-configuration. "No vendor source" is about what was used to build this, not about what the phone
-needs to run: the proprietary blobs it still depends on (radio, GPU userspace, camera libraries)
-are not part of this repository at all — each user extracts those from their own device, as
-[docs/BLOBS.md](docs/BLOBS.md) describes.
+kind — none of it was available or offered, and the phone shipped with a vendor kernel that never
+moved past **5.10**, under Android 15. So it now runs a **hand-ported Google ACK**
+(`android12-5.10` → 6.1 → **6.12**) as a GKI mixed build — the `vmlinux` itself has no KMI
+difference from the stock GKI ABI, and every bit of device support (~296 modules) is out-of-tree
+and loadable — and this tree carries **~19 000 lines of working code** where a device tree
+normally carries only configuration. "No vendor source" is about what was used to build this, not
+about what the phone needs to run: the proprietary blobs it still depends on (radio, GPU
+userspace, camera libraries) are not part of this repository at all — each user extracts those
+from their own device, as [docs/BLOBS.md](docs/BLOBS.md) describes.
 
 <table>
-<tr><td width="25%"><b>🎧 Audio HAL</b><br><sub>1 800 lines</sub></td>
+<tr><td width="25%"><b>🎧 Audio HAL</b><br><sub>2 700 lines</sub></td>
 <td>A complete primary HAL, written from scratch. Not a wrapper.</td></tr>
-<tr><td><b>📐 Sensors HAL</b><br><sub>2 400 lines</sub></td>
+<tr><td><b>📐 Sensors HAL</b><br><sub>2 500 lines</sub></td>
 <td>Straight onto the kernel's <code>hf_manager</code>, calibration from <code>nvcfg</code>.</td></tr>
-<tr><td><b>🌉 HIDL→AIDL bridges</b><br><sub>2 100 lines</sub></td>
-<td>Four services keeping closed HIDL HALs alive as VINTF rises toward Android 17.</td></tr>
-<tr><td><b>📡 Modem stack</b><br><sub>10 000 lines</sub></td>
-<td>Open CCCI userspace. <b>Not shipped</b> — see why below.</td></tr>
+<tr><td><b>🌉 HIDL bridges</b><br><sub>2 700 lines</sub></td>
+<td>Five services keeping closed HIDL HALs reachable: four bridge to AIDL as VINTF rises toward
+Android 17, one proxies the camera provider (opt-in, not yet verified on hardware).</td></tr>
+<tr><td><b>🎬 Video (Codec2)</b><br><sub>~2 300 lines of patches</sub></td>
+<td>Hardware decode/encode through the open V4L2 Codec2 HAL — 27 patches to
+<code>external_v4l2_codec2</code> adding MediaTek block-format support, on by default.</td></tr>
+<tr><td><b>📡 Modem stack</b><br><sub>11 000 lines</sub></td>
+<td>Open CCCI userspace. <b>Not shipped</b>, except one small status helper — see why below.</td></tr>
 <tr><td><b>📶 Wi-Fi commands</b><br><sub>140 lines</sub></td>
 <td>Private <code>DRIVER</code> commands for MediaTek gen4m.</td></tr>
 </table>
@@ -87,6 +93,11 @@ cp <k6set>/*.ko                                          device/ikko/mindone/ker
 source build/envsetup.sh && breakfast mindone && mka bacon
 ```
 
+One SurfaceFlinger flag (a persistent on-disk shader cache, which avoids a first-navigation hitch
+after every boot) is turned on by a release configuration that is not part of this repository yet.
+The build works fine without it — shaders just compile on first use instead of coming from a
+warm cache.
+
 ➡️ **`out/target/product/mindone/lineage-23.2-<date>-UNOFFICIAL-mindone.zip`**
 
 > 🔴 **That package will not install as-is.** The device accepts only images signed with the
@@ -122,13 +133,16 @@ source build/envsetup.sh && breakfast mindone && mka bacon
 | **Audio** | works day to day: speaker, calls on earpiece and speaker, Bluetooth A2DP, microphone. Still being worked on — see below |
 | **Cellular** | calls, SMS, mobile data *(stock modem stack)* |
 | **Wireless** | Wi-Fi, Bluetooth, NFC |
-| **Camera** | both logical cameras of the flip module |
+| **Video** | hardware decode: AVC, HEVC (incl. 10-bit Main10), VP9, MPEG-4, H.263. Hardware encode: AVC, HEVC. Through the open V4L2 Codec2 HAL, on by default |
+| **Camera** | both logical cameras of the flip module: 4096×3072 stills (12.5 MP JPEG, RAW/DNG), 4096×2304 video, autofocus |
 | **System** | fingerprint, USB, charging, thermal, suspend/resume, 96 Hz |
 
 | 🚧 Unfinished | |
 |---|---|
 | **RPMB** | hardware-backed key storage fails its MAC check; falls back safely, boot unaffected |
-| **Slot `_b`** | not currently bootable: this device's `super` gives both slots the same physical region, and the recommended install writes only the active slot, so the other slot's partition metadata goes stale (`EXT4-fs: bad geometry`). Not a hardware fault — the metadata can be rewritten. That makes `_b` boot; it does **not** make it a spare copy, because both slots describe the same bytes. See [docs/FLASHING.md](docs/FLASHING.md) — «The one thing that matters» |
+| **50 MP capture / 120 fps** | not available with this camera HAL yet — stills top out at 12.5 MP, high-speed video does not reach 120 fps |
+| **10-bit ByteBuffers** | the V4L2 Codec2 HAL's down-conversion to 8-bit works for normal playback; decoding straight into a P010 buffer when an app explicitly asks for one still fails |
+| **60 Hz panel mode** | implemented, held back: the panel does not report its physical size, so a second refresh-rate mode would reach apps as `dpi 0` |
 | **vSIM** | parked deliberately |
 | **Our RIL** | 27 of 201 methods; not shipped |
 | **Audio HAL** | in use, but not finished: Bluetooth SCO media and headset mic are implemented and not yet verified on hardware, calls over SCO are not wired, and an external keyboard with its own DAC and headphone jack is coming — the HAL will be finished against it |
@@ -165,22 +179,37 @@ no wake-ups at all.
 element, tethering offload. Groundwork for **Android 17**, not a requirement of 16: A17 carries
 no VINTF matrix at level 6, and raising `target-level` means providing AIDL instances where it
 expects them. Each bridge survives its HIDL peer dying (`linkToDeath` + reconnect) instead of
-binding once at start.
+binding once at start. A fifth, different in kind, proxies the stock camera provider under its own
+HIDL interface at a second instance name; it is opt-in (`MINDONE_CAMERA_PROXY`, off by default)
+and has only been confirmed to build, not to run on the device yet.
+
+**🎬 Video.** Hardware decode (AVC, HEVC including 10-bit Main10, VP9, MPEG-4, H.263) and encode
+(AVC, HEVC) through the open V4L2 Codec2 HAL, replacing the stock OMX/C2 chain entirely by
+default. MediaTek's tiled block format is detiled through the MDP hardware block, with a CPU
+fallback when MDP is unavailable; a decoded 10-bit frame is down-converted to 8-bit for apps that
+ask for plain YUV. The one gap: an app that explicitly requests a P010 (10-bit) `ByteBuffer`
+still fails to get one.
 
 **📡 Modem.** An open CCCI userspace stack — the file service the modem needs at boot (all 37
 operations), the boot/state daemon, the RPC daemon, a line-discipline mux and a minimal RIL.
 🔴 **Deliberately not in `PRODUCT_PACKAGES`:** the RIL implements 27 of 201 methods and
 `emergencyDial` is still a stub, which disqualifies it from a phone anyone carries. The ROM runs
 the stock stack. The code is here because it is far enough along to continue, and it is exercised
-by swapping one component at a time against the live stock stack.
+by swapping one component at a time against the live stock stack. Two small pieces live alongside
+it: `volte_md_status`, a status helper that *is* shipped, mirrors modem state events into a vendor
+property for other components to read; `wfca/`, a Wi-Fi-calling agent for the same CCCI channel,
+is not yet wired into the build.
 
 ## ⚡ Device requirements
 
 - An unlocked bootloader.
 - 🔴 **All six logical partitions of both A/B slots start at the same offset inside `super`.**
-  "Flash to the spare slot and try it" does not exist here: after installing this ROM the other
-  slot will not boot at all. Keep a full dump of the stock partitions **including the partition
-  table** — without it there is nothing to restore from.
+  That is the normal shape of a Virtual A/B device, not a defect — `update_engine` (the LineageOS
+  Updater, or headless) writes the inactive slot through a copy-on-write snapshot and switches to
+  it correctly; both slots boot, and this is the recommended way to install. Writing partitions
+  by hand with `fastboot` bypasses that mechanism and is a fallback, not the everyday path. Either
+  way, keep a full dump of the stock partitions **including the partition table** before you
+  start — without it there is nothing to restore from.
 
 📖 Read **[docs/FLASHING.md](docs/FLASHING.md)** before writing anything.
 
@@ -188,14 +217,14 @@ by swapping one component at a time against the live stock stack.
 
 | | |
 |---|---|
-| **[docs/FLASHING.md](docs/FLASHING.md)** | How to install, why the usual two ways do not work here, and the traps |
+| **[docs/FLASHING.md](docs/FLASHING.md)** | How to install (`update_engine`, kernel-only OTAs, the fastboot fallback), and the traps |
 | **[docs/BLOBS.md](docs/BLOBS.md)** | How proprietary files are extracted, and what is deliberately left out |
 | **[docs/OWN-COMPONENTS.md](docs/OWN-COMPONENTS.md)** | The HALs and daemons this tree implements, and why each exists |
 | **[CONTRIBUTING.md](CONTRIBUTING.md)** | The one rule that matters, and how to report something usefully |
 
 ## 🧩 What else you need
 
-The kernel and all ~340 out-of-tree drivers live in **one separate repository**, Google
+The kernel and all ~296 out-of-tree drivers live in **one separate repository**, Google
 ACK-based, with a branch per kernel version — the same layout the Android Common Kernel itself
 uses. Take branch **`android16-6.12`**; that is what this tree is built against, and the only
 branch published so far. (The 6.1 step of the forward-port is not imported yet.)
@@ -221,8 +250,10 @@ transfers to any **MediaTek MT6789 / MT8781 (Helio G99)** bring-up:
 - **wpa_supplicant private driver commands for gen4m** (`lib_driver_cmd_mt66xx`);
 - an **open CCCI modem userspace stack** — normally shipped only as `ccci_mdinit`, `ccci_rpcd`
   and `ccci_fsd` binaries;
-- a device tree for hardware with **one shared `super` across both A/B slots**, offsets and
-  failure modes written down.
+- **MediaTek support for the open V4L2 Codec2 HAL** — block-format detiling through MDP, 10-bit
+  handling — as patches to `external_v4l2_codec2` rather than a fork;
+- a device tree for a Virtual A/B device with **shared base partitions across both A/B slots**,
+  offsets, the snapshot/merge mechanics and the failure modes actually seen, written down.
 
 <details>
 <summary><sub>Search terms</sub></summary>
@@ -231,7 +262,8 @@ transfers to any **MediaTek MT6789 / MT8781 (Helio G99)** bring-up:
 MT6789, MT8781, MT8781V-CA, Helio G99, MediaTek, LineageOS 23, Android 16,
 `audio.primary.mediatek`, tinyalsa, MTK AFE, `mt6366` codec, HIDL to AIDL bridge, VINTF
 target-level, `hf_manager`, gen4m, `lib_driver_cmd_mt66xx`, CCCI, `ccci_mdinit`, `extract-files`,
-proprietary-files, A/B slots, dynamic partitions, `super` layout.
+proprietary-files, A/B slots, dynamic partitions, `super` layout, V4L2 Codec2,
+`external_v4l2_codec2`, MDP detile, Virtual A/B, `update_engine`, `libsnapshot`, GKI mixed build.
 
 </sub>
 </details>

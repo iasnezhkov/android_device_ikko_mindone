@@ -1,0 +1,212 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 27 Sep 2026 19:27:15 +0300
+Subject: [PATCH 19/27] v4l2: cache the NV12 plane geometry instead of
+ importing every frame
+
+VideoFrame::detileFrom() called GraphicBufferMapper::importBufferNoValidate()
+and freeBuffer() on the destination C2 output block's handle on every single
+decoded frame, just to read its gralloc plane strides/offsets/sizes (the
+layout never actually depends on which pool buffer was handed out, only on
+width/height, and it is fixed for the life of one VideoFramePool). The actual
+MDP destination fd (handle->data[0]) was always read straight from the C2
+block, untouched by the import/free bracket.
+
+Live-swap on L20 (150 CodecRig-decoded 1080p AVC frames): the frames all came
+out correct, but fps dropped 158 -> 71 and dmesg showed bursts of
+"[MDP][ERR] translate_fd ion buf get fail fd:N -22" / "get mva fail, engine 6"
+(WROT0, destination side only). mdp_ioctl_ex.c:420 shows translate_fd() always
+calls dma_buf_get(meta->fd) synchronously inside the ioctl, even on the opt-in
+iova-cache path (mdp_iova_cache_find() at line 430 only runs after a
+successful dma_buf_get, keyed by the resolved struct dma_buf*, so this is not
+a stale-cache read of a recycled fd number; -22 means the kernel really did
+not see a dma_buf at that fd at that moment). The only per-frame operation
+touching the destination fd's neighbourhood anywhere in this pipeline is this
+import/freeBuffer bracket; the source fds are the VCU driver's own long-lived
+tiled buffers and are never imported/freed. Replay() (0008) was already shown
+(note-vhxpf8xausdx, O80 task i-lsdqjizvl7cb) to substitute the current frame's
+real fd on every call, not a frozen record-time one, so that is not it either.
+
+I cannot fully prove on this device-free pass whether the vendor Mapper HAL
+is violating the documented import/freeBuffer contract (freeBuffer must only
+release the imported clone's own resources, never the caller's original
+handle) or whether some other fd-table side effect of doing this dance every
+single frame is at fault; both would produce exactly this symptom, and ruling
+between them needs an on-device fd trace (tools/rigs/mdp-fd-correlate.sh,
+logs/v4l2-dec-0927/mdp/mdp-fd-trace.diff). Either way the fix is the same:
+stop doing it every frame. Plane geometry for a given (width, height) is
+queried once via the existing import/getPlaneLayouts/freeBuffer bracket and
+cached (4-slot table, guarded by a mutex since more than one component
+instance can decode concurrently); every later frame at that resolution reads
+the cached strides/offsets/sizes and never touches GraphicBufferMapper at all,
+so the destination block's own fd sees this bracket at most once per
+resolution instead of once per frame. This also removes 2 HAL round trips per
+frame from the hot path.
+
+Not device-verified this session (device off the cable). Test plan: CodecRig
+decode 3 codecs plus a 64x64->1080p resolution change, dmesg must show at
+most one translate_fd burst right after each resolution change (down from
+continuous), 150/150 frames, fps should recover most of the 158->71 gap.
+
+Change-Id: I641d3994cee460086d0c6f3c8dac569d6bfca132
+---
+ components/VideoFrame.cpp | 126 +++++++++++++++++++++++++++-----------
+ 1 file changed, 91 insertions(+), 35 deletions(-)
+
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+index d5fb3ae..9ff2ebf 100644
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include <v4l2_codec2/components/VideoFrame.h>
+ 
++#include <mutex>
+ #include <vector>
+ 
+ #include <C2AllocatorGralloc.h>
+@@ -16,6 +17,51 @@
+ 
+ namespace android {
+ 
++namespace {
++
++constexpr int kNV12PlaneGeometryCacheSlots = 4;
++
++struct NV12PlaneGeometry {
++    bool valid = false;
++    size_t strideY = 0;
++    size_t offsetY = 0;
++    size_t sizeY = 0;
++    size_t strideUV = 0;
++    size_t offsetUV = 0;
++    size_t sizeUV = 0;
++};
++
++struct NV12PlaneGeometryCacheEntry {
++    int width = 0;
++    int height = 0;
++    NV12PlaneGeometry geometry;
++};
++
++std::mutex g_nv12PlaneGeometryCacheMutex;
++NV12PlaneGeometryCacheEntry g_nv12PlaneGeometryCache[kNV12PlaneGeometryCacheSlots];
++int g_nv12PlaneGeometryCacheNext = 0;
++
++bool lookupNV12PlaneGeometry(int width, int height, NV12PlaneGeometry* out) {
++    std::lock_guard<std::mutex> lock(g_nv12PlaneGeometryCacheMutex);
++    for (const NV12PlaneGeometryCacheEntry& entry : g_nv12PlaneGeometryCache) {
++        if (entry.geometry.valid && entry.width == width && entry.height == height) {
++            *out = entry.geometry;
++            return true;
++        }
++    }
++    return false;
++}
++
++void storeNV12PlaneGeometry(int width, int height, const NV12PlaneGeometry& geometry) {
++    std::lock_guard<std::mutex> lock(g_nv12PlaneGeometryCacheMutex);
++    g_nv12PlaneGeometryCache[g_nv12PlaneGeometryCacheNext] =
++            NV12PlaneGeometryCacheEntry{width, height, geometry};
++    g_nv12PlaneGeometryCacheNext =
++            (g_nv12PlaneGeometryCacheNext + 1) % kNV12PlaneGeometryCacheSlots;
++}
++
++}
++
+ // static
+ std::unique_ptr<VideoFrame> VideoFrame::Create(std::shared_ptr<C2GraphicBlock> block) {
+     if (!block) return nullptr;
+@@ -72,44 +118,54 @@ bool VideoFrame::detileFrom(ImageConverter* primaryConverter, ImageConverter* fa
+         const C2Handle* const handle = mGraphicBlock->handle();
+         bool queried = false;
+         if (handle && handle->numFds > 0) {
+-            native_handle_t* unwrapped = UnwrapNativeCodec2GrallocHandle(handle);
+-            buffer_handle_t imported = nullptr;
+-            const status_t importErr =
+-                    unwrapped ? GraphicBufferMapper::get().importBufferNoValidate(unwrapped,
+-                                                                                  &imported)
+-                              : BAD_VALUE;
+-            if (unwrapped) {
+-                native_handle_delete(unwrapped);
+-            }
+-            if (importErr == NO_ERROR) {
+-                std::vector<ui::PlaneLayout> planeLayouts;
+-                const status_t err =
+-                        GraphicBufferMapper::get().getPlaneLayouts(imported, &planeLayouts);
+-                if (err == NO_ERROR && planeLayouts.size() >= 2) {
+-                    NV12WritableImage dst;
+-                    dst.dmaBufFd = handle->data[0];
+-                    dst.strideY = static_cast<size_t>(planeLayouts[0].strideInBytes);
+-                    dst.offsetY = static_cast<size_t>(planeLayouts[0].offsetInBytes);
+-                    dst.sizeY = static_cast<size_t>(planeLayouts[0].totalSizeInBytes);
+-                    dst.strideUV = static_cast<size_t>(planeLayouts[1].strideInBytes);
+-                    dst.offsetUV = static_cast<size_t>(planeLayouts[1].offsetInBytes);
+-                    dst.sizeUV = static_cast<size_t>(planeLayouts[1].totalSizeInBytes);
+-                    queried = true;
+-                    const bool converted =
+-                            primaryConverter->convertMM21ToNV12(src, dst, width, height);
+-                    GraphicBufferMapper::get().freeBuffer(imported);
+-                    if (converted) {
+-                        return true;
++            NV12PlaneGeometry geometry;
++            if (!lookupNV12PlaneGeometry(width, height, &geometry)) {
++                native_handle_t* unwrapped = UnwrapNativeCodec2GrallocHandle(handle);
++                buffer_handle_t imported = nullptr;
++                const status_t importErr =
++                        unwrapped ? GraphicBufferMapper::get().importBufferNoValidate(
++                                            unwrapped, &imported)
++                                  : BAD_VALUE;
++                if (unwrapped) {
++                    native_handle_delete(unwrapped);
++                }
++                if (importErr == NO_ERROR) {
++                    std::vector<ui::PlaneLayout> planeLayouts;
++                    const status_t err =
++                            GraphicBufferMapper::get().getPlaneLayouts(imported, &planeLayouts);
++                    if (err == NO_ERROR && planeLayouts.size() >= 2) {
++                        geometry.strideY = static_cast<size_t>(planeLayouts[0].strideInBytes);
++                        geometry.offsetY = static_cast<size_t>(planeLayouts[0].offsetInBytes);
++                        geometry.sizeY = static_cast<size_t>(planeLayouts[0].totalSizeInBytes);
++                        geometry.strideUV = static_cast<size_t>(planeLayouts[1].strideInBytes);
++                        geometry.offsetUV = static_cast<size_t>(planeLayouts[1].offsetInBytes);
++                        geometry.sizeUV = static_cast<size_t>(planeLayouts[1].totalSizeInBytes);
++                        geometry.valid = true;
++                        storeNV12PlaneGeometry(width, height, geometry);
++                    } else {
++                        ALOGE("Failed to query gralloc plane layouts for the zero-copy path, "
++                              "err=%d planes=%zu",
++                              err, planeLayouts.size());
+                     }
+-                } else {
+                     GraphicBufferMapper::get().freeBuffer(imported);
+-                    ALOGE("Failed to query gralloc plane layouts for the zero-copy path, err=%d "
+-                          "planes=%zu",
+-                          err, planeLayouts.size());
++                } else {
++                    ALOGE("Failed to import the graphic block for the zero-copy path, err=%d",
++                          importErr);
++                }
++            }
++            if (geometry.valid) {
++                NV12WritableImage dst;
++                dst.dmaBufFd = handle->data[0];
++                dst.strideY = geometry.strideY;
++                dst.offsetY = geometry.offsetY;
++                dst.sizeY = geometry.sizeY;
++                dst.strideUV = geometry.strideUV;
++                dst.offsetUV = geometry.offsetUV;
++                dst.sizeUV = geometry.sizeUV;
++                queried = true;
++                if (primaryConverter->convertMM21ToNV12(src, dst, width, height)) {
++                    return true;
+                 }
+-            } else {
+-                ALOGE("Failed to import the graphic block for the zero-copy path, err=%d",
+-                      importErr);
+             }
+         }
+         if (!queried) {
+-- 
+2.43.0
+

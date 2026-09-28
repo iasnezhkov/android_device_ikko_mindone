@@ -1,0 +1,35 @@
+From 8dce969258ea4d64d374352d871fb45157571c04 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sat, 26 Sep 2026 22:15:25 +0300
+Subject: [PATCH] v4l2: open the DMA-BUF heaps read-only, as their 0444 nodes
+ allow
+
+The tiled CAPTURE buffers of the MediaTek block-detile path are allocated from
+/dev/dma_heap/{system,mtk_mm,mtk_mm-uncached}. ueventd creates those nodes 0444
+system:system, the Codec2 service runs as mediacodec, and open(O_RDWR) fails with
+EACCES; DMA_HEAP_IOCTL_ALLOC only needs a read-only fd (libdmabufheap opens them
+O_RDONLY too). Every c2.v4l2 decoder therefore failed its first output setup:
+"Failed to allocate 4 internal tiled CAPTURE buffers" / "Failed to create
+V4L2Decoder for H264", and playback fell back to the software decoders.
+
+Change-Id: I81a4df66caffdae8ebf58d34bbd3f7a6fff45868
+---
+ v4l2/TiledCaptureBuffer.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/v4l2/TiledCaptureBuffer.cpp b/v4l2/TiledCaptureBuffer.cpp
+index ff51c05..028f861 100644
+--- a/v4l2/TiledCaptureBuffer.cpp
++++ b/v4l2/TiledCaptureBuffer.cpp
+@@ -25,7 +25,7 @@ constexpr const char* kDmaHeapCandidates[] = {
+ 
+ int allocFromAnyHeap(size_t size) {
+     for (const char* heapPath : kDmaHeapCandidates) {
+-        int heapFd = open(heapPath, O_RDWR | O_CLOEXEC);
++        int heapFd = open(heapPath, O_RDONLY | O_CLOEXEC);
+         if (heapFd < 0) {
+             continue;
+         }
+-- 
+2.43.0
+

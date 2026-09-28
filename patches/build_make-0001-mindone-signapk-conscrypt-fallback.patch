@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Mon, 28 Sep 2026 11:57:03 +0300
+Subject: [PATCH] mindone: SignApk falls back when conscrypt cannot load
+
+The tree builds with a native aarch64 JDK (its own x86-64 JDK crashes
+under Rosetta), and the conscrypt host JNI library exists for x86-64
+only. Security.insertProviderAt(new OpenSSLProvider(), 1) then throws
+UnsatisfiedLinkError and every APK signing step, and with it the build,
+fails. Conscrypt is only a speed optimisation here: on failure SignApk
+logs it and continues with Bouncy Castle and the JDK providers, which
+sign correctly.
+
+Change-Id: I3872c7839c9d886d9ab666829e113039710cc0b8
+---
+ tools/signapk/src/com/android/signapk/SignApk.java | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/tools/signapk/src/com/android/signapk/SignApk.java b/tools/signapk/src/com/android/signapk/SignApk.java
+index 654e19675d..f31f39f082 100644
+--- a/tools/signapk/src/com/android/signapk/SignApk.java
++++ b/tools/signapk/src/com/android/signapk/SignApk.java
+@@ -1076,7 +1076,12 @@ class SignApk {
+ 
+         // Install Conscrypt as the highest-priority provider. Its crypto primitives are faster than
+         // the standard or Bouncy Castle ones.
+-        Security.insertProviderAt(new OpenSSLProvider(), 1);
++        try {
++            Security.insertProviderAt(new OpenSSLProvider(), 1);
++        } catch (Throwable t) {
++            System.err.println("SignApk: conscrypt unavailable (" + t
++                    + "); using Bouncy Castle / JDK providers");
++        }
+         // Install Bouncy Castle (as the lowest-priority provider) because Conscrypt does not offer
+         // DSA which may still be needed.
+         // TODO: Stop installing Bouncy Castle provider once DSA is no longer needed.
+-- 
+2.43.0
+

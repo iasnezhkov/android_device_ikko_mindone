@@ -1,0 +1,983 @@
+From 9dd67ad027aa115ea945e25884f2558d9e4de8c3 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Wed, 23 Sep 2026 19:40:00 +0300
+Subject: [PATCH] v4l2: record-once/replay-per-frame MDP fast path for
+ MdpImageConverter
+
+Adds mdpreplay::MdpReplayEngine (v4l2/MdpReplay.{h,cpp}, exported header
+v4l2/include/v4l2_codec2/v4l2/MdpReplay.h) and wires it into
+MdpImageConverter::convertMM21ToNV12 (patch 6) so a stream's MM21->NV12
+DpBlitStream command buffer is captured once per (width, height, src/dst
+plane size) shape and replayed directly against /dev/mtk_mdp for every
+later frame of that shape, only patching the WRITE_FD/WRITE_FD_RDMA src
+and dst fd fields, instead of paying DpBlitStream's per-frame C++/JNI-less
+but still non-trivial call cost every time.
+
+This is the same technique tools/rigs/mdpreplay.c already proved on the
+device this session: a real decoder frame (640x480 MM21) replayed through
+an fd-substituted capture matched DpBlitStream's own output byte for byte
+("phase B frame 0 PASS", logs/o66_1-2309/mdp-fast.txt), and replay cost on
+kernel G5 was measured at 1920x1088 wall 7.45 ms/frame (sys 3.21 ms, user
+0.003 ms), 640x480 wall 1.96 ms (sys 1.20 ms), against DpBlitStream's own
+11.5-14 ms/frame with real user CPU. This patch does not re-measure any of
+that; it productionizes the same struct layouts and capture/replay
+algorithm as a per-instance engine instead of mdpreplay.c's single-shot,
+whole-process globals, so two decoder instances can each run their own
+capture without sharing state, and ships an NDK test driver
+(tools/rigs/mdpreplayhal-test.cpp) that reproduces mdpreplay.c's phase A/B
+checks through this engine's own API, not a second implementation of the
+technique.
+
+Struct reuse: OpMeta/MdpSubmit/MdpWait/CmdqSecDataStruct/MdpPmqos and the
+CMDQ_IOCTL_* request numbers in MdpReplay.h are the same layout as
+tools/rigs/mdpreplay.c's op_meta/mdp_submit/mdp_wait/cmdqSecDataStruct,
+transcribed field-for-field (not derived from a kernel header, since none
+is exported to userspace here) and re-asserted with the same
+sizeof()==336/16/48/264 static_asserts mdpreplay.c already carries. The
+_IOW/_IOR request numbers are computed at compile time from the same
+magic/nr/size triples mdpreplay.c uses, spelled out from
+<asm-generic/ioctl.h>'s bit layout instead of including <sys/ioctl.h>, so
+MdpReplay.h has zero system-header dependencies beyond <cstdint>/
+<cstddef> and compiles unmodified in both the HAL tree and a plain NDK
+executable. mdpreplay.c itself is treated as read-only reference for this
+work (main thread commit 567ec41 added a -D option to it); none of its
+code is reused verbatim, only the struct layout and algorithm it already
+proved.
+
+Byte-identity between tools/rigs/ and this patch: the copies this patch
+adds at v4l2/MdpReplay.cpp, v4l2/include/v4l2_codec2/v4l2/MdpReplay.h and
+service/MdpReplayInterpose.cpp were produced by `diff -q` against
+tools/rigs/MdpReplay.cpp, tools/rigs/v4l2_codec2/v4l2/MdpReplay.h and
+tools/rigs/MdpReplayInterpose.cpp respectively before this patch was
+generated (all three reported identical); the NDK test driver
+(tools/rigs/mdpreplayhal-test.cpp) compiles those same three tools/rigs/
+files directly, unmodified, so the engine this patch ships is exactly the
+engine the test driver exercises, not a fork of it. Re-checking this after
+any future edit to either copy is one `diff` invocation per file; nothing
+generates one copy from the other automatically, so a straight text edit
+to only one side will silently break the claim until someone runs that
+diff again.
+
+Interposition mechanism (deliverable: ioctl() defined in the service
+executable, not a shared lib): the service binary for this v4l2-based
+Codec2 HAL is android.hardware.media.c2@1.2-service-v4l2
+(service/Android.bp, service/service.cpp, fetched from
+https://android.googlesource.com/platform/external/v4l2_codec2
+refs/heads/main on 23.09.2026 since this task is device-free and cannot
+read the checked-out tree in the Lima guest). service/MdpReplayInterpose.cpp
+adds a process-wide `extern "C" int ioctl(int, int, ...)` there, forwarding
+to mdpreplay::ActiveRecordingEngine() (a thread_local getter defined in
+MdpReplay.cpp, exported from libv4l2_codec2_v4l2.so, which the service
+binary already links via shared_libs per the real Android.bp above) and
+otherwise falling through to `syscall(__NR_ioctl, ...)`, exactly
+mdpreplay.c's own interposition technique and its own documented
+rationale for why it works from the root executable without LD_PRELOAD:
+"the executable is always part of the global symbol group". This patch
+adds `ldflags: ["-Wl,--export-dynamic"]` (the standard Soong spelling of
+-rdynamic for a cc_binary, confirmed against a real Android.bp on this
+machine: platform/frameworks/base's app_process, which carries the
+identical "-Wl,--export-dynamic" ldflags entry for the same reason -
+exporting its own symbols to libraries it does not dlopen itself) to the
+android.hardware.media.c2@1.2-service-v4l2 cc_binary so libdpframework.so
+resolves `ioctl` against this symbol instead of libc's, process-wide, the
+same way it already does inside tools/rigs/mdpreplay.c on the device.
+MdpImageConverter.cpp itself never calls ioctl() and does not need to
+link anything new: it only calls MdpReplayEngine::BeginRecord/EndRecord/
+Replay, which live in MdpReplay.cpp (v4l2/Android.bp already builds that
+file into libv4l2_codec2_v4l2.so once added to srcs, below).
+
+Thread safety for two concurrent decoder instances (each owning its own
+MdpImageConverter and hence its own MdpReplayEngine): the "active
+recording engine" is a thread_local pointer, set by BeginRecord() and
+cleared by EndRecord(), bracketing exactly the DpBlitStream::invalidate()
+call on whichever thread called convertMM21ToNV12() - normally each
+V4L2Decoder's own device thread. Two decoders' device threads therefore
+never see each other's capture even though the interposed ioctl() symbol
+is one process-wide C function, because thread_local storage is
+per-thread by construction; no additional lock is added or needed for
+this, matching the task's own suggested design.
+
+MdpImageConverter::convertMM21ToNV12 change: computes an mdpreplay::Config
+key (width, height, and the same srcPlaneSizes/dstPlaneSizes values
+already being computed for setSrcBuffer/setDstBuffer, unchanged) before
+doing anything else; if mEngine already holds a ready capture for that
+exact Config, it tries mEngine.Replay(src.dmaBufFd, dst.dmaBufFd) and
+returns immediately on success. Otherwise (first frame of a stream, a
+resolution change, or Replay() having failed a call it did not disarm -
+see below) it falls through to exactly the same
+setSrcConfig/setSrcBuffer/setDstConfig/setDstBuffer/invalidate sequence
+patch 6 already had, now bracketed by
+mEngine.BeginRecord(cfg, ...)/mEngine.EndRecord(cfg, ..., reason) around
+the invalidate() call only (matching mdpreplay.c's own g_hook_active
+window, since setSrcConfig/setSrcBuffer/etc. do not themselves reach
+CMDQ_IOCTL_ASYNC_EXEC). EndRecord's own validation refuses the capture
+(logged via ALOGI, non-fatal) on: invalidate() itself failing, the
+interposed ioctl() never firing at all (the same self-verification
+mdpreplay.c does, catching a linker-namespace miss instead of silently
+reporting nothing), any WRITE_FD/WRITE_FD_RDMA op_meta whose fd is
+neither the record-time src nor dst fd (no unknown buffers, per the task
+brief), or a job with meta_count above the 512-entry cap (no truncation).
+The frame in flight always completes via DpBlitStream's own return value
+in this branch, unchanged from patch 6 - MdpReplayEngine only ever adds a
+faster path for later frames, never blocks the current one. Fallback
+chain end to end: MdpReplayEngine::Replay() -> DpBlitStream (both inside
+MdpImageConverter) -> LibyuvImageConverter (VideoFrame::detileFrom's
+existing primaryFailed plumbing from patch 6, untouched by this patch).
+
+Open hypothesis, not exercised on a device: if Replay() fails on a config
+that still matches (e.g. a transient hardware/queue error, not a
+resolution change), MdpImageConverter falls through to the DpBlitStream
+path for that one frame, which re-arms the capture; it does not back off
+after repeated failures. A persistent (non-transient) replay fault would
+therefore cost one extra failed CMDQ_IOCTL_ASYNC_EXEC attempt on top of
+the DpBlitStream fallback on every single frame rather than disabling
+itself, since there is no device data yet to calibrate a failure
+threshold; flagged here rather than guessed at.
+
+Open hypothesis, not exercised on a device: MdpReplayEngine::teardown()
+calls CMDQ_IOCTL_IOVA_UNMAP (kernel commits 8209a3bb8 + 1d68754de) for
+every distinct fd Replay() has ever submitted, capped at the last 16
+(trackFd()'s ring), when the engine itself is destroyed. Those fds belong
+to the Codec2 graphic block pool, not to this engine, and the pool may
+already have closed and even reused some of those fd numbers for
+unrelated buffers well before the engine is torn down. Per the kernel
+patch's own ENOENT-tolerant contract (already relied on by
+tools/rigs/mdpreplay.c's iova_unmap_one()), unmapping a stale or reused fd
+number should at worst force one extra remap on that fd's next real use,
+not corrupt anything, since IOVA_UNMAP only drops a cached mapping, never
+touches buffer content directly - this reasoning is unverified on real
+hardware and listed here rather than assumed correct.
+
+AOSP/Soong surface this patch relies on, so it can be checked without a
+build: Android.bp `srcs`/`shared_libs`/`ldflags` are ordinary Soong
+cc_library/cc_binary properties (no `allow_undefined_symbols` or other
+exotic property is needed anywhere - the executable's ioctl() reaches
+mdpreplay::ActiveRecordingEngine() as an ordinary call into a shared_libs
+dependency the service binary already declares, and
+libv4l2_codec2_v4l2.so itself fully resolves every symbol MdpReplay.cpp
+needs, libc only, at its own link time); GraphicBufferMapper/plane layout
+and the DpBlitStream mangled-symbol redeclaration are unchanged from
+patch 6 and not touched here.
+
+Not verified / could not be verified device-free: service/Android.bp's
+exact content in this fork - the real upstream file (reproduced above)
+names the binary android.hardware.media.c2@1.2-service-v4l2 with -32/-64
+multilib suffixes, but configs/media/android.hardware.media.c2-v4l2-mindone.rc
+in this repo starts /vendor/bin/hw/android.hardware.media.c2-service-v4l2
+(no version tag, no suffix), which means some device-specific override
+this task had no visibility into (outside external_v4l2_codec2, so out of
+scope for these patches by the same convention 0001-0007 already follow)
+renames or reconfigures that cc_binary; this patch's service/Android.bp
+hunk may need re-anchoring by hand against the real checked-out file
+before `git am`. The v4l2/Android.bp hunk below is not affected by this
+uncertainty: its context lines are the real post-patch-6 content, taken
+directly from patch 6's own diff (v4l2/Android.bp @@ -26,6 +26,7 @@ and
+the "MdpImageConverter.cpp" line it added), not reconstructed from
+upstream. Nothing in this patch has been m/mm-built or run on the device;
+verified only: MdpReplay.h/.cpp/MdpReplayInterpose.cpp/mdpreplayhal-test.cpp
+compile with zero warnings under
+aarch64-linux-android34-clang++ -O2 -Wall -Wextra -rdynamic (NDK
+28.2.13676358), and the four struct static_asserts pass at compile time.
+
+Re-anchored 24.09 against the real checked-out tree (0001-0007 on 16700e0):
+the service/Android.bp hunk lands in cc_binary
+android.hardware.media.c2-service-v4l2, the binary
+configs/media/android.hardware.media.c2-v4l2-mindone.rc starts, and the
+MdpImageConverter.h context carries the upstream "}  // namespace android"
+line the first version had dropped. git am of 0001-0008 now applies
+without fuzz; still not built or run.
+
+32-bit build fix (25.09): MdpReplayEngine::Replay's three pointer->cmdqU32Ptr_t
+conversions (submit.metas, submit.prop_addr, submit.hw_metas_read_v1) went
+through reinterpret_cast<cmdqU32Ptr_t>(reinterpret_cast<uintptr_t>(ptr)). On
+a 32-bit build uintptr_t is unsigned int while cmdqU32Ptr_t is unsigned long
+long (the CMDQ ioctl ABI's pointer field is always 64-bit; a 32-bit caller
+zero-extends into it), so that inner-to-outer step is a widening integer
+conversion, which reinterpret_cast does not allow: "reinterpret_cast from
+'uintptr_t' (aka 'unsigned int') to 'cmdqU32Ptr_t' (aka 'unsigned long
+long') is not allowed" at MdpReplay.cpp:240, :244 and :249. Changed the
+outer cast to static_cast<cmdqU32Ptr_t>(...), an ordinary integer
+conversion; the inner pointer-to-uintptr_t reinterpret_cast is unchanged.
+Not built on a device in either width; to verify: MdpReplay.cpp compiles
+with zero warnings under both the 64-bit toolchain this patch was already
+checked against and a 32-bit (arm) one.
+
+Change-Id: Ie1c9a7f4b2d6e8305c1f7a9b4d6e0c2a8f5b3d71
+---
+ service/Android.bp                            |   8 +
+ service/MdpReplayInterpose.cpp                |  23 ++
+ v4l2/Android.bp                               |   1 +
+ v4l2/MdpImageConverter.cpp                    |  38 ++-
+ v4l2/MdpReplay.cpp                            | 308 ++++++++++++++++++
+ .../v4l2_codec2/v4l2/MdpImageConverter.h      |   2 +
+ v4l2/include/v4l2_codec2/v4l2/MdpReplay.h     | 287 ++++++++++++++++
+ 7 files changed, 658 insertions(+), 9 deletions(-)
+ create mode 100644 service/MdpReplayInterpose.cpp
+ create mode 100644 v4l2/MdpReplay.cpp
+ create mode 100644 v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
+
+diff --git a/service/Android.bp b/service/Android.bp
+index 408f229..9681f1d 100644
+--- a/service/Android.bp
++++ b/service/Android.bp
+@@ -40,10 +40,18 @@ cc_binary {
+         "libv4l2_codec2_service",
+     ],
+ 
++    srcs: [
++        "MdpReplayInterpose.cpp",
++    ],
++
+     shared_libs: [
+         "libv4l2_codec2_v4l2",
+     ],
+ 
++    ldflags: [
++        "-Wl,--export-dynamic",
++    ],
++
+     cflags: [
+         "-DV4L2_CODEC2_SERVICE_V4L2_STORE",
+     ],
+diff --git a/service/MdpReplayInterpose.cpp b/service/MdpReplayInterpose.cpp
+new file mode 100644
+index 0000000..3f2ec45
+--- /dev/null
++++ b/service/MdpReplayInterpose.cpp
+@@ -0,0 +1,23 @@
++#include <v4l2_codec2/v4l2/MdpReplay.h>
++
++#include <cstdarg>
++#include <sys/syscall.h>
++#include <unistd.h>
++
++extern "C" int ioctl(int fd, int request, ...) {
++    va_list ap;
++    va_start(ap, request);
++    void *argp = va_arg(ap, void *);
++    va_end(ap);
++
++    mdpreplay::MdpReplayEngine *engine = mdpreplay::ActiveRecordingEngine();
++    if (engine) {
++        if (static_cast<unsigned int>(request) == mdpreplay::kCmdqIoctlAsyncExec) {
++            engine->OnAsyncExec(fd, argp);
++        } else if (static_cast<unsigned int>(request) == mdpreplay::kCmdqIoctlAsyncWait) {
++            engine->OnAsyncWait();
++        }
++    }
++
++    return static_cast<int>(syscall(__NR_ioctl, fd, request, argp));
++}
+diff --git a/v4l2/Android.bp b/v4l2/Android.bp
+index 4e7bb66..7c7ae27 100644
+--- a/v4l2/Android.bp
++++ b/v4l2/Android.bp
+@@ -27,6 +27,7 @@ cc_library {
+         "V4L2EncodeComponent.cpp",
+         "TiledCaptureBuffer.cpp",
+         "MdpImageConverter.cpp",
++        "MdpReplay.cpp",
+     ],
+     export_include_dirs: [
+         "include",
+diff --git a/v4l2/MdpImageConverter.cpp b/v4l2/MdpImageConverter.cpp
+index 350b26d..020889e 100644
+--- a/v4l2/MdpImageConverter.cpp
++++ b/v4l2/MdpImageConverter.cpp
+@@ -86,7 +86,6 @@ bool MdpImageConverter::convertMM21ToNV12(const TiledMM21Image& src, const NV12W
+         return false;
+     }
+ 
+-    DpBlitStream* const stream = mImpl->stream;
+     unsigned int srcPlaneSizes[2];
+     unsigned int dstPlaneSizes[2];
+     int rc;
+@@ -94,6 +93,27 @@ bool MdpImageConverter::convertMM21ToNV12(const TiledMM21Image& src, const NV12W
+     srcPlaneSizes[0] = static_cast<unsigned int>(width) * static_cast<unsigned int>(height);
+     srcPlaneSizes[1] = srcPlaneSizes[0] / 2;
+ 
++    const size_t uvOffset =
++            dst.offsetUV != 0 ? dst.offsetUV : dst.strideY * static_cast<size_t>(height);
++    const size_t uvSize =
++            dst.sizeUV != 0 ? dst.sizeUV : dst.strideUV * static_cast<size_t>((height + 1) / 2);
++    dstPlaneSizes[0] = static_cast<unsigned int>(uvOffset);
++    dstPlaneSizes[1] = static_cast<unsigned int>(uvSize);
++
++    mdpreplay::Config cfg;
++    cfg.width = width;
++    cfg.height = height;
++    cfg.srcPlaneSize0 = srcPlaneSizes[0];
++    cfg.srcPlaneSize1 = srcPlaneSizes[1];
++    cfg.dstPlaneSize0 = dstPlaneSizes[0];
++    cfg.dstPlaneSize1 = dstPlaneSizes[1];
++
++    if (mEngine.configMatches(cfg) && mEngine.Replay(src.dmaBufFd, dst.dmaBufFd)) {
++        return true;
++    }
++
++    DpBlitStream* const stream = mImpl->stream;
++
+     rc = stream->setSrcConfig(width, height, DP_COLOR_420_BLKP, DP_INTERLACE_NONE, nullptr);
+     if (rc != 0) {
+         ALOGE("DpBlitStream::setSrcConfig failed, rc=%d", rc);
+@@ -104,14 +124,6 @@ bool MdpImageConverter::convertMM21ToNV12(const TiledMM21Image& src, const NV12W
+         ALOGE("DpBlitStream::setSrcBuffer failed, rc=%d", rc);
+         return false;
+     }
+-
+-    const size_t uvOffset =
+-            dst.offsetUV != 0 ? dst.offsetUV : dst.strideY * static_cast<size_t>(height);
+-    const size_t uvSize =
+-            dst.sizeUV != 0 ? dst.sizeUV : dst.strideUV * static_cast<size_t>((height + 1) / 2);
+-    dstPlaneSizes[0] = static_cast<unsigned int>(uvOffset);
+-    dstPlaneSizes[1] = static_cast<unsigned int>(uvSize);
+-
+     rc = stream->setDstConfig(width, height, DP_COLOR_NV12, DP_INTERLACE_NONE, nullptr);
+     if (rc != 0) {
+         ALOGE("DpBlitStream::setDstConfig failed, rc=%d", rc);
+@@ -123,7 +135,15 @@ bool MdpImageConverter::convertMM21ToNV12(const TiledMM21Image& src, const NV12W
+         return false;
+     }
+ 
++    mEngine.BeginRecord(cfg, src.dmaBufFd, dst.dmaBufFd);
+     rc = stream->invalidate(nullptr);
++    char reason[mdpreplay::kReasonBufSize];
++    if (!mEngine.EndRecord(cfg, src.dmaBufFd, dst.dmaBufFd, rc == 0, reason, sizeof(reason))) {
++        ALOGI("MDP replay capture not armed for %dx%d: %s", width, height, reason);
++    } else {
++        ALOGI("MDP replay capture armed for %dx%d, %d job(s)", width, height, mEngine.jobCount());
++    }
++
+     if (rc != 0) {
+         ALOGE("DpBlitStream::invalidate failed, rc=%d", rc);
+         return false;
+diff --git a/v4l2/MdpReplay.cpp b/v4l2/MdpReplay.cpp
+new file mode 100644
+index 0000000..84cff32
+--- /dev/null
++++ b/v4l2/MdpReplay.cpp
+@@ -0,0 +1,308 @@
++#include <v4l2_codec2/v4l2/MdpReplay.h>
++
++#include <cerrno>
++#include <cstdio>
++#include <cstdint>
++#include <cstring>
++#include <fcntl.h>
++#include <sys/syscall.h>
++#include <unistd.h>
++
++namespace mdpreplay {
++
++namespace {
++
++thread_local MdpReplayEngine *g_activeEngine = nullptr;
++
++constexpr char kMdpDeviceNode[] = "/dev/mtk_mdp";
++
++}
++
++MdpReplayEngine *ActiveRecordingEngine() {
++    return g_activeEngine;
++}
++
++MdpReplayEngine::MdpReplayEngine() {
++    for (int i = 0; i < kMaxTrackedFds; i++) {
++        trackedFds_[i] = -1;
++    }
++}
++
++MdpReplayEngine::~MdpReplayEngine() {
++    teardown();
++}
++
++void MdpReplayEngine::BeginRecord(const Config &cfg, int srcFd, int dstFd) {
++    (void)cfg;
++    jobCount_ = 0;
++    jobOverflow_ = false;
++    waitSeen_ = 0;
++    mdpFdSeen_ = -1;
++    recordSrcFd_ = srcFd;
++    recordDstFd_ = dstFd;
++    ready_ = false;
++    recording_ = true;
++    g_activeEngine = this;
++}
++
++void MdpReplayEngine::OnAsyncExec(int fd, const void *submitArg) {
++    if (!recording_) {
++        return;
++    }
++    if (mdpFdSeen_ < 0) {
++        mdpFdSeen_ = fd;
++    } else if (mdpFdSeen_ != fd) {
++        fprintf(stderr, "mdpreplay: CMDQ_IOCTL_ASYNC_EXEC seen on fd %d, first was %d\n", fd,
++                mdpFdSeen_);
++    }
++    if (jobCount_ >= kMaxJobs) {
++        jobOverflow_ = true;
++        return;
++    }
++
++    const MdpSubmit *submit = reinterpret_cast<const MdpSubmit *>(submitArg);
++    CapturedJob &job = jobs_[jobCount_];
++    job = CapturedJob();
++    job.submit = *submit;
++
++    uint32_t copyCount = submit->meta_count;
++    if (copyCount > kMaxMetasPerJob) {
++        job.truncated = true;
++        copyCount = kMaxMetasPerJob;
++    }
++    job.metaCount = copyCount;
++    if (copyCount && submit->metas) {
++        memcpy(job.metas, reinterpret_cast<const void *>(static_cast<uintptr_t>(submit->metas)),
++               static_cast<size_t>(copyCount) * sizeof(OpMeta));
++    }
++
++    if (submit->prop_size && submit->prop_addr) {
++        memcpy(&job.propSnapshot,
++               reinterpret_cast<const void *>(static_cast<uintptr_t>(submit->prop_addr)),
++               sizeof(job.propSnapshot));
++        job.hasPropSnapshot = true;
++    }
++
++    if (submit->read_count_v1 && submit->hw_metas_read_v1) {
++        uint32_t hwCount = submit->read_count_v1;
++        if (hwCount > kMaxHwMeta) {
++            hwCount = kMaxHwMeta;
++        }
++        memcpy(job.hwSnapshot,
++               reinterpret_cast<const void *>(static_cast<uintptr_t>(submit->hw_metas_read_v1)),
++               static_cast<size_t>(hwCount) * sizeof(HwMeta));
++        job.hasHwSnapshot = true;
++    }
++
++    jobCount_++;
++}
++
++void MdpReplayEngine::OnAsyncWait() {
++    if (!recording_) {
++        return;
++    }
++    waitSeen_++;
++}
++
++void MdpReplayEngine::classifyRoles(int srcFd, int dstFd) {
++    for (int j = 0; j < jobCount_; j++) {
++        CapturedJob &job = jobs_[j];
++        job.unknownFdCount = 0;
++        for (uint32_t i = 0; i < job.metaCount; i++) {
++            OpMeta &m = job.metas[i];
++            if (m.op != kOpWriteFd && m.op != kOpWriteFdRdma) {
++                job.role[i] = 0;
++                continue;
++            }
++            if (static_cast<int>(m.fd) == srcFd) {
++                job.role[i] = 1;
++            } else if (static_cast<int>(m.fd) == dstFd) {
++                job.role[i] = 2;
++            } else {
++                job.role[i] = 3;
++                job.unknownFdCount++;
++            }
++        }
++    }
++}
++
++bool MdpReplayEngine::validateCapture(char *reason, size_t reasonLen) {
++    if (jobOverflow_) {
++        snprintf(reason, reasonLen,
++                 "invalidate() issued more than %d CMDQ_IOCTL_ASYNC_EXEC calls, capture is "
++                 "incomplete",
++                 kMaxJobs);
++        return false;
++    }
++    for (int j = 0; j < jobCount_; j++) {
++        if (jobs_[j].truncated) {
++            snprintf(reason, reasonLen,
++                     "job %d has meta_count > %d, capture is incomplete", j, kMaxMetasPerJob);
++            return false;
++        }
++    }
++    int unknown = 0;
++    for (int j = 0; j < jobCount_; j++) {
++        unknown += jobs_[j].unknownFdCount;
++    }
++    if (unknown != 0) {
++        snprintf(reason, reasonLen,
++                 "%d op_meta entries reference a dmabuf fd that is neither the record-time src "
++                 "nor dst fd",
++                 unknown);
++        return false;
++    }
++    return true;
++}
++
++bool MdpReplayEngine::ensureDevice(char *reason, size_t reasonLen) {
++    if (deviceOpened_) {
++        return true;
++    }
++
++    mdpFd_ = open(kMdpDeviceNode, O_RDWR | O_CLOEXEC);
++    if (mdpFd_ < 0) {
++        mdpFd_ = open(kMdpDeviceNode, O_RDONLY | O_CLOEXEC);
++    }
++    if (mdpFd_ < 0) {
++        snprintf(reason, reasonLen, "open %s failed: %s", kMdpDeviceNode, strerror(errno));
++        return false;
++    }
++    deviceOpened_ = true;
++
++    MdpIovaCacheCtl cacheReq;
++    cacheReq.enable = 1;
++    long rc = syscall(__NR_ioctl, mdpFd_, kCmdqIoctlIovaCache, &cacheReq);
++    cacheEnabled_ = (rc == 0);
++
++    MdpIovaUnmap probe;
++    probe.fd = -1;
++    long rc2 = syscall(__NR_ioctl, mdpFd_, kCmdqIoctlIovaUnmap, &probe);
++    iovaUnmapSupported_ = (rc2 == 0 || errno == EINVAL);
++
++    return true;
++}
++
++bool MdpReplayEngine::EndRecord(const Config &cfg, int srcFd, int dstFd, bool invalidateOk,
++                                 char *reason, size_t reasonLen) {
++    recording_ = false;
++    g_activeEngine = nullptr;
++
++    if (!invalidateOk) {
++        snprintf(reason, reasonLen, "DpBlitStream::invalidate() returned nonzero");
++        ready_ = false;
++        return false;
++    }
++    if (jobCount_ == 0) {
++        snprintf(reason, reasonLen,
++                 "the interposed ioctl() never observed CMDQ_IOCTL_ASYNC_EXEC during "
++                 "invalidate(); MdpReplayInterpose.cpp may not be linked into this process's "
++                 "-rdynamic executable, or libdpframework.so landed in a different linker "
++                 "namespace");
++        ready_ = false;
++        return false;
++    }
++
++    classifyRoles(srcFd, dstFd);
++    if (!validateCapture(reason, reasonLen)) {
++        ready_ = false;
++        return false;
++    }
++    if (!ensureDevice(reason, reasonLen)) {
++        ready_ = false;
++        return false;
++    }
++
++    cfg_ = cfg;
++    ready_ = true;
++    return true;
++}
++
++bool MdpReplayEngine::Replay(int srcFd, int dstFd) {
++    if (!ready_) {
++        return false;
++    }
++
++    uint64_t jobIds[kMaxJobs];
++
++    for (int j = 0; j < jobCount_; j++) {
++        CapturedJob &job = jobs_[j];
++        for (uint32_t i = 0; i < job.metaCount; i++) {
++            scratch_[j][i] = job.metas[i];
++            if (job.role[i] == 1) {
++                scratch_[j][i].fd = static_cast<uint32_t>(srcFd);
++            } else if (job.role[i] == 2) {
++                scratch_[j][i].fd = static_cast<uint32_t>(dstFd);
++            }
++        }
++
++        MdpSubmit submit = job.submit;
++        submit.metas = static_cast<cmdqU32Ptr_t>(reinterpret_cast<uintptr_t>(scratch_[j]));
++        submit.meta_count = job.metaCount;
++        submit.job_id = 0;
++        submit.prop_addr = job.hasPropSnapshot
++                                    ? static_cast<cmdqU32Ptr_t>(
++                                              reinterpret_cast<uintptr_t>(&job.propSnapshot))
++                                    : 0;
++        submit.hw_metas_read_v1 =
++                job.hasHwSnapshot
++                        ? static_cast<cmdqU32Ptr_t>(reinterpret_cast<uintptr_t>(job.hwSnapshot))
++                        : 0;
++
++        long rc = syscall(__NR_ioctl, mdpFd_, kCmdqIoctlAsyncExec, &submit);
++        if (rc < 0) {
++            return false;
++        }
++        jobIds[j] = submit.job_id;
++    }
++
++    for (int j = 0; j < jobCount_; j++) {
++        MdpWait wait;
++        memset(&wait, 0, sizeof(wait));
++        wait.job_id = jobIds[j];
++        long rc = syscall(__NR_ioctl, mdpFd_, kCmdqIoctlAsyncWait, &wait);
++        if (rc < 0) {
++            return false;
++        }
++    }
++
++    trackFd(srcFd);
++    trackFd(dstFd);
++    return true;
++}
++
++void MdpReplayEngine::trackFd(int fd) {
++    for (int i = 0; i < trackedFdCount_; i++) {
++        if (trackedFds_[i] == fd) {
++            return;
++        }
++    }
++    if (trackedFdCount_ < kMaxTrackedFds) {
++        trackedFds_[trackedFdCount_++] = fd;
++        return;
++    }
++    for (int i = 1; i < kMaxTrackedFds; i++) {
++        trackedFds_[i - 1] = trackedFds_[i];
++    }
++    trackedFds_[kMaxTrackedFds - 1] = fd;
++}
++
++void MdpReplayEngine::teardown() {
++    if (!deviceOpened_) {
++        return;
++    }
++    if (iovaUnmapSupported_) {
++        for (int i = 0; i < trackedFdCount_; i++) {
++            MdpIovaUnmap req;
++            req.fd = trackedFds_[i];
++            syscall(__NR_ioctl, mdpFd_, kCmdqIoctlIovaUnmap, &req);
++        }
++    }
++    close(mdpFd_);
++    mdpFd_ = -1;
++    deviceOpened_ = false;
++    ready_ = false;
++    trackedFdCount_ = 0;
++}
++
++}
+diff --git a/v4l2/include/v4l2_codec2/v4l2/MdpImageConverter.h b/v4l2/include/v4l2_codec2/v4l2/MdpImageConverter.h
+index 323a8b9..2d7a923 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/MdpImageConverter.h
++++ b/v4l2/include/v4l2_codec2/v4l2/MdpImageConverter.h
+@@ -4,6 +4,7 @@
+ #include <memory>
+ 
+ #include <v4l2_codec2/common/ImageConverter.h>
++#include <v4l2_codec2/v4l2/MdpReplay.h>
+ 
+ namespace android {
+ 
+@@ -23,6 +24,7 @@ private:
+ 
+     struct Impl;
+     std::unique_ptr<Impl> mImpl;
++    mdpreplay::MdpReplayEngine mEngine;
+ };
+ 
+ }  // namespace android
+diff --git a/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h b/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
+new file mode 100644
+index 0000000..480fcbf
+--- /dev/null
++++ b/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
+@@ -0,0 +1,287 @@
++#ifndef MDPREPLAY_MDP_REPLAY_H
++#define MDPREPLAY_MDP_REPLAY_H
++
++#include <cstdint>
++#include <cstddef>
++
++namespace mdpreplay {
++
++using cmdqU32Ptr_t = uint64_t;
++
++struct OpMeta {
++    uint8_t op;
++    uint16_t engine;
++    union {
++        uint16_t offset;
++        uint16_t event;
++        struct {
++            uint8_t pipe_idx;
++            uint8_t cpr_idx;
++        };
++    };
++    union {
++        uint32_t value;
++        uint32_t readback_id;
++        uint32_t fd;
++        uint32_t sec_handle;
++        struct {
++            uint16_t from_offset;
++            uint16_t from_engine;
++        };
++    };
++    union {
++        uint32_t mask;
++        uint32_t fd_offset;
++        uint32_t sec_index;
++    };
++};
++
++struct HwMeta {
++    uint16_t offset;
++    uint16_t engine;
++};
++
++struct CmdqMetaBuf {
++    uint64_t va;
++    uint64_t size;
++};
++
++constexpr int kCmdqIspMetaCnt = 8;
++
++struct CmdqSecIspMeta {
++    CmdqMetaBuf ispBufs[kCmdqIspMetaCnt];
++    uint64_t CqSecHandle;
++    uint32_t CqSecSize;
++    uint32_t CqDesOft;
++    uint32_t CqVirtOft;
++    uint64_t TpipeSecHandle;
++    uint32_t TpipeSecSize;
++    uint32_t TpipeOft;
++    uint64_t BpciHandle;
++    uint64_t LsciHandle;
++    uint64_t LceiHandle;
++    uint64_t DepiHandle;
++    uint64_t DmgiHandle;
++};
++
++struct CmdqSecDataStruct {
++    bool is_secure;
++    uint32_t addrMetadataCount;
++    cmdqU32Ptr_t addrMetadatas;
++    uint32_t addrMetadataMaxCount;
++    uint64_t enginesNeedDAPC;
++    uint64_t enginesNeedPortSecurity;
++    int32_t waitCookie;
++    bool resetExecCnt;
++    CmdqSecIspMeta ispMeta;
++    uint64_t extension;
++};
++
++struct MdpSubmit {
++    cmdqU32Ptr_t metas;
++    uint32_t meta_count;
++    uint32_t priority;
++    uint64_t engine_flag;
++    uint32_t prop_size;
++    uint64_t prop_addr;
++    uint64_t readback_ext;
++    uint32_t read_count_v1;
++    cmdqU32Ptr_t hw_metas_read_v1;
++    uint64_t job_id;
++    CmdqSecDataStruct secData;
++};
++
++struct MdpReadV1 {
++    uint32_t count;
++    cmdqU32Ptr_t ret_values;
++};
++
++struct MdpReadReadback {
++    uint32_t count;
++    cmdqU32Ptr_t ids;
++    cmdqU32Ptr_t ret_values;
++};
++
++struct MdpWait {
++    uint64_t job_id;
++    MdpReadV1 read_v1_result;
++    MdpReadReadback read_result;
++};
++
++struct MdpIovaUnmap {
++    int32_t fd;
++};
++
++struct MdpIovaCacheCtl {
++    int32_t enable;
++};
++
++constexpr int kPmqosIspPortNum = 16;
++constexpr int kPmqosMdpPortNum = 4;
++
++struct MdpPmqos {
++    uint32_t isp_total_datasize;
++    uint32_t isp_total_pixel;
++    uint32_t mdp_total_datasize;
++    uint32_t mdp_total_pixel;
++    uint32_t qos2_isp_bandwidth[kPmqosIspPortNum];
++    uint32_t qos2_isp_total_pixel[kPmqosIspPortNum];
++    uint32_t qos2_isp_port[kPmqosIspPortNum];
++    uint32_t qos2_isp_count;
++    uint32_t qos2_mdp_bandwidth[kPmqosMdpPortNum];
++    uint32_t qos2_mdp_total_pixel[kPmqosMdpPortNum];
++    uint32_t qos2_mdp_port[kPmqosMdpPortNum];
++    uint32_t qos2_mdp_count;
++    uint64_t tv_sec;
++    uint64_t tv_usec;
++    uint64_t ispMetString;
++    uint32_t ispMetStringSize;
++    uint64_t mdpMetString;
++    uint32_t mdpMetStringSize;
++    uint64_t mdpMMpathString;
++    uint32_t mdpMMpathStringSize;
++};
++
++static_assert(sizeof(MdpSubmit) == 336,
++              "MdpSubmit must be 336 bytes to match CMDQ_IOCTL_ASYNC_EXEC's own _IOW size field");
++static_assert(sizeof(OpMeta) == 16, "OpMeta must be 16 bytes, one CMDQ command list entry");
++static_assert(sizeof(MdpWait) == 48,
++              "MdpWait must be 48 bytes to match CMDQ_IOCTL_ASYNC_WAIT's own _IOR size field");
++static_assert(sizeof(CmdqSecDataStruct) == 264, "CmdqSecDataStruct must be 264 bytes");
++
++constexpr uint8_t kOpWrite = 0;
++constexpr uint8_t kOpRead = 1;
++constexpr uint8_t kOpPoll = 2;
++constexpr uint8_t kOpWait = 3;
++constexpr uint8_t kOpWaitNoClear = 4;
++constexpr uint8_t kOpClear = 5;
++constexpr uint8_t kOpSet = 6;
++constexpr uint8_t kOpAcquire = 7;
++constexpr uint8_t kOpWriteFd = 8;
++constexpr uint8_t kOpWriteFromReg = 9;
++constexpr uint8_t kOpWriteSec = 10;
++constexpr uint8_t kOpReadback = 11;
++constexpr uint8_t kOpWriteRdma = 12;
++constexpr uint8_t kOpWriteFdRdma = 13;
++constexpr uint8_t kOpNop = 14;
++constexpr uint8_t kOpWriteSecFd = 15;
++
++constexpr unsigned int kCmdqIoctlMagic = 'x';
++
++constexpr unsigned int kIocNrbits = 8;
++constexpr unsigned int kIocTypebits = 8;
++constexpr unsigned int kIocSizebits = 14;
++constexpr unsigned int kIocNrshift = 0;
++constexpr unsigned int kIocTypeshift = kIocNrshift + kIocNrbits;
++constexpr unsigned int kIocSizeshift = kIocTypeshift + kIocTypebits;
++constexpr unsigned int kIocDirshift = kIocSizeshift + kIocSizebits;
++constexpr unsigned int kIocWrite = 1;
++constexpr unsigned int kIocRead = 2;
++
++constexpr unsigned int MakeIoc(unsigned int dir, unsigned int type, unsigned int nr, unsigned int size) {
++    return (dir << kIocDirshift) | (type << kIocTypeshift) | (nr << kIocNrshift) |
++           (size << kIocSizeshift);
++}
++
++constexpr unsigned int kCmdqIoctlAsyncExec =
++        MakeIoc(kIocWrite, kCmdqIoctlMagic, 20, sizeof(MdpSubmit));
++constexpr unsigned int kCmdqIoctlAsyncWait =
++        MakeIoc(kIocRead, kCmdqIoctlMagic, 21, sizeof(MdpWait));
++constexpr unsigned int kCmdqIoctlIovaUnmap =
++        MakeIoc(kIocWrite, kCmdqIoctlMagic, 26, sizeof(MdpIovaUnmap));
++constexpr unsigned int kCmdqIoctlIovaCache =
++        MakeIoc(kIocWrite, kCmdqIoctlMagic, 27, sizeof(MdpIovaCacheCtl));
++
++constexpr int kMaxJobs = 4;
++constexpr int kMaxMetasPerJob = 512;
++constexpr int kMaxHwMeta = 64;
++constexpr int kMaxTrackedFds = 16;
++constexpr size_t kReasonBufSize = 256;
++
++struct Config {
++    int width = 0;
++    int height = 0;
++    uint32_t srcPlaneSize0 = 0;
++    uint32_t srcPlaneSize1 = 0;
++    uint32_t dstPlaneSize0 = 0;
++    uint32_t dstPlaneSize1 = 0;
++
++    bool operator==(const Config &other) const {
++        return width == other.width && height == other.height &&
++               srcPlaneSize0 == other.srcPlaneSize0 && srcPlaneSize1 == other.srcPlaneSize1 &&
++               dstPlaneSize0 == other.dstPlaneSize0 && dstPlaneSize1 == other.dstPlaneSize1;
++    }
++    bool operator!=(const Config &other) const { return !(*this == other); }
++};
++
++class MdpReplayEngine {
++public:
++    MdpReplayEngine();
++    ~MdpReplayEngine();
++    MdpReplayEngine(const MdpReplayEngine &) = delete;
++    MdpReplayEngine &operator=(const MdpReplayEngine &) = delete;
++
++    void BeginRecord(const Config &cfg, int srcFd, int dstFd);
++
++    void OnAsyncExec(int fd, const void *submitArg);
++    void OnAsyncWait();
++
++    bool EndRecord(const Config &cfg, int srcFd, int dstFd, bool invalidateOk, char *reason,
++                    size_t reasonLen);
++
++    bool Replay(int srcFd, int dstFd);
++
++    bool ready() const { return ready_; }
++    bool configMatches(const Config &cfg) const { return ready_ && cfg_ == cfg; }
++    bool iovaCacheEnabled() const { return cacheEnabled_; }
++    bool iovaUnmapSupported() const { return iovaUnmapSupported_; }
++    int jobCount() const { return jobCount_; }
++
++private:
++    struct CapturedJob {
++        MdpSubmit submit{};
++        OpMeta metas[kMaxMetasPerJob]{};
++        uint32_t metaCount = 0;
++        uint8_t role[kMaxMetasPerJob]{};
++        bool truncated = false;
++        int unknownFdCount = 0;
++        MdpPmqos propSnapshot{};
++        bool hasPropSnapshot = false;
++        HwMeta hwSnapshot[kMaxHwMeta]{};
++        bool hasHwSnapshot = false;
++    };
++
++    bool ensureDevice(char *reason, size_t reasonLen);
++    void classifyRoles(int srcFd, int dstFd);
++    bool validateCapture(char *reason, size_t reasonLen);
++    void trackFd(int fd);
++    void teardown();
++
++    int mdpFd_ = -1;
++    bool deviceOpened_ = false;
++    bool cacheEnabled_ = false;
++    bool iovaUnmapSupported_ = false;
++
++    CapturedJob jobs_[kMaxJobs];
++    int jobCount_ = 0;
++    bool jobOverflow_ = false;
++    int waitSeen_ = 0;
++    int mdpFdSeen_ = -1;
++    int recordSrcFd_ = -1;
++    int recordDstFd_ = -1;
++    bool recording_ = false;
++
++    Config cfg_{};
++    bool ready_ = false;
++
++    int trackedFds_[kMaxTrackedFds];
++    int trackedFdCount_ = 0;
++
++    OpMeta scratch_[kMaxJobs][kMaxMetasPerJob];
++};
++
++MdpReplayEngine *ActiveRecordingEngine();
++
++}
++
++#endif
+-- 
+2.43.0
+

@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- F3807 (06.09): privileged permissions for the stock MediaTek IMS service (system_ext/priv-app/ImsService);
-     without an allowlist entry PackageManagerService.systemReady() throws IllegalStateException on userdebug. -->
 <permissions>
     <privapp-permissions package="com.mediatek.ims">
         <permission name="android.permission.NETWORK_SIGNAL_STRENGTH_WAKEUP"/>

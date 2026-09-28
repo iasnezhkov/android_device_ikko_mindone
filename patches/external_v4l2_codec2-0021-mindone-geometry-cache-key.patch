@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 27 Sep 2026 19:36:04 +0300
+Subject: [PATCH 21/27] v4l2: key the NV12 plane-geometry cache on the gralloc
+ metadata
+
+9d4f331 keyed the cache on the decode width and height only. All Codec2
+components share one c2 service process and one cache, and two block
+pools of the same size can differ in usage (surface vs ByteBuffer
+output) and so in gralloc stride; a hit from the other pool would hand
+MDP the wrong stride and offsets for the destination.
+
+The key is now the allocation width, height, format, usage and stride
+read from the C2 handle itself (_UnwrapNativeCodec2GrallocMetadata,
+the same metadata C2AllocatorGralloc wrapped the buffer with). A
+handle without that metadata (stride 0) is never cached and takes the
+import/query path every frame as before.
+
+Change-Id: Ied40fb12e43a1c7f20954dace7ae8df813a364f0
+---
+ components/VideoFrame.cpp | 37 ++++++++++++++++++++++++++++++-------
+ 1 file changed, 30 insertions(+), 7 deletions(-)
+
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+index 9ff2ebf..dd83030 100644
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -31,9 +31,21 @@ struct NV12PlaneGeometry {
+     size_t sizeUV = 0;
+ };
+ 
+-struct NV12PlaneGeometryCacheEntry {
++struct NV12PlaneGeometryKey {
+     int width = 0;
+     int height = 0;
++    uint32_t format = 0;
++    uint64_t usage = 0;
++    uint32_t stride = 0;
++
++    bool operator==(const NV12PlaneGeometryKey& o) const {
++        return width == o.width && height == o.height && format == o.format &&
++               usage == o.usage && stride == o.stride;
++    }
++};
++
++struct NV12PlaneGeometryCacheEntry {
++    NV12PlaneGeometryKey key;
+     NV12PlaneGeometry geometry;
+ };
+ 
+@@ -41,10 +53,10 @@ std::mutex g_nv12PlaneGeometryCacheMutex;
+ NV12PlaneGeometryCacheEntry g_nv12PlaneGeometryCache[kNV12PlaneGeometryCacheSlots];
+ int g_nv12PlaneGeometryCacheNext = 0;
+ 
+-bool lookupNV12PlaneGeometry(int width, int height, NV12PlaneGeometry* out) {
++bool lookupNV12PlaneGeometry(const NV12PlaneGeometryKey& key, NV12PlaneGeometry* out) {
+     std::lock_guard<std::mutex> lock(g_nv12PlaneGeometryCacheMutex);
+     for (const NV12PlaneGeometryCacheEntry& entry : g_nv12PlaneGeometryCache) {
+-        if (entry.geometry.valid && entry.width == width && entry.height == height) {
++        if (entry.geometry.valid && entry.key == key) {
+             *out = entry.geometry;
+             return true;
+         }
+@@ -52,10 +64,10 @@ bool lookupNV12PlaneGeometry(int width, int height, NV12PlaneGeometry* out) {
+     return false;
+ }
+ 
+-void storeNV12PlaneGeometry(int width, int height, const NV12PlaneGeometry& geometry) {
++void storeNV12PlaneGeometry(const NV12PlaneGeometryKey& key, const NV12PlaneGeometry& geometry) {
+     std::lock_guard<std::mutex> lock(g_nv12PlaneGeometryCacheMutex);
+     g_nv12PlaneGeometryCache[g_nv12PlaneGeometryCacheNext] =
+-            NV12PlaneGeometryCacheEntry{width, height, geometry};
++            NV12PlaneGeometryCacheEntry{key, geometry};
+     g_nv12PlaneGeometryCacheNext =
+             (g_nv12PlaneGeometryCacheNext + 1) % kNV12PlaneGeometryCacheSlots;
+ }
+@@ -119,7 +131,16 @@ bool VideoFrame::detileFrom(ImageConverter* primaryConverter, ImageConverter* fa
+         bool queried = false;
+         if (handle && handle->numFds > 0) {
+             NV12PlaneGeometry geometry;
+-            if (!lookupNV12PlaneGeometry(width, height, &geometry)) {
++            NV12PlaneGeometryKey key;
++            uint32_t allocWidth = 0, allocHeight = 0, generation = 0, igbpSlot = 0;
++            uint64_t igbpId = 0;
++            _UnwrapNativeCodec2GrallocMetadata(handle, &allocWidth, &allocHeight, &key.format,
++                                               &key.usage, &key.stride, &generation, &igbpId,
++                                               &igbpSlot);
++            key.width = static_cast<int>(allocWidth);
++            key.height = static_cast<int>(allocHeight);
++            const bool keyed = key.stride != 0;
++            if (!keyed || !lookupNV12PlaneGeometry(key, &geometry)) {
+                 native_handle_t* unwrapped = UnwrapNativeCodec2GrallocHandle(handle);
+                 buffer_handle_t imported = nullptr;
+                 const status_t importErr =
+@@ -141,7 +162,9 @@ bool VideoFrame::detileFrom(ImageConverter* primaryConverter, ImageConverter* fa
+                         geometry.offsetUV = static_cast<size_t>(planeLayouts[1].offsetInBytes);
+                         geometry.sizeUV = static_cast<size_t>(planeLayouts[1].totalSizeInBytes);
+                         geometry.valid = true;
+-                        storeNV12PlaneGeometry(width, height, geometry);
++                        if (keyed) {
++                            storeNV12PlaneGeometry(key, geometry);
++                        }
+                     } else {
+                         ALOGE("Failed to query gralloc plane layouts for the zero-copy path, "
+                               "err=%d planes=%zu",
+-- 
+2.43.0
+

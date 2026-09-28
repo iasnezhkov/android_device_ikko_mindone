@@ -36,7 +36,7 @@ The device tree has `DEVICE_PACKAGE_OVERLAYS := device/ikko/mindone/overlay` and
 (`*__lineage_mindone__auto_generated_rro_vendor.apk`) that lands in the vendor image while the base
 package stays stock. That is the cheapest possible change and it survives upstream merges.
 
-It has one hard limit, learned the expensive way on the ROM side (fact F3908): **an RRO cannot
+It has one hard limit, learned the expensive way on the ROM side: **an RRO cannot
 carry a layout that references a third-party library attribute.** The overlay is linked as its own
 package, so `aapt2 link` sees only `android.jar` and the target package's own resources; anything
 like `layout_constraint*` from ConstraintLayout fails with "attribute not found". The bouncer

@@ -150,52 +150,10 @@ vendor/etc/aurisys_config_rv.xml
 # vendor/lib/hw/android.hardware.audio@7.0-impl-mediatek.so
 # vendor/lib/hw/audio.primary.mediatek.so:vendor/lib/hw/audio.primary.mt6789.so
 # vendor/lib/hw/audio.r_submix.mediatek.so
-vendor/lib/hw/sound_trigger.primary.default.so
-vendor/lib/hw/vendor.mediatek.hardware.bluetooth.audio@2.1-impl.so
 vendor/lib/mt6789/libmtk_drvb.so:vendor/lib/libmtk_drvb.so
-vendor/lib/soundfx/libaudiopreprocessing_mtk.so
-vendor/lib/lib_iir.so
-vendor/lib/lib_speech_enh.so
 vendor/lib/libadpcmdec_mtk.so
-vendor/lib/libapmonitor_vendor.so
-vendor/lib/libaudio_param_parser-vnd.so
-vendor/lib/libaudiocompensationfilter_vendor.so
-vendor/lib/libaudiocompensationfilterc.so
-vendor/lib/libaudiocomponentengine_vendor.so
-vendor/lib/libaudiocomponentenginec.so
-vendor/lib/libaudiocustparam_vendor.so
-vendor/lib/libaudiodcrflt_vendor.so
-vendor/lib/libaudiofmtconv.so
-vendor/lib/libaudioloudc.so
-vendor/lib/libaudioprimarydevicehalifclient.so
-vendor/lib/libaudiosmartpamtk.so
-vendor/lib/libaudiotoolkit_vendor.so
-vendor/lib/libaurisysdemo.so
-vendor/lib/libbessound_hd_mtk_vendor.so
-vendor/lib/libblisrc32_vendor.so
-vendor/lib/libbluetooth_audio_session_mediatek.so
 vendor/lib/libbwc.so
-vendor/lib/libcs_cs35l45_intf.so
-vendor/lib/libcvsd_mtk.so
 vendor/lib/libmp3dec_mtk.so
-vendor/lib/libmsbc_mtk.so
-vendor/lib/libmtklimiter_vendor.so
-vendor/lib/libmtkshifter_vendor.so
-vendor/lib/libmtkspparser.so
-vendor/lib/libnxp_extamp_intf.so
-vendor/lib/librt_extamp_intf.so
-vendor/lib/libspeech_enh_lib.so
-vendor/lib/libspeechparser_vendor.so
-vendor/lib/libvow_ap_test_aa.so
-vendor/lib/libvow_ap_test_dd.so
-vendor/lib/libvow_ap_test_ha.so
-vendor/lib/libvow_ap_test_hh.so
-vendor/lib/libvow_ap_test_nn.so
-vendor/lib/vendor.mediatek.hardware.apuware.utils@2.0.so
-vendor/lib/vendor.mediatek.hardware.audio@6.1.so
-vendor/lib/vendor.mediatek.hardware.audio@7.1.so
-vendor/lib/vendor.mediatek.hardware.bluetooth.audio@2.1.so
-vendor/lib/vendor.mediatek.hardware.bluetooth.audio@2.2.so
 # vendor/lib64/hw/android.hardware.audio@6.0-impl-mediatek.so
 # vendor/lib64/hw/android.hardware.audio@7.0-impl-mediatek.so
 # vendor/lib64/hw/audio.primary.mediatek.so
@@ -224,23 +182,11 @@ vendor/lib64/libaurisysdemo.so
 vendor/lib64/libbessound_hd_mtk_vendor.so
 vendor/lib64/libblisrc32_vendor.so
 vendor/lib64/libbluetooth_audio_session_mediatek.so
-# MINDONE 11.09: ten MediaTek vendor audio decoders are DISABLED (F4154).
-# They are built for stock Android 15 and inherit from SimpleC2Component, whose implementation
-# for us comes from Android 16 sources (our libcodec2_soft_common.so is 483268 bytes vs.
-# 117216 for the stock one). The object layout differs, so on destruction Scudo catches a
-# pointer mismatch against the start of the block, and the codec service crashes on every boot -
-# ten tombstones from 09.09 to 11.09, the signature does not change.
-# Cost of disabling: no APE or ALAC decoders. MP3, AAC, FLAC, Opus, Vorbis are covered by
-# Android's own decoders. Restore the lines if the crashes do not stop.
-# vendor/lib64/libcodec2_soft_mtk_alacdec.so;MAKE_COPY_RULE_ONLY
-# vendor/lib64/libcodec2_soft_mtk_apedec.so;MAKE_COPY_RULE_ONLY
-# vendor/lib64/libcodec2_soft_mtk_imaadpcmdec.so;MAKE_COPY_RULE_ONLY
-# vendor/lib64/libcodec2_soft_mtk_mp3dec.so;MAKE_COPY_RULE_ONLY
-# vendor/lib64/libcodec2_soft_mtk_msadpcmdec.so;MAKE_COPY_RULE_ONLY
 vendor/lib64/libcs_cs35l45_intf.so
 vendor/lib64/libcvsd_mtk.so
 vendor/lib64/libfft_vendor.so
 vendor/lib64/libmipc.so
+vendor/lib64/libtrm.so
 vendor/lib64/libmp3dec_mtk.so
 vendor/lib64/libmsbc_mtk.so
 vendor/lib64/libmtklimiter_vendor.so
@@ -261,13 +207,6 @@ vendor/lib64/vendor.mediatek.hardware.audio@7.1.so
 vendor/lib64/vendor.mediatek.hardware.bluetooth.audio@2.1.so
 vendor/lib64/vendor.mediatek.hardware.bluetooth.audio@2.2.so
 # Bluetooth
-vendor/lib/hw/vendor.mediatek.hardware.bluetooth.audio@2.2-impl.so
-vendor/lib/libbluetooth_hw_test.so
-vendor/lib/libbluetooth_mtk.so
-vendor/lib/libbluetooth_mtk_pure.so
-vendor/lib/libbluetooth_relayer.so
-vendor/lib/libbluetoothem_mtk.so
-vendor/lib/libbt-vendor.so
 vendor/lib64/libbluetooth_hw_test.so
 vendor/lib64/libbluetooth_mtk.so
 vendor/lib64/libbluetooth_mtk_pure.so
@@ -278,42 +217,6 @@ vendor/lib64/libbt-vendor.so
 vendor/etc/init/camerahalserver.rc
 vendor/etc/vintf/manifest/manifest_cameraprovider.xml
 vendor/etc/default_pd_calibration.bin
-# 12.09 (F3174/F3369): excluded from copying the stock blob - device.mk now places
-# OUR OWN media_profiles_V1_0.xml (configs/media/, adds the qhd=2560x1440 profile) at this same path.
-# This line cannot be kept - mindone-vendor.mk would generate a second PRODUCT_COPY_FILES entry
-# for the same $(TARGET_COPY_OUT_VENDOR)/etc/media_profiles_V1_0.xml, and Make fails with
-# "overriding commands for target" for two different sources of the same path (the same class of
-# conflict already covered below for libcodec2_*, F3827/F3830, and for biometrics HIDL, F3831).
-#vendor/etc/media_profiles_V1_0.xml
-vendor/lib/hw/mt6789/vendor.mediatek.hardware.camera.atms@1.0-impl.so:vendor/lib/hw/vendor.mediatek.hardware.camera.atms@1.0-impl.so
-vendor/lib/hw/mt6789/vendor.mediatek.hardware.camera.bgservice@1.1-impl.so:vendor/lib/hw/vendor.mediatek.hardware.camera.bgservice@1.1-impl.so
-vendor/lib/mt6789/lib3a.ae.core.so:vendor/lib/lib3a.ae.core.so
-vendor/lib/mt6789/lib3a.ae.so:vendor/lib/lib3a.ae.so
-vendor/lib/mt6789/lib3a.awb.core.so:vendor/lib/lib3a.awb.core.so
-vendor/lib/mt6789/lib3a.log.so:vendor/lib/lib3a.log.so
-vendor/lib/mt6789/libcam.hal3a.log.so:vendor/lib/libcam.hal3a.log.so
-vendor/lib/mt6789/libcam.halsensor.hwintegration.so:vendor/lib/libcam.halsensor.hwintegration.so
-vendor/lib/mt6789/libcamalgo.platform2.so:vendor/lib/libcamalgo.platform2.so
-vendor/lib/mt6789/libcameracustom.lens.so:vendor/lib/libcameracustom.lens.so
-vendor/lib/mt6789/libcameracustom.so:vendor/lib/libcameracustom.so
-vendor/lib/mt6789/libmtkcam.atmseventmgr.so:vendor/lib/libmtkcam.atmseventmgr.so
-vendor/lib/mt6789/libmtkcam.eventcallback.so:vendor/lib/libmtkcam.eventcallback.so
-vendor/lib/mt6789/libmtkcam_debugutils.so:vendor/lib/libmtkcam_debugutils.so
-vendor/lib/mt6789/libmtkcam_metadata.so:vendor/lib/libmtkcam_metadata.so
-vendor/lib/mt6789/libmtkcam_modulehelper.so:vendor/lib/libmtkcam_modulehelper.so
-vendor/lib/mt6789/libmtkcam_stdutils.so:vendor/lib/libmtkcam_stdutils.so
-vendor/lib/mt6789/libmtkcam_sysutils.so:vendor/lib/libmtkcam_sysutils.so
-vendor/lib/mt6789/libmtkcam_tuning_utils.so:vendor/lib/libmtkcam_tuning_utils.so
-vendor/lib/mt6789/libmtkcam_ulog.so:vendor/lib/libmtkcam_ulog.so
-vendor/lib/libSQLiteModule_VER_ALL.so
-vendor/lib/libcamalgo.utility.so
-vendor/lib/libgz_uree.so
-vendor/lib/libimgsensorca.so
-vendor/lib/libispcameraca.so
-vendor/lib/libudf.so
-vendor/lib/vendor.mediatek.hardware.camera.atms@1.0.so
-vendor/lib/vendor.mediatek.hardware.camera.bgservice@1.0.so
-vendor/lib/vendor.mediatek.hardware.camera.bgservice@1.1.so
 vendor/lib64/hw/mt6789/android.hardware.camera.provider@2.6-impl-mediatek.so:vendor/lib64/hw/android.hardware.camera.provider@2.6-impl-mediatek.so
 vendor/lib64/hw/mt6789/vendor.mediatek.hardware.camera.atms@1.0-impl.so:vendor/lib64/hw/vendor.mediatek.hardware.camera.atms@1.0-impl.so
 vendor/lib64/hw/mt6789/vendor.mediatek.hardware.camera.bgservice@1.1-impl.so:vendor/lib64/hw/vendor.mediatek.hardware.camera.bgservice@1.1-impl.so
@@ -521,6 +424,7 @@ vendor/lib64/libjpeg-alpha-oal_vendor.so
 vendor/lib64/libjpeg-alpha_vendor.so
 vendor/lib64/libmtkcam_pipelinepolicy-aov.so
 vendor/lib64/libmtkisp_metadata.so
+vendor/lib64/libremosaiclib.so
 vendor/lib64/libremosaic_wrapper.so
 vendor/lib64/libudf.so
 vendor/lib64/vendor.mediatek.hardware.camera.atms@1.0.so
@@ -538,44 +442,16 @@ vendor/lib64/vendor.mediatek.hardware.power@2.0.so
 # Connectivity
 vendor/bin/wmt_launcher
 vendor/bin/wmt_loader
-vendor/etc/init/init.bt_drv.rc
-vendor/etc/init/init.connfem.rc
-vendor/etc/init/init.fmradio_drv.rc
-vendor/etc/init/init.gps_drv.rc
-vendor/etc/init/init.gps_pwr.rc
-vendor/etc/init/init.wlan_drv.rc
-vendor/etc/init/init.wmt_drv.rc
-vendor/lib/libconnfem.so
-vendor/lib/libwpa_client.so
-vendor/lib/meta_wifi_data.so
 vendor/lib64/libwifi-hal.so:vendor/lib64/libwifi-hal-mtk.so
 vendor/lib64/libwpa_client.so
 vendor/lib64/meta_wifi_data.so
 # Display
 # -- 13.09 pq service never runs on our ROM, removed: vendor/bin/hw/vendor.mediatek.hardware.pq@2.2-service
 # -- 13.09 pq service never runs on our ROM, removed: vendor/lib/hw/mt6789/vendor.mediatek.hardware.pq@2.15-impl.so:vendor/lib/hw/vendor.mediatek.hardware.pq@2.15-impl.so
-vendor/lib/hw/gralloc.default.so
 vendor/lib/mt6789/libaiselector.so:vendor/lib/libaiselector.so
 vendor/lib/mt6789/libpq_cust_base.so:vendor/lib/libpq_cust_base.so
 vendor/lib/mt6789/libpq_prot.so:vendor/lib/libpq_prot.so
-vendor/lib/libaal_key.so
-vendor/lib/libpqframework.so
 vendor/lib/vendor.mediatek.hardware.pq@2.0.so
-vendor/lib/vendor.mediatek.hardware.pq@2.1.so
-vendor/lib/vendor.mediatek.hardware.pq@2.10.so
-vendor/lib/vendor.mediatek.hardware.pq@2.11.so
-vendor/lib/vendor.mediatek.hardware.pq@2.12.so
-vendor/lib/vendor.mediatek.hardware.pq@2.13.so
-vendor/lib/vendor.mediatek.hardware.pq@2.14.so
-vendor/lib/vendor.mediatek.hardware.pq@2.15.so
-vendor/lib/vendor.mediatek.hardware.pq@2.2.so
-vendor/lib/vendor.mediatek.hardware.pq@2.3.so
-vendor/lib/vendor.mediatek.hardware.pq@2.4.so
-vendor/lib/vendor.mediatek.hardware.pq@2.5.so
-vendor/lib/vendor.mediatek.hardware.pq@2.6.so
-vendor/lib/vendor.mediatek.hardware.pq@2.7.so
-vendor/lib/vendor.mediatek.hardware.pq@2.8.so
-vendor/lib/vendor.mediatek.hardware.pq@2.9.so
 # -- 13.09 pq service never runs on our ROM, removed: vendor/lib64/hw/mt6789/vendor.mediatek.hardware.pq@2.15-impl.so:vendor/lib64/hw/vendor.mediatek.hardware.pq@2.15-impl.so
 vendor/lib64/mt6789/libneuron_runtime.5.so:vendor/lib64/libneuron_runtime.5.so
 vendor/lib64/mt6789/libpq_cust_base.so:vendor/lib64/libpq_cust_base.so
@@ -600,10 +476,6 @@ vendor/lib64/vendor.mediatek.hardware.pq@2.5.so
 vendor/lib64/vendor.mediatek.hardware.pq@2.7.so
 vendor/lib64/vendor.mediatek.hardware.pq@2.8.so
 vendor/lib64/vendor.mediatek.hardware.pq@2.9.so
-# Factory
-vendor/bin/pld
-vendor/lib/libminiui.so
-vendor/lib/libpixelflinger.so
 vendor/lib64/libminiui.so
 vendor/lib64/libpixelflinger.so
 # Firmware
@@ -630,12 +502,10 @@ vendor/bin/fuelgauged
 vendor/bin/fuelgauged_nvram
 vendor/etc/init/fuelgauged_init.rc
 vendor/etc/init/fuelgauged_nvram_init.rc
-vendor/lib/libfgauge_gm30.so
 vendor/lib64/libfgauge_gm30.so
 # Gatekeeper
 vendor/lib64/hw/android.hardware.gatekeeper@1.0-impl.so
 vendor/lib64/hw/gatekeeper.trustkernel.so
-vendor/lib64/hw/libSoftGatekeeper.so
 vendor/lib64/libteec.so
 # GPS
 vendor/bin/hw/android.hardware.gnss-service.mediatek
@@ -682,9 +552,6 @@ vendor/etc/vintf/manifest/gnss@2.1-service.xml
 vendor/etc/vintf/manifest/lbs_hidl_service@1.0.xml
 vendor/etc/MNL_Config.xml
 vendor/etc/slp_conf
-vendor/lib/hw/gps.default.so
-vendor/lib/libmml.so
-vendor/lib/libviagpsrpc.so
 vendor/lib64/hw/android.hardware.gnss-impl-mediatek.so
 vendor/lib64/hw/android.hardware.gnss@2.1-impl-mediatek.so
 vendor/lib64/hw/gps.default.so
@@ -699,28 +566,14 @@ vendor/etc/init/android.hardware.graphics.allocator@4.0-service-mediatek.rc
 # -- 13.09 optional MTK service removed (probe of the optional services): vendor/etc/init/vendor.mediatek.hardware.mms@1.6-service.rc
 vendor/etc/vintf/manifest/manifest_hwcomposer.xml
 vendor/etc/meow.cfg
-vendor/lib/egl/mt6789/libGLES_mali.so:vendor/lib/egl/libGLES_mali.so
-vendor/lib/egl/libGLES_meow.so
-vendor/lib/egl/libMEOW_data.so
-vendor/lib/egl/libMEOW_qt.so
-vendor/lib/egl/libMEOW_trace.so
-vendor/lib/hw/mt6789/android.hardware.graphics.allocator@4.0-impl-mediatek.so:vendor/lib/hw/android.hardware.graphics.allocator@4.0-impl-mediatek.so
 vendor/lib/hw/mt6789/android.hardware.graphics.mapper@4.0-impl-mediatek.so:vendor/lib/hw/android.hardware.graphics.mapper@4.0-impl-mediatek.so
-vendor/lib/hw/mt6789/gralloc.common.so:vendor/lib/hw/gralloc.common.so
-vendor/lib/hw/mt6789/vulkan.mali.so:vendor/lib/hw/vulkan.mali.so
 vendor/lib/mt6789/arm.graphics-V1-ndk_platform.so:vendor/lib/arm.graphics-V1-ndk_platform.so
 vendor/lib/mt6789/libdpframework.so:vendor/lib/libdpframework.so
-vendor/lib/mt6789/libgpudataproducer.so:vendor/lib/libgpudataproducer.so
-vendor/lib/mt6789/libpqparamparser.so:vendor/lib/libpqparamparser.so
-vendor/lib/libOpenCL.so
 vendor/lib/libged.so
-vendor/lib/libgpu_aux.so
 vendor/lib/libgpud.so
 vendor/lib/libgralloc_extra.so
 vendor/lib/libgralloc_metadata.so
 vendor/lib/libgralloctypes_mtk.so
-vendor/lib/vendor.mediatek.hardware.mms@1.0.so
-vendor/lib/vendor.mediatek.hardware.mms@1.1.so
 vendor/lib64/egl/mt6789/libGLES_mali.so:vendor/lib64/egl/libGLES_mali.so
 vendor/lib64/egl/libGLES_meow.so
 vendor/lib64/egl/libMEOW_data.so
@@ -753,7 +606,6 @@ vendor/lib64/vendor.mediatek.hardware.pq@2.6.so
 vendor/bin/init.insmod.sh
 vendor/etc/init.insmod.mt6789.cfg
 vendor/etc/init.insmod.mt8781.cfg
-# Firmware missing from the first ROM (F3758 dmesg: aw862xx_haptic/aw87xxx_acf load failed = no vibration, no speaker amp; FM patches; camera 3A)
 vendor/firmware/aw862x_haptic.bin
 vendor/firmware/aw862xx_haptic.bin
 vendor/firmware/aw87xxx_acf.bin
@@ -762,7 +614,6 @@ vendor/firmware/haptic_nv_rtp_autosin.bin
 vendor/firmware/haptic_nv_rtp_lighthouse.bin
 vendor/firmware/haptic_nv_rtp_osc_24K_5s.bin
 vendor/firmware/haptic_nv_rtp_silk.bin
-vendor/firmware/lib3a.ccu
 vendor/firmware/mt6627_fm_v1_coeff.bin
 vendor/firmware/mt6627_fm_v1_patch.bin
 vendor/firmware/mt6630_fm_v1_coeff.bin
@@ -775,23 +626,23 @@ vendor/firmware/mt6632_fm_v1_coeff.bin
 vendor/firmware/mt6632_fm_v1_patch.bin
 # Keymint
 vendor/bin/hw/android.hardware.security.keymint-service.trustkernel
-vendor/bin/kph
 vendor/etc/init/android.hardware.security.keymint-service.trustkernel.rc
 vendor/etc/vintf/manifest/android.hardware.security.keymint-service.trustkernel.xml
 vendor/etc/vintf/manifest/android.hardware.security.secureclock-service.trustkernel.xml
 vendor/etc/vintf/manifest/android.hardware.security.sharedsecret-service.trustkernel.xml
-vendor/lib/libdecrypt.so
-vendor/lib/libgz_gp_client.so
 vendor/lib64/hw/kmsetkey.trustkernel.so
-vendor/lib64/libdecrypt.so
-vendor/lib64/libgz_gp_client.so
-vendor/lib64/libkphhelper.so
-vendor/lib64/libkphproxy.so
-vendor/lib64/libpl.so
+# -- 27.09 zero clients: needed only by kph (above) and by the unshipped factory tool libpkm.so;
+# nothing else in the stock dump references it (readelf -d):
+# vendor/lib64/libdecrypt.so
+# -- 27.09 zero clients: needed by nothing in the entire stock vendor+system_ext dump (readelf -d);
+# its own dependency libgz_uree.so stays (camera's libimgsensorca.so/libispcameraca.so/libmtkcam_imem.so
+# link it directly, not through this client):
+# vendor/lib64/libgz_gp_client.so
+# vendor/lib64/libkphhelper.so
+# vendor/lib64/libkphproxy.so
+# vendor/lib64/libpl.so
 # Media
 vendor/bin/hw/android.hardware.media.c2@1.2-mediatek;MAKE_COPY_RULE_ONLY
-vendor/bin/hw/android.hardware.media.c2@1.2-mediatek-64b;MAKE_COPY_RULE_ONLY
-vendor/bin/vpud
 vendor/bin/v3avpud
 vendor/etc/init/android.hardware.media.c2@1.2-mediatek.rc
 vendor/etc/init/v3avpud.rc
@@ -799,24 +650,13 @@ vendor/etc/seccomp_policy/android.hardware.media.c2@1.2-mediatek-seccomp-policy
 vendor/etc/vintf/manifest/manifest_media_c2_V1_2_default.xml
 vendor/etc/media_codecs_c2.xml
 vendor/etc/media_codecs_performance.xml
-vendor/etc/mtk_omx_core.cfg
 vendor/etc/mtk_platform_codecs_config.xml
-vendor/lib/hw/vendor.mediatek.hardware.mms@1.6-impl.so
-vendor/lib/mediadrm/libwvdrmengine.so
 vendor/lib/mt6789/libvcodec_utility.so:vendor/lib/libvcodec_utility.so
 vendor/lib/mt6789/libvcodec_utility_v3a.so:vendor/lib/libvcodec_utility_v3a.so
 vendor/lib/mt6789/libvcodecdrv.so:vendor/lib/libvcodecdrv.so
 vendor/lib/mt6789/libvcodecdrv_v3a.so:vendor/lib/libvcodecdrv_v3a.so
 vendor/lib/mt6789/libvpudv3a_vcodec.so:vendor/lib/libvpudv3a_vcodec.so
 vendor/lib/libHEVCdec_sa.ca7.android.so;DISABLE_CHECKELF
-vendor/lib/libJpgEncPipe.so
-vendor/lib/libMtkOmxAdpcmDec.so
-vendor/lib/libMtkOmxAlacDec.so
-vendor/lib/libMtkOmxApeDec.so
-vendor/lib/libMtkOmxCore.so
-vendor/lib/libMtkOmxGsmDec.so
-vendor/lib/libMtkOmxMp3Dec.so
-vendor/lib/libMtkSpeechEnh.so
 vendor/lib/libcodec2_mtk_c2store.so;MAKE_COPY_RULE_ONLY
 vendor/lib/libcodec2_mtk_vdec.so;MAKE_COPY_RULE_ONLY
 vendor/lib/libcodec2_mtk_venc.so;MAKE_COPY_RULE_ONLY
@@ -830,43 +670,18 @@ vendor/lib/libh264dec_se.ca7.so;DISABLE_CHECKELF
 vendor/lib/libhevce_sb.ca7.android.so;DISABLE_CHECKELF
 vendor/lib/libion_mtk.so
 vendor/lib/libion_ulit.so
-vendor/lib/libjpeg-alpha-oal_vendor.so
-vendor/lib/libjpeg-alpha_vendor.so
 vendor/lib/libmp4enc_sa.ca7.so;DISABLE_CHECKELF
-vendor/lib/libmvpu_cic_ci_compiler.so
-vendor/lib/libmvpu_clc_cl_compiler.so
-vendor/lib/libmvpu_clc_mvpu_debuginfo.so
-vendor/lib/libmvpu_clc_mvpu_elf.so
-vendor/lib/libmvpu_clc_mvpu_utility.so
-vendor/lib/libmvpu_clc_vpu_isa.so
-vendor/lib/libmvpu_config.so
-vendor/lib/libmvpu_engine.so
-vendor/lib/libmvpu_engine_pub.so
-vendor/lib/libmvpu_pattern.so
-vendor/lib/libmvpu_pattern_pub.so
-vendor/lib/libmvpu_runtime.so
-vendor/lib/libmvpu_runtime_pub.so
-vendor/lib/libmvpuop_mtk_cv.so
-vendor/lib/libmvpuop_mtk_nn.so
 vendor/lib/libstagefrighthw.so
 vendor/lib/libthha.so;DISABLE_CHECKELF
 vendor/lib/libvcodec_oal.so;DISABLE_CHECKELF
 vendor/lib/libvcodec_utility_plat.mt6789.so
-vendor/lib/libvcodecdrv_header_stub.so
 vendor/lib/libvp8dec_sa.ca7.so;DISABLE_CHECKELF
 vendor/lib/libvp8enc_sa.ca7.so;DISABLE_CHECKELF
 vendor/lib/libvp9dec_sa.ca7.so;DISABLE_CHECKELF
-vendor/lib/libvpu5.so
-vendor/lib/libvpud_vcodec.so
-vendor/lib/libwvhidl.so
-vendor/lib/vendor.mediatek.hardware.mms@1.2.so
-vendor/lib/vendor.mediatek.hardware.mms@1.3.so
-vendor/lib/vendor.mediatek.hardware.mms@1.4.so
-vendor/lib/vendor.mediatek.hardware.mms@1.5.so
-vendor/lib/vendor.mediatek.hardware.mms@1.6.so
+# -- 27.09 zero clients: the private lib of vpud above, needed by nothing else (readelf -d):
+# vendor/lib/libvpud_vcodec.so
 vendor/lib64/hw/vendor.mediatek.hardware.mms@1.6-impl.so
 vendor/lib64/mediadrm/libwvdrmengine.so
-vendor/lib64/libMtkOmxCore.so
 vendor/lib64/libcodec2_mtk_c2store.so;MAKE_COPY_RULE_ONLY
 vendor/lib64/libcodec2_mtk_vdec.so;MAKE_COPY_RULE_ONLY
 vendor/lib64/libcodec2_mtk_venc.so;MAKE_COPY_RULE_ONLY
@@ -912,26 +727,7 @@ vendor/etc/vintf/manifest/manifest_apuware_apusys.xml
 vendor/etc/vintf/manifest/manifest_apuware_hmp.xml
 vendor/etc/vintf/manifest/manifest_apuware_utils.xml
 vendor/etc/armnn_app.config
-vendor/lib/mt6789/libneuralnetworks_sl_driver_mtk_prebuilt.so:vendor/lib/libneuralnetworks_sl_driver_mtk_prebuilt.so
-vendor/lib/mt6789/libneuron_adapter_mgvi.so:vendor/lib/libneuron_adapter_mgvi.so
-vendor/lib/mt6789/libnir_neon_driver.so:vendor/lib/libnir_neon_driver.so
-vendor/lib/libapu_mdw.so
-vendor/lib/libapu_mdw_batch.so
-vendor/lib/libapusys.so
-vendor/lib/libapusys_edma.so
-vendor/lib/libarmnn.so
-vendor/lib/libarmnn_ndk.mtk.vndk.so
-vendor/lib/libcmdl.so
-vendor/lib/libcmdl_ndk.mtk.vndk.so
-vendor/lib/libneuron_graph_delegate.mtk.so
-vendor/lib/libneuropilot_hal_utils.so
-vendor/lib/libnpagent.so
-vendor/lib/libtflite_mtk.so
 vendor/lib/vendor.mediatek.hardware.mmagent@1.0.so
-vendor/lib/vendor.mediatek.hardware.mmagent@1.1.so
-vendor/lib/vendor.mediatek.hardware.neuropilot.agent@1.0.so
-vendor/lib/vendor.mediatek.hardware.neuropilot.agent@1.1.so
-vendor/lib/vendor.mediatek.hardware.neuropilot.agent@1.2.so
 vendor/lib64/mt6789/libneuralnetworks_sl_driver_mtk_prebuilt.so:vendor/lib64/libneuralnetworks_sl_driver_mtk_prebuilt.so
 vendor/lib64/mt6789/libneuron_adapter_mgvi.so:vendor/lib64/libneuron_adapter_mgvi.so
 vendor/lib64/mt6789/libnir_neon_driver.so:vendor/lib64/libnir_neon_driver.so
@@ -964,65 +760,43 @@ vendor/lib64/vendor.mediatek.hardware.neuropilot.agent@1.2.so
 # NFC
 vendor/bin/hw/android.hardware.secure_element@1.2-service-mediatek
 vendor/etc/init/android.hardware.secure_element@1.2-service-mediatek.rc
-vendor/etc/libnfc-nci.conf
-# NVRAM
-# -- vendor/bin/hw/vendor.mediatek.hardware.nvram@1.1-service   # 13.09: HIDL nvram service has no clients on this ROM (F4304), dropped; libnvram stays (linked in-process)
+vendor/lib64/libpn557_fw.so
 vendor/bin/nvram_daemon
 vendor/etc/init/nvram_daemon.rc
-# -- vendor/etc/init/vendor.mediatek.hardware.nvram@1.1-sevice.rc   # 13.09: HIDL nvram service has no clients on this ROM (F4304), dropped; libnvram stays (linked in-process)
-# -- vendor/lib/hw/vendor.mediatek.hardware.nvram@1.1-impl.so   # 13.09: HIDL nvram service has no clients on this ROM (F4304), dropped; libnvram stays (linked in-process)
 vendor/lib/libcustom_nvram.so
-vendor/lib/libfile_op.so
 vendor/lib/libnvram.so
 vendor/lib/libnvram_sec.so
-# -- vendor/lib/vendor.mediatek.hardware.nvram@1.0.so   # 13.09: HIDL nvram service has no clients on this ROM (F4304), dropped; libnvram stays (linked in-process)
-# -- vendor/lib/vendor.mediatek.hardware.nvram@1.1.so   # 13.09: HIDL nvram service has no clients on this ROM (F4304), dropped; libnvram stays (linked in-process)
-# -- vendor/lib64/hw/vendor.mediatek.hardware.nvram@1.1-impl.so   # 13.09: HIDL nvram service has no clients on this ROM (F4304), dropped; libnvram stays (linked in-process)
 vendor/lib64/libconnfem.so
 vendor/lib64/libcustom_nvram.so
 vendor/lib64/libfile_op.so
 vendor/lib64/libhwm.so
 vendor/lib64/libnvram.so
 vendor/lib64/libnvram_sec.so
-# -- vendor/lib64/vendor.mediatek.hardware.nvram@1.0.so   # 13.09: HIDL nvram service has no clients on this ROM (F4304), dropped; libnvram stays (linked in-process)
-# -- vendor/lib64/vendor.mediatek.hardware.nvram@1.1.so   # 13.09: HIDL nvram service has no clients on this ROM (F4304), dropped; libnvram stays (linked in-process)
-# Power
 vendor/etc/nnapi_powerhal.json
-vendor/lib/libneuroeara.so
-# -- vendor/lib/vendor.mediatek.hardware.netdagent@1.0.so  (14.09: netdagent dropped, zero binder clients over 17 h on B39, F4420)
 vendor/lib64/libneuroeara.so
-# -- vendor/lib64/vendor.mediatek.hardware.netdagent@1.0.so  (14.09: netdagent dropped, zero binder clients over 17 h on B39, F4420)
+vendor/lib64/vendor.mediatek.hardware.netdagent@1.0.so
 # RIL
 vendor/bin/hw/mtkfusionrild
 vendor/bin/hw/tetheroffloadservice
 # -- 13.09 optional MTK service removed (probe of the optional services): vendor/bin/hw/vtservice_hidl
-vendor/bin/bip
 vendor/bin/bip_ap
-vendor/bin/ccci_fsd
 vendor/bin/ccci_mdinit
 vendor/bin/ccci_rpcd
 vendor/bin/charon
-vendor/bin/dmc_core
 vendor/bin/epdg_wod
-vendor/bin/gsm0710muxd
 vendor/bin/ipsec_mon
-vendor/bin/mtk_pkm_service
 vendor/bin/muxreport
-# -- vendor/bin/netdagent  (14.09: netdagent dropped, zero binder clients over 17 h on B39, F4420)
 vendor/bin/rcs_volte_stack
 vendor/bin/starter
 vendor/bin/stroke
-# 🔴 08.09 (F3912) REMOVED: vendor/bin/volte_clientapi_ua
 vendor/bin/volte_imcb
 vendor/bin/volte_imsm_93
-vendor/bin/volte_md_status
 vendor/bin/volte_rcs_ua
 vendor/bin/volte_stack
 vendor/bin/volte_ua
 vendor/bin/wfca
 vendor/bin/xcap
 vendor/etc/init/gsm0710muxd.rc
-vendor/etc/init/init.bip.rc
 vendor/etc/init/init.bip_ap.rc
 vendor/etc/init/init.cccifsd.rc
 vendor/etc/init/init.cccimdinit.rc
@@ -1038,14 +812,13 @@ vendor/etc/init/init.wfca.rc
 vendor/etc/init/init.wod.rc
 vendor/etc/init/init.xcap.rc
 vendor/etc/init/ipsec_mon.rc
-vendor/etc/init/mtk_pkm_service.rc
+# -- 27.09 zero clients: rc of mtk_pkm_service above:
+# vendor/etc/init/mtk_pkm_service.rc
 vendor/etc/init/mtklog.rc
 vendor/etc/init/mtkrild.rc
 vendor/etc/init/muxreport.rc
-# -- vendor/etc/init/netdagent.rc  (14.09: netdagent dropped, zero binder clients over 17 h on B39, F4420)
 vendor/etc/init/networksetting.rc
 vendor/etc/init/tetheroffloadservice.rc
-# 🔴 08.09 (F3912) REMOVED: vendor/etc/init/volte_clientapi_ua.rc
 vendor/etc/ecc_list.xml
 vendor/etc/ecc_list_OP01.xml
 vendor/etc/ecc_list_OP02.xml
@@ -1063,55 +836,22 @@ vendor/etc/virtual-spn-conf-by-efgid1.xml
 vendor/etc/virtual-spn-conf-by-efpnn.xml
 vendor/etc/virtual-spn-conf-by-efspn.xml
 vendor/etc/virtual-spn-conf-by-imsi.xml
-vendor/lib/hw/vendor.mediatek.hardware.videotelephony@1.0-impl.so
-vendor/lib/libasn1c_core.so
-vendor/lib/libasn1c_mapi.so
-vendor/lib/libasn1c_mdmi.so
-vendor/lib/libcares_naptr.so
-vendor/lib/libcarrierconfig.so
-vendor/lib/libccci_util.so
-vendor/lib/libcharon-ss.so
-vendor/lib/libcrypto-md.so
-vendor/lib/libcurl-md.so
-vendor/lib/libhydra.so
-vendor/lib/libicd_decoder.so
 vendor/lib/libipsec_ims_shr.so
-vendor/lib/libmnetlink_v104.so
-vendor/lib/libmtkares.so
 vendor/lib/libmtkcutils.so
-vendor/lib/libmtkhardware_legacy.so
-vendor/lib/libmtknetutils.so
 vendor/lib/libmtkproperty.so
 vendor/lib/libmtkrillog.so
-vendor/lib/libmtksysutils.so
 vendor/lib/librcs_interface.so
 vendor/lib/librcs_volte_core.so
-vendor/lib/libreference-ril.so
-vendor/lib/libril.so
-vendor/lib/librilutils.so
-vendor/lib/librpc.so
-vendor/lib/libsimaka.so
-vendor/lib/libsimlock.so
-vendor/lib/libsimmelock.so
-vendor/lib/libssl-md.so
 vendor/lib/libstorage_otp.so
-vendor/lib/libstrongswan.so
-vendor/lib/libsysenv.so
-vendor/lib/libtranslator_mapi_v3.0.so
-vendor/lib/libtranslator_mdmi_v2.8.2.so
-vendor/lib/libtranslator_utils.so
 vendor/lib/libverno.so
 vendor/lib/libvolte_core_shr.so
 vendor/lib/libvolte_xdmc_shr.so
-vendor/lib/libwapi.so
-vendor/lib/libwo.so
-vendor/lib/vendor.mediatek.hardware.apmonitor@2.0.so
-vendor/lib/vendor.mediatek.hardware.mdmonitor@1.0.so
 vendor/lib/vendor.mediatek.hardware.rcs@2.0.so
-vendor/lib/vendor.mediatek.hardware.videotelephony@1.0.so;MODULE_SUFFIX=_vendor
 vendor/lib64/vendor.mediatek.hardware.videotelephony@1.0.so;MODULE_SUFFIX=_vendor
 vendor/lib64/hw/vendor.mediatek.hardware.videotelephony@1.0-impl.so
-vendor/lib64/libapmonitor_vendor.so
+# -- 27.09 zero clients: dmc_core's apmonitor@2.0 client wrapper, needed by nothing but the unshipped
+# factory tool libpkm.so (dmc_core itself calls apmonitor@2.0 directly, not through this):
+# vendor/lib64/libapmonitor_vendor.so
 vendor/lib64/libasn1c_core.so
 vendor/lib64/libasn1c_mapi.so
 vendor/lib64/libasn1c_mdmi.so
@@ -1124,7 +864,9 @@ vendor/lib64/libcurl-md.so
 vendor/lib64/libforkexecwrap.so
 vendor/lib64/libgwsd-ril.so
 vendor/lib64/libhydra.so
-vendor/lib64/libicd_decoder.so
+# -- 27.09 zero clients: needed only by dmc_core (dead, above) and the unshipped factory tool
+# libpkm.so; nothing else in the stock dump references it (readelf -d):
+# vendor/lib64/libicd_decoder.so
 vendor/lib64/libifcutils_mtk.so
 vendor/lib64/libipsec_ims_shr.so
 vendor/lib64/libmnetlink_v104.so
@@ -1166,33 +908,21 @@ vendor/lib64/libviamipc-ril.so
 vendor/lib64/libwapi.so
 vendor/lib64/libwo.so
 vendor/lib64/libwpfa.so
-vendor/lib64/vendor.mediatek.hardware.apmonitor@2.0.so
+# -- 27.09 zero clients: dmc_core's own HIDL registration (dead, above); its only other reference is
+# the dead libapmonitor_vendor.so client wrapper (also removed):
+# vendor/lib64/vendor.mediatek.hardware.apmonitor@2.0.so
 vendor/lib64/vendor.mediatek.hardware.clientapi@1.0.so
-vendor/lib64/vendor.mediatek.hardware.dmc@1.0.so
-vendor/lib64/vendor.mediatek.hardware.dmc@1.1.so
-vendor/lib64/vendor.mediatek.hardware.dmc@1.2.so
+# -- 27.09 zero clients: dmc_core's own HIDL registrations (dead, above), needed by nothing else
+# (readelf -d across the whole stock vendor+system_ext dump):
+# vendor/lib64/vendor.mediatek.hardware.dmc@1.0.so
+# vendor/lib64/vendor.mediatek.hardware.dmc@1.1.so
+# vendor/lib64/vendor.mediatek.hardware.dmc@1.2.so
 vendor/lib64/vendor.mediatek.hardware.mdmonitor@1.0.so
 vendor/lib64/vendor.mediatek.hardware.mtkradioex@2.0.so
 vendor/lib64/vendor.mediatek.hardware.mtkradioex@3.0.so
-# Radio (IMS)
-# -- 13.09 optional MTK service removed (probe of the optional services): system_ext/bin/vtservice
-# -- 13.09 optional MTK service removed (probe of the optional services): system_ext/etc/init/init.vtservice.rc
-# 🔴 08.09 (F3917): DO NOT move to system/. com.mediatek.ims loads them from
-# /system_ext/framework/, and we were placing them in /system/framework/ - ClassNotFoundException
-# for ExtensionPluginFactoryImpl in ImsApp.onCreate, a crash loop, PackageWatchdog, RescueParty,
-# device reboot. common.jar was added: it exists in stock and is needed by the same chain.
-# 🔴 base - a BOOTCLASSPATH jar (on the device BOOTCLASSPATH contains
-# /system/framework/mediatek-ims-base.jar), so it is moved to system/framework.
-# Marking it system_ext_specific breaks the build: aosp_shared_system_image
-# rejects a non-generic module from platform-bootclasspath (F3919).
 system_ext/framework/mediatek-ims-base.jar:system/framework/mediatek-ims-base.jar
 system_ext/framework/mediatek-ims-common.jar
 system_ext/framework/mediatek-ims-extension-plugin.jar
-system_ext/lib/libmtk_vt_wrapper.so
-system_ext/lib/libvcodec_cap.so
-system_ext/lib/libvcodec_capenc.so
-system_ext/lib/vendor.mediatek.hardware.videotelephony-V1-ndk.so
-system_ext/lib/vendor.mediatek.hardware.videotelephony@1.0.so
 system_ext/lib64/libcomutils.so
 system_ext/lib64/libimsma.so
 system_ext/lib64/libimsma_adapt.so
@@ -1247,101 +977,12 @@ vendor/etc/init/trustkernel.rc
 # -- vendor/lib/hw/thermal_hal.so
 # -- vendor/lib64/hw/android.hardware.thermal@2.0-impl.so
 # -- vendor/lib64/hw/thermal_hal.so
-# -- vendor/lib64/libtrm.so
 # Widevine
 vendor/bin/hw/android.hardware.drm@1.4-service.widevine
 vendor/etc/init/android.hardware.drm@1.4-service.widevine.rc
 vendor/etc/vintf/manifest/manifest_android.hardware.drm@1.4-service.widevine.xml
 vendor/lib64/libwvhidl.so
 # Camera: IMX766 sensor blobs, specific to this device.
-vendor/lib/mt6789/imx766_mipi_raw_IdxMgr.so:vendor/lib/imx766_mipi_raw_IdxMgr.so
-vendor/lib/mt6789/imx766_mipi_raw_tuning.so:vendor/lib/imx766_mipi_raw_tuning.so
-vendor/lib/mt6789/imx766g_mipi_raw_IdxMgr.so:vendor/lib/imx766g_mipi_raw_IdxMgr.so
-vendor/lib/mt6789/imx766g_mipi_raw_tuning.so:vendor/lib/imx766g_mipi_raw_tuning.so
-vendor/lib/mt6789/imx766gm_mipi_raw_IdxMgr.so:vendor/lib/imx766gm_mipi_raw_IdxMgr.so
-vendor/lib/mt6789/imx766gm_mipi_raw_tuning.so:vendor/lib/imx766gm_mipi_raw_tuning.so
-vendor/lib/mt6789/imx766gs_mipi_raw_IdxMgr.so:vendor/lib/imx766gs_mipi_raw_IdxMgr.so
-vendor/lib/mt6789/imx766gs_mipi_raw_tuning.so:vendor/lib/imx766gs_mipi_raw_tuning.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_E2EHDR_Preview.so:vendor/lib/libCamera_imx766gmipiraw_E2EHDR_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_E2EHDR_Video.so:vendor/lib/libCamera_imx766gmipiraw_E2EHDR_Video.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Face_Capture.so:vendor/lib/libCamera_imx766gmipiraw_Face_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Flash_Capture.so:vendor/lib/libCamera_imx766gmipiraw_Flash_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_HDR_Capture.so:vendor/lib/libCamera_imx766gmipiraw_HDR_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_HDR_Preview.so:vendor/lib/libCamera_imx766gmipiraw_HDR_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_HDR_Reconfig_Preview.so:vendor/lib/libCamera_imx766gmipiraw_HDR_Reconfig_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_HDR_Reconfig_Video.so:vendor/lib/libCamera_imx766gmipiraw_HDR_Reconfig_Video.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_HDR_Video.so:vendor/lib/libCamera_imx766gmipiraw_HDR_Video.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_N3D_Capture.so:vendor/lib/libCamera_imx766gmipiraw_N3D_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_N3D_Preview.so:vendor/lib/libCamera_imx766gmipiraw_N3D_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_N3D_Video.so:vendor/lib/libCamera_imx766gmipiraw_N3D_Video.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_P1_YUV.so:vendor/lib/libCamera_imx766gmipiraw_P1_YUV.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Scene_Capture.so:vendor/lib/libCamera_imx766gmipiraw_Scene_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Scene_Capture_4cell.so:vendor/lib/libCamera_imx766gmipiraw_Scene_Capture_4cell.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Scene_Preview.so:vendor/lib/libCamera_imx766gmipiraw_Scene_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Scene_Preview_4k.so:vendor/lib/libCamera_imx766gmipiraw_Scene_Preview_4k.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Scene_Preview_ZSD_Flash.so:vendor/lib/libCamera_imx766gmipiraw_Scene_Preview_ZSD_Flash.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Video_1080.so:vendor/lib/libCamera_imx766gmipiraw_Video_1080.so
-vendor/lib/mt6789/libCamera_imx766gmipiraw_Video_4k.so:vendor/lib/libCamera_imx766gmipiraw_Video_4k.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_E2EHDR_Preview.so:vendor/lib/libCamera_imx766gmmipiraw_E2EHDR_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_E2EHDR_Video.so:vendor/lib/libCamera_imx766gmmipiraw_E2EHDR_Video.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Face_Capture.so:vendor/lib/libCamera_imx766gmmipiraw_Face_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Flash_Capture.so:vendor/lib/libCamera_imx766gmmipiraw_Flash_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_HDR_Capture.so:vendor/lib/libCamera_imx766gmmipiraw_HDR_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_HDR_Preview.so:vendor/lib/libCamera_imx766gmmipiraw_HDR_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_HDR_Reconfig_Preview.so:vendor/lib/libCamera_imx766gmmipiraw_HDR_Reconfig_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_HDR_Reconfig_Video.so:vendor/lib/libCamera_imx766gmmipiraw_HDR_Reconfig_Video.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_HDR_Video.so:vendor/lib/libCamera_imx766gmmipiraw_HDR_Video.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_N3D_Capture.so:vendor/lib/libCamera_imx766gmmipiraw_N3D_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_N3D_Preview.so:vendor/lib/libCamera_imx766gmmipiraw_N3D_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_N3D_Video.so:vendor/lib/libCamera_imx766gmmipiraw_N3D_Video.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_P1_YUV.so:vendor/lib/libCamera_imx766gmmipiraw_P1_YUV.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Scene_Capture.so:vendor/lib/libCamera_imx766gmmipiraw_Scene_Capture.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Scene_Capture_4cell.so:vendor/lib/libCamera_imx766gmmipiraw_Scene_Capture_4cell.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Scene_Preview.so:vendor/lib/libCamera_imx766gmmipiraw_Scene_Preview.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Scene_Preview_4k.so:vendor/lib/libCamera_imx766gmmipiraw_Scene_Preview_4k.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Scene_Preview_ZSD_Flash.so:vendor/lib/libCamera_imx766gmmipiraw_Scene_Preview_ZSD_Flash.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Video_1080.so:vendor/lib/libCamera_imx766gmmipiraw_Video_1080.so
-vendor/lib/mt6789/libCamera_imx766gmmipiraw_Video_4k.so:vendor/lib/libCamera_imx766gmmipiraw_Video_4k.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_E2EHDR_Preview.so:vendor/lib/libCamera_imx766gsmipiraw_E2EHDR_Preview.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_E2EHDR_Video.so:vendor/lib/libCamera_imx766gsmipiraw_E2EHDR_Video.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Face_Capture.so:vendor/lib/libCamera_imx766gsmipiraw_Face_Capture.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Flash_Capture.so:vendor/lib/libCamera_imx766gsmipiraw_Flash_Capture.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_HDR_Capture.so:vendor/lib/libCamera_imx766gsmipiraw_HDR_Capture.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_HDR_Preview.so:vendor/lib/libCamera_imx766gsmipiraw_HDR_Preview.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_HDR_Reconfig_Preview.so:vendor/lib/libCamera_imx766gsmipiraw_HDR_Reconfig_Preview.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_HDR_Reconfig_Video.so:vendor/lib/libCamera_imx766gsmipiraw_HDR_Reconfig_Video.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_HDR_Video.so:vendor/lib/libCamera_imx766gsmipiraw_HDR_Video.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_N3D_Capture.so:vendor/lib/libCamera_imx766gsmipiraw_N3D_Capture.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_N3D_Preview.so:vendor/lib/libCamera_imx766gsmipiraw_N3D_Preview.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_N3D_Video.so:vendor/lib/libCamera_imx766gsmipiraw_N3D_Video.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_P1_YUV.so:vendor/lib/libCamera_imx766gsmipiraw_P1_YUV.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Scene_Capture.so:vendor/lib/libCamera_imx766gsmipiraw_Scene_Capture.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Scene_Capture_4cell.so:vendor/lib/libCamera_imx766gsmipiraw_Scene_Capture_4cell.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Scene_Preview.so:vendor/lib/libCamera_imx766gsmipiraw_Scene_Preview.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Scene_Preview_4k.so:vendor/lib/libCamera_imx766gsmipiraw_Scene_Preview_4k.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Scene_Preview_ZSD_Flash.so:vendor/lib/libCamera_imx766gsmipiraw_Scene_Preview_ZSD_Flash.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Video_1080.so:vendor/lib/libCamera_imx766gsmipiraw_Video_1080.so
-vendor/lib/mt6789/libCamera_imx766gsmipiraw_Video_4k.so:vendor/lib/libCamera_imx766gsmipiraw_Video_4k.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_E2EHDR_Preview.so:vendor/lib/libCamera_imx766mipiraw_E2EHDR_Preview.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_E2EHDR_Video.so:vendor/lib/libCamera_imx766mipiraw_E2EHDR_Video.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Face_Capture.so:vendor/lib/libCamera_imx766mipiraw_Face_Capture.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Flash_Capture.so:vendor/lib/libCamera_imx766mipiraw_Flash_Capture.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_HDR_Capture.so:vendor/lib/libCamera_imx766mipiraw_HDR_Capture.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_HDR_Preview.so:vendor/lib/libCamera_imx766mipiraw_HDR_Preview.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_HDR_Reconfig_Preview.so:vendor/lib/libCamera_imx766mipiraw_HDR_Reconfig_Preview.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_HDR_Reconfig_Video.so:vendor/lib/libCamera_imx766mipiraw_HDR_Reconfig_Video.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_HDR_Video.so:vendor/lib/libCamera_imx766mipiraw_HDR_Video.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_N3D_Capture.so:vendor/lib/libCamera_imx766mipiraw_N3D_Capture.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_N3D_Preview.so:vendor/lib/libCamera_imx766mipiraw_N3D_Preview.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_N3D_Video.so:vendor/lib/libCamera_imx766mipiraw_N3D_Video.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_P1_YUV.so:vendor/lib/libCamera_imx766mipiraw_P1_YUV.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Scene_Capture.so:vendor/lib/libCamera_imx766mipiraw_Scene_Capture.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Scene_Capture_4cell.so:vendor/lib/libCamera_imx766mipiraw_Scene_Capture_4cell.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Scene_Preview.so:vendor/lib/libCamera_imx766mipiraw_Scene_Preview.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Scene_Preview_4k.so:vendor/lib/libCamera_imx766mipiraw_Scene_Preview_4k.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Scene_Preview_ZSD_Flash.so:vendor/lib/libCamera_imx766mipiraw_Scene_Preview_ZSD_Flash.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Video_1080.so:vendor/lib/libCamera_imx766mipiraw_Video_1080.so
-vendor/lib/mt6789/libCamera_imx766mipiraw_Video_4k.so:vendor/lib/libCamera_imx766mipiraw_Video_4k.so
 vendor/lib64/mt6789/imx766_mipi_raw_IdxMgr.so:vendor/lib64/imx766_mipi_raw_IdxMgr.so
 vendor/lib64/mt6789/imx766_mipi_raw_tuning.so:vendor/lib64/imx766_mipi_raw_tuning.so
 vendor/lib64/mt6789/imx766g_mipi_raw_IdxMgr.so:vendor/lib64/imx766g_mipi_raw_IdxMgr.so
@@ -1431,10 +1072,8 @@ vendor/lib64/mt6789/libCamera_imx766mipiraw_Scene_Preview_ZSD_Flash.so:vendor/li
 vendor/lib64/mt6789/libCamera_imx766mipiraw_Video_1080.so:vendor/lib64/libCamera_imx766mipiraw_Video_1080.so
 vendor/lib64/mt6789/libCamera_imx766mipiraw_Video_4k.so:vendor/lib64/libCamera_imx766mipiraw_Video_4k.so
 -vendor/lib64/libaalservice.so
--vendor/lib/libaalservice.so
 # 03.09: transitive NEEDED of libaalservice (pq HAL) found in the stock vendor dump
 vendor/lib64/libaal_mtk.so
-vendor/lib/libaal_mtk.so
 # 03.09: stock TEE keymint stack, renamed *_mtk (see extract-files.py)
 vendor/lib64/libkeymint.so:vendor/lib64/libkeymint_mtk.so
 vendor/lib64/lib_android_keymaster_keymint_utils.so:vendor/lib64/lib_android_keymaster_keymint_utils_mtk.so
@@ -1444,31 +1083,12 @@ vendor/lib64/libcppbor_external.so:vendor/lib64/libcppbor_external_mtk.so
 vendor/lib64/libcppcose_rkp.so:vendor/lib64/libcppcose_rkp_mtk.so
 vendor/lib64/libpuresoftkeymasterdevice.so:vendor/lib64/libpuresoftkeymasterdevice_mtk.so
 vendor/lib64/libsoft_attestation_cert.so:vendor/lib64/libsoft_attestation_cert_mtk.so
-# Camera (F3810)
-vendor/bin/hw/mt6789/camerahalserver
+vendor/bin/hw/mt6789/camerahalserver:vendor/bin/hw/camerahalserver
 
-# Codec2 (F3824, A16 audit): the 32-bit HAL android.hardware.media.c2@1.2-mediatek loads vendor/lib/libcodec2_*; the stock
-# soft decoders and media_codecs*.xml were missing from the list
-vendor/etc/media_codecs.xml
-vendor/etc/media_codecs_google_audio.xml
-vendor/etc/media_codecs_mediatek_audio.xml
-# vendor/lib/libcodec2_soft_mtk_alacdec.so;MAKE_COPY_RULE_ONLY
-# vendor/lib/libcodec2_soft_mtk_apedec.so;MAKE_COPY_RULE_ONLY
-# vendor/lib/libcodec2_soft_mtk_imaadpcmdec.so;MAKE_COPY_RULE_ONLY
-# vendor/lib/libcodec2_soft_mtk_mp3dec.so;MAKE_COPY_RULE_ONLY
-# vendor/lib/libcodec2_soft_mtk_msadpcmdec.so;MAKE_COPY_RULE_ONLY
 
-# Codec2 (F3827/F3830): the AOSP-vendor variants of libcodec2_hidl/vndk/soft_common are installed by the build itself (an
-# "overriding commands" conflict with copy-files); compatibility with the stock HAL is provided by VNDK 31 (PRODUCT_SHIPPING_API_LEVEL 31),
-# stock copies of these libraries are not needed.
 
-# Fingerprint (F3831, blob inventory 06.09): the stock Silead HAL did not make the list, even though our kernel driver sileadfp
-# does work (F3813); the HIDL library android.hardware.biometrics.fingerprint@2.1.so is built by AOSP - do not copy it
 vendor/bin/hw/android.hardware.biometrics.fingerprint@2.1-service
-vendor/etc/init/android.hardware.biometrics.fingerprint@2.1-service.rc
-vendor/etc/vintf/manifest/android.hardware.biometrics.fingerprint@2.1-service.xml
-vendor/lib/hw/fingerprint.silead.default.so
-vendor/lib/libsl_fp_impl.so
+vendor/etc/init/android.hardware.biometrics.fingerprint@2.1-service.rc:vendor/etc/init/android.hardware.biometrics.fingerprint@2.1-service-silead.rc
 vendor/lib64/hw/fingerprint.silead.default.so
 vendor/lib64/libsl_fp_impl.so
 

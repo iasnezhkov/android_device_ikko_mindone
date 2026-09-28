@@ -2,31 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mind_one minimal RIL, phase 1 skeleton (RIL-MINIMAL-1409).
-//
-// MindoneRadio implements android.hardware.radio@1.6::IRadio for instance "slot1". Version
-// choice is not arbitrary -- see RIL-MINIMAL-1409 "HAL version choice": the device's
-// framework compatibility matrix (compatibility_matrix.6.xml, target-level 6, matching this
-// device's manifest.xml <manifest target-level="6">) requires HIDL android.hardware.radio
-// version "1.5-6" for instance slot1/slot2/slot3, and the stock librilfusion.so itself links
-// android.hardware.radio@1.0.so through @1.6.so (readelf -d, confirmed in the LineageOS tree) -- i.e.
-// the real vendor RIL already implements 1.6 for this exact instance. Implementing anything
-// lower would fail VINTF compatibility.
-//
-// Every one of IRadio@1.6's 201 pure-virtual request methods must be overridden (HIDL C++ has
-// no default-stub mechanism); this file's method table below was generated mechanically from
-// the real android/hardware/radio/1.6/IRadio.h (parsed by
-// the (untracked) codegen helper parse_iradio.py) so every signature is copy-exact -- no
-// hand-transcription errors. ~24 of them (the task's minimal request set: SIM status, signal
-// strength, voice/data registration, operator, dial/hangup/currentCalls/acceptCall, sendSms,
-// setupDataCall/deactivateDataCall in all their 1.0/1.2/1.4/1.5/1.6 forms, setRadioPower,
-// getDeviceIdentity, plus the two non-request plumbing methods setResponseFunctions/
-// responseAcknowledgement) are implemented faithfully in RadioImpl_core.cpp against a real
-// AtChannel. The remaining ~177 are auto-generated in RadioImpl_stubs.cpp: each answers
-// RadioError::REQUEST_NOT_SUPPORTED through the *exact* IRadioResponse callback method the
-// framework expects for that request (resolved by the (untracked) codegen helper parse_iradioresponse.py
-// from the real IRadioResponse@1.6.h, not guessed) -- "no silent stubs" per the task brief: every
-// unsupported request still gets a spec-correct response, just an honest one.
 #pragma once
 
 #include <android/hardware/radio/1.6/IRadio.h>
@@ -43,8 +18,6 @@
 
 namespace mindone::ril {
 
-// Implements android.hardware.radio@1.6::IRadio/slot1. See file header above and
-// RIL-MINIMAL-1409 for the version/scope rationale.
 class MindoneRadio : public ::android::hardware::radio::V1_6::IRadio {
   public:
     MindoneRadio();
@@ -268,14 +241,6 @@ class MindoneRadio : public ::android::hardware::radio::V1_6::IRadio {
         int32_t serial, ::android::hardware::radio::V1_6::RadioError error);
     static void logStubRequest(const char* name, int32_t serial);
 
-    // Boot handshake (RIL-MINIMAL-1409 "boot handshake", recovered from
-    // RmcRadioRequestHandler's real constructor, modem/ril/AT-MAP-NOTES.md
-    // "Boot-handshake findings" -- NOT the task's originally-guessed command names, three of
-    // which do not exist in the binary at all). Runs once, synchronously, right after
-    // setResponseFunctions() binds a caller for the first time. Every command here is
-    // read-or-runtime-config, never a factory/NVRAM write -- see the blacklist in
-    // RIL-MINIMAL-1409 "risks" for the write-shaped AT+E* commands this skeleton must
-    // never send.
     void runBootHandshake();
 
     // Shared implementation for the five setupDataCall generations (1.0/1.2/1.4/1.5/1.6) and
@@ -310,8 +275,6 @@ class MindoneRadio : public ::android::hardware::radio::V1_6::IRadio {
     bool mBootHandshakeDone = false;
     bool mRadioPowerOn = false;
 
-    // Applies the modem's own idle power-saving levers once the radio is on (F4486).
-    // Caller must already hold mAtLock.
     void applyPowerSavingProfileLocked();
     bool mPowerSavingApplied = false;
 };

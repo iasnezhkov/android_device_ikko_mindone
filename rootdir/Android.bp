@@ -56,13 +56,6 @@ prebuilt_etc {
 }
 
 prebuilt_etc {
-    name: "init.mt6789.rc",
-    src: "etc/init.mt6789.rc",
-    sub_dir: "init/hw",
-    vendor: true,
-}
-
-prebuilt_etc {
     name: "init.mt8781.rc",
     src: "etc/init.mt8781.rc",
     sub_dir: "init/hw",
@@ -98,6 +91,13 @@ prebuilt_etc {
 }
 
 prebuilt_etc {
+    name: "init.connsys_drv.rc",
+    src: "etc/init.connsys_drv.rc",
+    sub_dir: "init",
+    vendor: true,
+}
+
+prebuilt_etc {
     name: "init.mindone_bootlog.rc",
     src: "etc/init.mindone_bootlog.rc",
     sub_dir: "init",
@@ -107,5 +107,37 @@ prebuilt_etc {
 sh_binary {
     name: "mindone-bootlog.sh",
     src: "bin/mindone-bootlog.sh",
+    vendor: true,
+}
+
+prebuilt_etc {
+    name: "init.nfc.rc",
+    src: "etc/init.nfc.rc",
+    sub_dir: "init",
+    vendor: true,
+}
+
+prebuilt_etc {
+    name: "init.gauge_learned.rc",
+    src: "etc/init.gauge_learned.rc",
+    sub_dir: "init",
+    vendor: true,
+}
+
+sh_binary {
+    name: "gauge-learned.sh",
+    src: "bin/gauge-learned.sh",
+    vendor: true,
+}
+
+sh_binary {
+    name: "mindone-fast-insmod.sh",
+    src: "bin/mindone-fast-insmod.sh",
+    vendor: true,
+}
+
+prebuilt_etc {
+    name: "mindone-insmod.schedule",
+    src: "etc/mindone-insmod.schedule",
     vendor: true,
 }

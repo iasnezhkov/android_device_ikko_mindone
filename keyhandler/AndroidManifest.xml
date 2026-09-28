@@ -3,17 +3,6 @@
     SPDX-FileCopyrightText: The LineageOS Project
     SPDX-License-Identifier: Apache-2.0
 -->
-<!--
-     mindone: device key handler for the flip-camera module's hall switch (F4296).
-     See CAMERA-FLIP-PLAN-1309.
-
-     This package carries no activities and is never launched as an app: PhoneWindowManager
-     loads CameraFlipKeyHandler directly out of the installed APK via PathClassLoader (the same
-     mechanism LineageParts' own gesture KeyHandler uses), so the class runs inside system_server
-     under the system UID. It does not need any <uses-permission> of its own: the Context passed
-     to its constructor is system_server's own Context, which already has unrestricted access to
-     Settings.System and to sending broadcasts protected by a permission this package defines.
--->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.mindone.keyhandler">
 

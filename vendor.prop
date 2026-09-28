@@ -1,17 +1,4 @@
-# Adapted from a LineageOS device tree for the same MT6789
-# chipset) — kept largely as-is, these are MediaTek platform-level feature flags (audio/BT/
-# camera/sensors/thermal/USB/Widevine), not device-specific. Spot-checked against our own
-# facts where we have independent confirmation:
-#   vendor.usb.controller=musb-hdrc          — matches our own musb_hdrc driver
-#   ro.vendor.mtk_widevine_drm_l3_support=1  — matches F3378 (L3 achievable, L1 architectural dead-end)
-# 🔴 NOT individually verified line-by-line against our device (271 lines) — telephony/SIM-count
-# props in particular assume a single-SIM device, which is not confirmed for the MindOne.
 
-# Audio
-# logd ring sizes (02.09.2026, F2811): the audio HAL floods 'main' at ~92 msg/s and the
-# 256 KiB default is gone in 50 s, blinding every post-mortem. persist.logd.size.* is
-# ignored on this build (checked 29.08); ro.logd.size.* is read by logd at start.
-# Replaces the Magisk script 85-mindone-logsize.sh (rule: no Magisk scripts in the product).
 ro.logd.size=64M
 ro.logd.size.main=64M
 ro.logd.size.system=32M
@@ -21,12 +8,6 @@ ro.logd.size.crash=8M
 
 aaudio.mmap_exclusive_policy=2
 aaudio.mmap_policy=2
-# 🔴 15.09 (F4461): THIS is what picks the audio HAL. Without it libhardware walks its property
-# chain down to ro.board.platform=mt6789 and loads a stock blob - or, in a 64-bit service, finds no
-# audio.primary.mt6789.so in /vendor/lib64/hw at all and silently falls back to
-# audio.primary.default.so, the STUB, which accepts every write and reports success while the
-# kernel sees nothing. That is exactly how ROM 1409 shipped with no sound and no error anywhere.
-# Naming our own HAL here makes the choice explicit instead of emergent.
 ro.hardware.audio.primary=mindone
 
 ro.vendor.mtk_audio_alac_support=1
@@ -141,80 +122,18 @@ debug.sf.use_phase_offsets_as_durations=1
 # the reason this is a number and not an off switch.
 debug.sf.region_sampling_period_ns=500000000
 
-# Which layer kinds SurfaceFlinger precompiles shaders for at startup. The switch is in
-# device.mk; these narrow what it does. Every "dimmed" variant doubles the set, and shadow and
-# picture-in-picture layers are not composed on this device -- dropping them is what makes
-# priming affordable, after the full set took 14 581 ms and ANR'd SystemUI on every boot.
-debug.sf.prime_shader_cache.clipped_dimmed_image_layers=0
-debug.sf.prime_shader_cache.image_dimmed_layers=0
-debug.sf.prime_shader_cache.pip_image_layers=0
-debug.sf.prime_shader_cache.shadow_layers=0
-debug.sf.prime_shader_cache.solid_dimmed_layers=0
-debug.sf.prime_shader_cache.transparent_image_dimmed_layers=0
+debug.sf.prime_shader_cache.clipped_dimmed_image_layers=1
+debug.sf.prime_shader_cache.image_dimmed_layers=1
+debug.sf.prime_shader_cache.pip_image_layers=1
+debug.sf.prime_shader_cache.shadow_layers=1
+debug.sf.prime_shader_cache.solid_dimmed_layers=1
+debug.sf.prime_shader_cache.transparent_image_dimmed_layers=1
 ro.surface_flinger.force_hwc_copy_for_virtual_displays=true
 ro.surface_flinger.has_HDR_display=false
 ro.surface_flinger.max_frame_buffer_acquired_buffers=3
 ro.surface_flinger.protected_contents=true
-# MINDONE 12.09 (the project issue registry registry): screen recording does not work - SurfaceFlinger
-# does not assign a layer stack to the virtual display (ERROR: UNASSIGNED_LAYER_STACK). Cross-checking against
-# the stock default.prop from this device's own vendor_boot ramdisk (the
-# "MindOne start"/PRODUCT_DEFAULT_PROPERTY_OVERRIDES block) showed: five HWC/SurfaceFlinger properties
-# that stock sets for the mtk_common compositor were MISSING ENTIRELY on our side (grep -c = 0 for
-# each one in this file) - the primary display orientation and the composer HAL version, plus two families
-# of MTK compositor timings (dynamic_duration, cpupolicy) that the mtk_common blob itself reads,
-# not AOSP SurfaceFlinger. It is not proven that these specifically fix virtual displays (F4134/# describes a failure in SF, not in HWC timings), but since they exist in stock and are missing for us -
-# this is a divergence from the image the compositor was written for, and a candidate to eliminate FIRST,
-# before digging into the SurfaceFlinger code. Restored verbatim from stock.
 ro.surface_flinger.primary_display_orientation=ORIENTATION_0
 ro.vendor.composer_version=2.1
-vendor.debug.sf.dynamic_duration.switch=1
-vendor.debug.sf.dynamic_duration.sf.late=14600000
-vendor.debug.sf.dynamic_duration.app.late=18000000
-vendor.debug.sf.dynamic_duration.sf.early=14600000
-vendor.debug.sf.dynamic_duration.app.early=18000000
-vendor.debug.sf.dynamic_duration.sf.earlyGl=14600000
-vendor.debug.sf.dynamic_duration.app.earlyGl=18000000
-vendor.debug.sf.dynamic_duration.sf.decouple=27600000
-vendor.debug.sf.dynamic_duration.app.decouple=20000000
-vendor.debug.sf.dynamic_duration.sf.late.60=15600000
-vendor.debug.sf.dynamic_duration.app.late.60=16600000
-vendor.debug.sf.dynamic_duration.sf.early.60=15600000
-vendor.debug.sf.dynamic_duration.app.early.60=16600000
-vendor.debug.sf.dynamic_duration.sf.earlyGl.60=15600000
-vendor.debug.sf.dynamic_duration.app.earlyGl.60=16600000
-vendor.debug.sf.dynamic_duration.sf.late.90=13100000
-vendor.debug.sf.dynamic_duration.app.late.90=19200000
-vendor.debug.sf.dynamic_duration.sf.early.90=13100000
-vendor.debug.sf.dynamic_duration.app.early.90=19200000
-vendor.debug.sf.dynamic_duration.sf.earlyGl.90=13100000
-vendor.debug.sf.dynamic_duration.app.earlyGl.90=19200000
-vendor.debug.sf.dynamic_duration.sf.late.120=12300000
-vendor.debug.sf.dynamic_duration.app.late.120=11600000
-vendor.debug.sf.dynamic_duration.sf.early.120=12300000
-vendor.debug.sf.dynamic_duration.app.early.120=11600000
-vendor.debug.sf.dynamic_duration.sf.earlyGl.120=12300000
-vendor.debug.sf.dynamic_duration.app.earlyGl.120=11600000
-vendor.debug.sf.hwc.min.duration=2000000
-vendor.debug.sf.cpupolicy.upbound_uclamp_min=350
-vendor.debug.sf.cpupolicy.max_correct_offset=150
-vendor.debug.sf.cpupolicy.rt_bl_min=300
-vendor.debug.sf.cpupolicy.base_min_bl=310
-vendor.debug.sf.cpupolicy.sf_cpu_thres=290
-vendor.debug.sf.cpupolicy.upbound_uclamp_max_ll=262
-vendor.debug.sf.cpupolicy.hw_comp_suspend=1
-vendor.debug.sf.cpupolicy.hw_hfr_suspend=1
-vendor.debug.sf.cpupolicy.xgf_min=25
-vendor.debug.sf.cpupolicy.min_60_mml=165
-vendor.debug.sf.cpupolicy.min_30_mml=165
-vendor.debug.sf.cpupolicy.lowbound_uclamp_min=165
-vendor.debug.sf.cpupolicy.upbound_uclamp_ret_sys=210
-vendor.debug.sf.cpupolicy.min_60=130
-vendor.debug.sf.cpupolicy.min_90=165
-vendor.debug.sf.cpupolicy.min_120=165
-vendor.debug.sf.cpupolicy.min_boost=165
-vendor.debug.sf.cpupolicy.power_up_120=-300000
-vendor.debug.sf.cpupolicy.power_down_120=300000
-vendor.debug.sf.cpupolicy.re_hfr=0
 # MINDONE 11.09: DISABLED for testing (in the project issue registry).
 # This property does NOT exist in the stock vendor/build.prop - we added it. With blur
 # enabled, the compositor (pid 859) gets a blit failure 656 times per boot,
@@ -355,31 +274,12 @@ persist.vendor.radio.mtk_dsbp_support=2
 persist.vendor.radio.mtk_ps2_rat=L/W/G
 persist.vendor.radio.mtk_ps3_rat=G
 persist.vendor.radio.smart.data.switch=1
-# 🔴 15.09 (F4456): video telephony OFF. The videotelephony HAL was removed from
-# the VINTF manifest on 13.09 ("VoLTE video calling only; stopping it live changed
-# nothing else"), but these two properties kept starting its CLIENT
-# /system_ext/bin/vtservice, which then retried getTransport for the HAL that is no
-# longer declared - every 502 ms, forever: ~172 800 binder calls + 345 600 log lines
-# a day, and the CPU never settles. Measured 2.0 lines/s, and exactly 0 after stop.
-# volte_support below is VOICE over LTE and is deliberately left ON - different thing.
 persist.vendor.vilte_support=0
 persist.vendor.viwifi_support=0
 persist.vendor.volte_support=1
 persist.vendor.xfrm_support=1
 ro.telephony.default_network=10,10,10,10
 ro.telephony.iwlan_operation_mode=AP-assisted
-# MINDONE 12.09 (F4136): ro.telephony.sim.count REMOVED from here - the property is marked
-# by AOSP as default_prop (platform-owned), while vendor.prop is loaded by vendor_init, so we get
-# avc: denied { set } scontext=vendor_init tcontext=default_prop tclass=property_service
-# (device/logs/catch-0911-185910/dmesg.txt.gz). The rule "vendor_init may only write
-# vendor-context properties" is a platform neverallow, it cannot be worked around with an allow rule (the same
-# class as the reverted changes in sepolicy/vendor/vendor_init.te, F3908). The value has been moved to
-# PRODUCT_SYSTEM_PROPERTIES in device.mk - there it is set by init (default_prop is its domain).
-# 🔴 ro.telephony.default_network and ro.telephony.iwlan_operation_mode on the line above are the same
-# class (also default_prop, also written by vendor_init), but their denial has NOT been
-# observed even once in the current logs (likely due to avc caching - the kernel does not repeat an
-# identical decision), so I am not touching them without direct proof. If they show up when switching to
-# enforcing, move them the same way.
 ro.vendor.ap_info_monitor=0
 ro.vendor.md_auto_setup_ims=1
 ro.vendor.md_prop_ver=1
@@ -424,6 +324,6 @@ ro.vendor.wifi.sap.interface=ap0
 # Widevine
 ro.vendor.mtk_widevine_drm_l3_support=1
 
-# 13.09 log flood (LOG-REVIEW-1309): vendor Codec2 buffer manager (~950/min) and the RIL mux daemon (~460/min)
 log.tag.C2MtkBufferManager=SILENT
-log.tag.RILMUXD=SILENT
+
+debug.stagefright.c2inputsurface=-1

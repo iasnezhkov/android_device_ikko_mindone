@@ -2,12 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: connection lifecycle for the stock HIDL gatekeeper@1.0 service (TrustKernel TEE).
-// Handles linkToDeath() + a background reconnect loop, so a TEE-side service crash does not
-// permanently lock the user out (every enroll()/verify() would otherwise fail forever after a
-// single crash, since the previous version bound hidl_ once at process start and never revisited
-// it). See BRIDGES-REVIEW-1409 "gatekeeper: death/reconnect". Modeled on
-// bridges/secure_element/SecureElementBridge's death/reconnect pattern.
 #pragma once
 
 #include <android/hardware/gatekeeper/1.0/IGatekeeper.h>

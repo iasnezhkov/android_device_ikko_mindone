@@ -1,28 +1,4 @@
 #!/vendor/bin/sh
-# SPDX-License-Identifier: Apache-2.0
-# Collect boot evidence into /metadata/mindone (survives reboot), then reboot if boot never completed.
-# 05.09 (F3758): runs from the VENDOR shell — system tools are NOT on PATH ("logcat: not found"), and
-# `reboot` never fired; use absolute /system/bin paths, bounded by timeout, and reboot through init
-# (setprop sys.powerctl) BEFORE any dumpsys that can hang when the service is missing.
-#
-# 🔴 08.09 (F3925) - three fixes, each backed by a measurement, not a guess:
-#
-# 1. SET ROTATION. Evidence used to be written to fixed names, and the next boot would overwrite it.
-#    On 08.09 the monitor honestly brought the device back from a black screen on _b to _a, but only
-#    ONE file (reboot-240.txt) survived from the failed boot - everything else was overwritten by _a
-#    coming back within the same four minutes. That is exactly why logs "got lost" all day. Now the
-#    set is written to $D/cur, and on startup the previous one moves to $D/prev: after a self-recovery
-#    the evidence of the failure sits intact in prev.
-#
-# 2. WAIT LIMIT FROM CMDLINE (androidboot.mindone.bootwatch.limit=<sec>). The default of 600s stays
-#    for everyday builds - the first boot after a wipe with dexopt is legitimately longer (F3796), and
-#    a short limit would mistake it for broken. But in an experiment on _b, ten minutes to recovery is
-#    a cost per iteration we cannot afford: the experiment starts at 150 and the device comes back in 2.5 minutes.
-#
-# 3. A HEALTHY BOOT NO LONGER WRITES 7.5 MB. Previously the full set (logcat of all buffers, dumpsys,
-#    dmesg) was written to /metadata on EVERY boot, including successful ones - and the partition is small.
-#    Now, with sys.boot_completed=1, only ok.txt is written: the same data can be pulled from the live
-#    device over adb, so there is no point filling the partition for it.
 
 D=/metadata/mindone
 T=/system/bin/timeout
@@ -32,17 +8,6 @@ rm -rf $D/prev 2>/dev/null
 mkdir -p $D/cur
 D=$D/cur
 
-# Wait limit. Read via THREE paths, from most reliable to most convenient, because on this
-# device it is not proven that init turns androidboot.* from cmdline into a property: all
-# androidboot keys live in /proc/bootconfig, while /proc/cmdline (1245 bytes) has zero of them (F3926).
-# So the first attempt is a direct read of cmdline - it does not depend on init's behavior at all.
-# 🔴 08.09 (F3952): FIRST THING, save the PREVIOUS boot's log from pstore.
-# Why: ramoops is wired up as a CONSOLE (`printk: console [ramoops-1] enabled`), so every
-# new boot overwrites the buffer - by the time anyone gets to it, the evidence is already gone.
-# This is exactly how the causes of three failed 6.12 boots on 08.09 were lost: the device went
-# into fastboot, and after returning to a working system the buffer had already been overwritten.
-# The copy is made BEFORE everything else and goes to /metadata, which survives both a /data
-# rollback and a reboot.
 if [ -d /sys/fs/pstore ] && [ -n "$(ls /sys/fs/pstore 2>/dev/null)" ]; then
     mkdir -p $D/pstore
     for f in /sys/fs/pstore/*; do

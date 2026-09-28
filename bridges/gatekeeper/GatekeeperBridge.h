@@ -2,12 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: AIDL IGatekeeper (V1) → HIDL IGatekeeper@1.0 bridge. See BRIDGES-HIDL-AIDL.
-//
-// Review 14.09 (BRIDGES-REVIEW-1409): now holds a GatekeeperHidlConn instead of a raw
-// sp<> so a TEE-side crash can be detected (linkToDeath) and recovered from (background
-// reconnect); the previous version bound once at process start and never handled the HAL dying,
-// which would have permanently locked users out of credential verification after a single crash.
 #pragma once
 
 #include <aidl/android/hardware/gatekeeper/BnGatekeeper.h>

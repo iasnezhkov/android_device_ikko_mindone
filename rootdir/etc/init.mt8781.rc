@@ -25,12 +25,10 @@ on early-init
 on early-init && property:ro.build.type=eng
     mount debugfs debugfs /sys/kernel/debug
     chmod 0755 /sys/kernel/debug
-    setprop persist.dbg.keep_debugfs_mounted true
 
 on early-init && property:ro.build.type=userdebug
     mount debugfs debugfs /sys/kernel/debug
     chmod 0755 /sys/kernel/debug
-    setprop persist.dbg.keep_debugfs_mounted true
 
 on init
     write /proc/bootprof "INIT:init"
@@ -183,8 +181,6 @@ on post-fs-data
     # zram
     write /sys/block/zram0/comp_algorithm lz4
     write /proc/sys/vm/page-cluster 0
-    # UX rig 13.09 (F4280): swappiness 100 added ~55 real freezes at equal UFS; device needs no swap for
-    # this workload (0 lmkd kills without it). Keep zram for emergency headroom only, conservative swappiness.
     write /proc/sys/vm/swappiness 60
     write /sys/kernel/mm/swap/vma_ra_enabled false
     swapon_all /vendor/etc/fstab.enableswap
@@ -719,16 +715,6 @@ on post-fs-data
 	chmod 0660 /dev/drm_wv
 	chown media system /dev/drm_wv
 	
-#SIMO_start:5:2025-09-16:Add configuration changes
-    #skyroam add
-    # mindone 06.09 (A16 audit par. 2.4/4.4): a top-level /data directory requires an explicit encryption action,
-    # otherwise init logs "Top-level directory needs encryption action" and vendor_init gets an avc on system_data_file
-    mkdir /data/simo_fs 0770 root root encryption=Require
-    mkdir /data/simo_fs/runspace 0770 root root
-    mkdir /mnt/vendor/nvcfg/simo_cfg 0777 root root
-    #skyroam end
-    
-#SIMO_end:5
 # End of adding by MTK drivers
 # -----------------------
 on zygote-start
@@ -954,40 +940,6 @@ service bugreport /system/bin/dumpstate -d -p -B -z \
     oneshot
     keycodes 114 115 116
 
-# end boot time fs tune
-# 🔴 MINDONE 08.09 (F3917, moved from init.mt6789.rc - it does NOT load, ro.hardware=mt8781): work around the
-# platform change DYNAMIC_RECEIVER_EXPLICIT_EXPORT_REQUIRED (161145287) for com.mediatek.ims. The stock MTK app
-# declares targetSdk=35 but registers a receiver without RECEIVER_EXPORTED/NOT_EXPORTED - Android 16 throws a
-# SecurityException in WfcHandler.registerForBroadcast, the app crashes in a loop, PackageWatchdog
-# launches RescueParty and REBOOTS THE DEVICE. Verified live on 08.09: crashes stopped after the workaround
-# (0 per minute instead of 184 in 35s). The app cannot be removed - it is IMS, no VoLTE without it.
-# Compatibility overrides live in /data and do not survive a wipe, so we set them at boot.
-# 🔴 MINDONE 08.09 (F3924, SUPERSEDES F3921): watchdogd is NOT NEEDED AND HARMFUL - measured on a live _a.
-# Yesterday's conclusion "the watchdog is not armed because nothing starts watchdogd" was WRONG. The
-# mtk_wdt driver arms the hardware watchdog ITSELF 0.8s into boot - the log states it directly: "Watchdog enabled
-# (timeout=31 sec, nowayout=0)" - and it is fed by EIGHT kernel threads wdtk-0..7 every 15.5s.
-# A userspace daemon plays no part in this scheme at all. Starting watchdogd would open /dev/watchdog
-# and take over the watchdog, and with nowayout=0, closing the device (the daemon dying) STOPS the
-# watchdog. So the service would not add protection, it would remove protection that already works.
-#
-# 🔴 MINDONE 08.09 (F3925): WHAT THIS CASE ACTUALLY CATCHES - THE BOOT MONITOR.
-# A black screen is NOT a kernel hang: the kernel is alive, the wdtk threads keep feeding the watchdog, and it
-# correctly stays silent. It catches a kernel death on its own without us (on a dark hang the device goes to
-# rescue by itself, F3746). But the case "kernel alive, zygote crash-looping, black screen" is caught by nothing:
-# RescueParty lives inside the framework, which is exactly what is missing, and our vendor AEE is inert - the
-# kernel half (aed0/aed1/aed2 in /proc/misc) exists, but the aee_aed daemon does not, it was not ported. So we
-# wait for boot ourselves. That is the job of mindone_bootlog (init.mindone_bootlog.rc): if it does not see boot
-# complete in time - reboot, and tries=1 in misc takes the device to a working slot hands-free. On 08.09 it did exactly that.
-
-service mindone_ims_compat /system/bin/cmd activity compat disable 161145287 com.mediatek.ims
-    class late_start
-    user system
-    group system
-    oneshot
-    disabled
-
-on property:sys.boot_completed=1
-    start mindone_ims_compat
 
 on property:sys.boot_completed=1
     write /sys/block/mmcblk0/queue/iostats 1
@@ -1096,17 +1048,3 @@ on property:persist.sys.bcct_enable=*
 # wangchengju BCCT CUST enable switch (sync to kernel)
 on property:persist.vendor.bcct_cust_enable=*
     write /proc/mtk_battery_cmd/bcct_cust_enable ${persist.vendor.bcct_cust_enable}
-# FPSGO FBT Game
-on boot
-    insmod /vendor/lib/modules/fpsgo.ko
-
-# VSIM service (vendor OSI)
-#SIMO_start:4:2025-09-16:Add service configuration for vsim
-#service osi /system/bin/osi
-#    class main
-#    user root
-#    #disabled
-#    oneshot
-#    #seclabel u:r:osi:s0
-
-#SIMO_end:4

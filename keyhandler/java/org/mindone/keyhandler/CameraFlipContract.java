@@ -1,13 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-/*
- * mindone: contract constants for the flip-camera module position (F4296).
- * See CAMERA-FLIP-PLAN-1309.
- *
- * Mirrored (not shared) in Aperture's own sources as
- * app/src/main/java/org/lineageos/aperture/MindOneCameraFlip.kt, since Aperture cannot depend on
- * a device-tree-local system component at build time. Keep both copies in sync.
- */
 package org.mindone.keyhandler;
 
 public final class CameraFlipContract {

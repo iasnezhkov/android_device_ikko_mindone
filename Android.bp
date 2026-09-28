@@ -8,3 +8,15 @@ soong_namespace {
         "hardware/mediatek",
     ],
 }
+
+prebuilt_etc {
+    name: "android.hardware.media.c2-v4l2-extended-seccomp_policy",
+    src: "configs/seccomp/android.hardware.media.c2-v4l2-extended-seccomp_policy",
+    filename: "android.hardware.media.c2-extended-seccomp_policy",
+    sub_dir: "seccomp_policy",
+    vendor: true,
+    overrides: [
+        "android.hardware.media.c2@1.2-mediatek",
+        "manifest_media_c2_V1_2_default.xml",
+    ],
+}

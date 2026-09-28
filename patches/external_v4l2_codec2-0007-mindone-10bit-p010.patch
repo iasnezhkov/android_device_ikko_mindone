@@ -1,0 +1,383 @@
+From d01fa2eff20f1a5a8d3cc6461ac546e5632229d9 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Wed, 23 Sep 2026 14:55:10 +0300
+Subject: [PATCH 7/7] v4l2: negotiate the driver's 10-bit tile CAPTURE format and
+ detile it to P010
+
+mtk_vcodec_dec_v1 does not accept a plain V4L2_PIX_FMT_P010 CAPTURE
+request for a Main10 HEVC stream: V4L2Queue::setFormat() requires the
+ioctl to echo back the exact fourcc it was given, and TRY_FMT/S_FMT
+instead coerce the pixelformat field to the driver's own MT21S10T
+('MTST') tile block layout, so setFormat() returns nullopt and
+setupOutputFormat() falls through every entry in kSupportedOutputFourccs
+without success - decode of a 10-bit stream currently fails outright
+before a single CAPTURE buffer is queued. This is the same silent
+substitution patch 0005 found for the 8-bit NV12 request (-> MM21
+tiles), except here the driver is honest about it in the returned
+pixelformat instead of hiding it.
+
+Add kMt21S10TFourcc/kMt21S10RFourcc (v4l2_fourcc('M','T','S','T') and
+('M','T','S','R')) to kSupportedOutputFourccs so the negotiation loop
+requests the tile format directly and setFormat's echo check passes.
+startOutputQueue() records which one was negotiated in the new
+mCaptureIsMt10/mCaptureMt10Raster members; changeResolution() treats
+both the same as P010 for HalPixelFormat pool selection; the DQBUF
+path in serviceDeviceTask() branches to build a TiledMT10Image and
+call the new VideoFrame::detileFrom10() instead of the existing
+TiledMM21Image/detileFrom() 8-bit path.
+
+Layout: tools/rigs/mt10conv.c in the main repo works out the exact
+byte layout of MT21S10T/MT21S10R and is the source this patch's
+decoder is ported from. Two facts anchor it: the upstream kernel
+documents V4L2_PIX_FMT_MT2110T/MT2110R (Documentation/userspace-api/
+media/v4l/pixfmt-yuv-planar.rst) as 16x32 luma / 16x16 chroma tiles,
+640/320 bytes each, split into 8/4 partitions of 80 bytes (16 LSB +
+64 MSB, LSB either tiled-by-column or raster-by-row); and the real
+device's negotiated MTST sizeimage for 1920x1088 (3916800 bytes,
+task brief 23.09, before the kernel Main10 sizeimage fix) matches
+this tile math to the byte with zero slack, which also proves the Y
+region is immediately followed by the UV region with no padding in
+the driver's single-plane MT21S10T buffer. The one unproven piece is
+the exact bit order within an LSB byte (which row/column occupies
+which of the four 2-bit fields) - inferred from the doc's prose, not
+yet checked against real decoded pixels. tools/rigs/mt10conv.c's -t
+self-test round-trips a synthetic pattern through encode->decode for
+both tile and raster modes and matches exactly (0/N mismatches, C and
+NEON paths byte-identical, NEON ~14-15x faster) - this proves the
+implementation is internally consistent, not that it matches the real
+hardware's bit order.
+
+ImageConverter gains TiledMT10Image/P010WritableImage and a
+convertMT10ToP010() method that defaults to returning false, so
+MdpImageConverter needs no changes and 10-bit always takes the CPU
+path - the MDP hardware converter almost certainly has no support for
+this format and wiring a zero-copy gralloc attempt for it is left for
+later. LibyuvImageConverter implements convertMT10ToP010() by hand
+(libyuv has no MT2110T/MTST equivalent): the same per-tile decode
+tools/rigs/mt10conv.c uses, in plain-C form only - the NEON path
+proven in the rig is not ported into this HAL code yet, left for a
+follow-up once the layout itself is confirmed on-device.
+
+Not done / not verified: no m/mm build (not allowed for this task),
+no device test, no NEON in the HAL path, no MT2110T/MT2110R
+(non-contiguous two-plane) variant since the device negotiates the
+single-plane MT21S10T/MT21S10R family. The real validation step is a
+raw MTST dump from the device compared against an ffmpeg P010
+reference with tools/rigs/mt10conv.c -c; see the task report for the
+exact dump this needs.
+
+Change-Id: Ia5c4a393676a0a3718c5d0f1cebd7317e3127593
+---
+ common/LibyuvImageConverter.cpp               | 78 +++++++++++++++++++
+ .../v4l2_codec2/common/ImageConverter.h       | 20 +++++
+ .../v4l2_codec2/common/LibyuvImageConverter.h |  3 +
+ components/VideoFrame.cpp                     | 35 +++++++++
+ .../v4l2_codec2/components/VideoFrame.h       |  2 +
+ v4l2/V4L2Decoder.cpp                          | 48 ++++++++----
+ v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h   |  7 +-
+ 7 files changed, 177 insertions(+), 16 deletions(-)
+
+diff --git a/common/LibyuvImageConverter.cpp b/common/LibyuvImageConverter.cpp
+index 4d16c83..4828d5d 100644
+--- a/common/LibyuvImageConverter.cpp
++++ b/common/LibyuvImageConverter.cpp
+@@ -7,6 +7,84 @@
+ 
+ namespace android {
+ 
++namespace {
++
++constexpr int kMt10TileW = 16;
++constexpr int kMt10LumaTileRows = 32;
++constexpr int kMt10ChromaTileRows = 16;
++constexpr int kMt10PartRows = 4;
++constexpr int kMt10PartBytes = 80;
++constexpr int kMt10PartLsbBytes = 16;
++constexpr int kMt10MsbRowBytes = 16;
++constexpr int kMt10LumaTileBytes = 640;
++constexpr int kMt10ChromaTileBytes = 320;
++
++int mt10RoundUp(int v, int mult) {
++    return (v + mult - 1) / mult * mult;
++}
++
++uint16_t mt10DecodeSample(const uint8_t* plane, int tileRow, int tileCol, int rowInTile,
++                          int colInTile, int tileBytes, int tilesPerRow, bool raster) {
++    const int partition = rowInTile / kMt10PartRows;
++    const int rowInPart = rowInTile % kMt10PartRows;
++    const long tileIndex = static_cast<long>(tileRow) * tilesPerRow + tileCol;
++    const uint8_t* part =
++            plane + tileIndex * tileBytes + static_cast<long>(partition) * kMt10PartBytes;
++    const uint8_t* lsb = part;
++    const uint8_t* msb = part + kMt10PartLsbBytes;
++    const uint8_t msbByte = msb[rowInPart * kMt10MsbRowBytes + colInTile];
++    uint8_t lsb2;
++
++    if (!raster) {
++        lsb2 = (lsb[colInTile] >> (rowInPart * 2)) & 3;
++    } else {
++        const int idx = rowInPart * 4 + colInTile / 4;
++        const int shift = (colInTile % 4) * 2;
++        lsb2 = (lsb[idx] >> shift) & 3;
++    }
++    return static_cast<uint16_t>(((static_cast<uint16_t>(msbByte) << 2) | lsb2) << 6);
++}
++
++void mt10DecodePlane(const uint8_t* src, int tileBytes, int tileRows, int tilesPerRow, int widthOut,
++                     int heightRows, bool raster, uint8_t* dst, size_t dstStrideBytes) {
++    for (int y = 0; y < heightRows; y++) {
++        const int tileRow = y / tileRows;
++        const int rowInTile = y % tileRows;
++        uint8_t* drow = dst + static_cast<size_t>(y) * dstStrideBytes;
++
++        for (int x = 0; x < widthOut; x++) {
++            const int tileCol = x / kMt10TileW;
++            const int colInTile = x % kMt10TileW;
++            const uint16_t sample = mt10DecodeSample(src, tileRow, tileCol, rowInTile, colInTile,
++                                                      tileBytes, tilesPerRow, raster);
++            drow[x * 2] = static_cast<uint8_t>(sample & 0xff);
++            drow[x * 2 + 1] = static_cast<uint8_t>(sample >> 8);
++        }
++    }
++}
++
++}
++
++bool LibyuvImageConverter::convertMT10ToP010(const TiledMT10Image& src, const P010WritableImage& dst,
++                                             int width, int height) {
++    if (!src.data || !dst.y || !dst.uv || width <= 0 || height <= 0 ||
++        src.strideY < static_cast<size_t>(width)) {
++        ALOGE("convertMT10ToP010: invalid arguments, width=%d height=%d strideY=%zu", width, height,
++              src.strideY);
++        return false;
++    }
++
++    const int tilesPerRow = static_cast<int>(src.strideY) / kMt10TileW;
++    const int lumaTileRowCount = mt10RoundUp(height, kMt10LumaTileRows) / kMt10LumaTileRows;
++    const size_t yBytes = static_cast<size_t>(tilesPerRow) * lumaTileRowCount * kMt10LumaTileBytes;
++
++    mt10DecodePlane(src.data, kMt10LumaTileBytes, kMt10LumaTileRows, tilesPerRow, width, height,
++                    src.raster, dst.y, dst.strideY);
++    mt10DecodePlane(src.data + yBytes, kMt10ChromaTileBytes, kMt10ChromaTileRows, tilesPerRow, width,
++                    (height + 1) / 2, src.raster, dst.uv, dst.strideUV);
++    return true;
++}
++
+ bool LibyuvImageConverter::convertMM21ToNV12(const TiledMM21Image& src,
+                                              const NV12WritableImage& dst, int width,
+                                              int height) {
+diff --git a/common/include/v4l2_codec2/common/ImageConverter.h b/common/include/v4l2_codec2/common/ImageConverter.h
+index d40e0a2..a227289 100644
+--- a/common/include/v4l2_codec2/common/ImageConverter.h
++++ b/common/include/v4l2_codec2/common/ImageConverter.h
+@@ -27,12 +27,32 @@ struct NV12WritableImage {
+     size_t sizeUV = 0;
+ };
+ 
++struct TiledMT10Image {
++    const uint8_t* data = nullptr;
++    size_t strideY = 0;
++    bool raster = false;
++    int dmaBufFd = -1;
++    size_t dmaBufSize = 0;
++};
++
++struct P010WritableImage {
++    uint8_t* y = nullptr;
++    uint8_t* uv = nullptr;
++    size_t strideY = 0;
++    size_t strideUV = 0;
++};
++
+ class ImageConverter {
+ public:
+     virtual ~ImageConverter() = default;
+ 
+     virtual bool convertMM21ToNV12(const TiledMM21Image& src, const NV12WritableImage& dst,
+                                    int width, int height) = 0;
++
++    virtual bool convertMT10ToP010(const TiledMT10Image& src, const P010WritableImage& dst,
++                                   int width, int height) {
++        return false;
++    }
+ };
+ 
+ }  // namespace android
+diff --git a/common/include/v4l2_codec2/common/LibyuvImageConverter.h b/common/include/v4l2_codec2/common/LibyuvImageConverter.h
+index 79b40d7..a65dbb3 100644
+--- a/common/include/v4l2_codec2/common/LibyuvImageConverter.h
++++ b/common/include/v4l2_codec2/common/LibyuvImageConverter.h
+@@ -12,6 +12,9 @@ public:
+ 
+     bool convertMM21ToNV12(const TiledMM21Image& src, const NV12WritableImage& dst, int width,
+                            int height) override;
++
++    bool convertMT10ToP010(const TiledMT10Image& src, const P010WritableImage& dst, int width,
++                           int height) override;
+ };
+ 
+ }  // namespace android
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+index 963425d..8836fc8 100644
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -136,4 +136,39 @@ bool VideoFrame::detileFrom(ImageConverter* primaryConverter, ImageConverter* fa
+     return fallbackConverter->convertMM21ToNV12(src, dst, width, height);
+ }
+ 
++bool VideoFrame::detileFrom10(ImageConverter* converter, const TiledMT10Image& src, int width,
++                              int height) {
++    if (!converter || !mGraphicBlock) {
++        return false;
++    }
++
++    C2Acquirable<C2GraphicView> writable = mGraphicBlock->map();
++    C2GraphicView view = writable.get();
++    if (view.error() != C2_OK) {
++        ALOGE("Failed to map graphic block for 10-bit detile, error=%d", view.error());
++        return false;
++    }
++
++    const C2PlanarLayout layout = view.layout();
++    if (layout.numPlanes < 2) {
++        ALOGE("Graphic block has %u planes, cannot detile 10-bit into it", layout.numPlanes);
++        return false;
++    }
++    if (layout.planes[C2PlanarLayout::PLANE_U].colInc != 4) {
++        ALOGE("Graphic block chroma colInc=%d is not interleaved 16-bit, cannot detile 10-bit "
++              "into it",
++              layout.planes[C2PlanarLayout::PLANE_U].colInc);
++        return false;
++    }
++
++    uint8_t* const* data = view.data();
++    P010WritableImage dst;
++    dst.y = data[C2PlanarLayout::PLANE_Y];
++    dst.uv = data[C2PlanarLayout::PLANE_U];
++    dst.strideY = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
++    dst.strideUV = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
++
++    return converter->convertMT10ToP010(src, dst, width, height);
++}
++
+ }  // namespace android
+diff --git a/components/include/v4l2_codec2/components/VideoFrame.h b/components/include/v4l2_codec2/components/VideoFrame.h
+index 1704571..63e748c 100644
+--- a/components/include/v4l2_codec2/components/VideoFrame.h
++++ b/components/include/v4l2_codec2/components/VideoFrame.h
+@@ -40,6 +40,8 @@ public:
+     bool detileFrom(ImageConverter* primaryConverter, ImageConverter* fallbackConverter,
+                     const TiledMM21Image& src, int width, int height, bool* primaryFailed);
+ 
++    bool detileFrom10(ImageConverter* converter, const TiledMT10Image& src, int width, int height);
++
+ private:
+     VideoFrame(std::shared_ptr<C2GraphicBlock> block, std::vector<int> fds);
+ 
+diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
+index 63930df..e9cc0e1 100644
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -356,6 +356,9 @@ bool V4L2Decoder::startOutputQueue(size_t minOutputBuffersCount, enum v4l2_memor
+     if (mCaptureStrideY == 0) {
+         mCaptureStrideY = static_cast<uint32_t>(mCodedSize.width);
+     }
++    mCaptureIsMt10 = adjustedFormat->fmt.pix_mp.pixelformat == kMt21S10TFourcc ||
++                    adjustedFormat->fmt.pix_mp.pixelformat == kMt21S10RFourcc;
++    mCaptureMt10Raster = adjustedFormat->fmt.pix_mp.pixelformat == kMt21S10RFourcc;
+     const uint32_t captureBufferSize = adjustedFormat->fmt.pix_mp.plane_fmt[0].sizeimage;
+     if (!mTiledCaptureBuffers.allocate(adjustedNumOutputBuffers, captureBufferSize)) {
+         ALOGE("Failed to allocate %zu internal tiled CAPTURE buffers of %u bytes.",
+@@ -703,20 +706,31 @@ void V4L2Decoder::serviceDeviceTask(bool event) {
+             }
+ 
+             decodedTiled->syncStartRead();
+-            TiledMM21Image tiledImage;
+-            tiledImage.y = decodedTiled->data();
+-            tiledImage.uv = decodedTiled->data() +
+-                            static_cast<size_t>(mCaptureStrideY) * mCodedSize.height;
+-            tiledImage.strideY = mCaptureStrideY;
+-            tiledImage.strideUV = mCaptureStrideY;
+-            tiledImage.dmaBufFd = decodedTiled->fd();
+-            tiledImage.dmaBufSize = decodedTiled->size();
+-            ImageConverter* const primaryConverter =
+-                    (mMdpImageConverter && !mMdpFailed) ? mMdpImageConverter.get() : nullptr;
++            bool detiled;
+             bool primaryFailed = false;
+-            const bool detiled = frame->detileFrom(primaryConverter, mImageConverter.get(),
+-                                                    tiledImage, mCodedSize.width,
+-                                                    mCodedSize.height, &primaryFailed);
++            if (mCaptureIsMt10) {
++                TiledMT10Image tiledImage;
++                tiledImage.data = decodedTiled->data();
++                tiledImage.strideY = mCaptureStrideY;
++                tiledImage.raster = mCaptureMt10Raster;
++                tiledImage.dmaBufFd = decodedTiled->fd();
++                tiledImage.dmaBufSize = decodedTiled->size();
++                detiled = frame->detileFrom10(mImageConverter.get(), tiledImage,
++                                              mCodedSize.width, mCodedSize.height);
++            } else {
++                TiledMM21Image tiledImage;
++                tiledImage.y = decodedTiled->data();
++                tiledImage.uv = decodedTiled->data() +
++                                static_cast<size_t>(mCaptureStrideY) * mCodedSize.height;
++                tiledImage.strideY = mCaptureStrideY;
++                tiledImage.strideUV = mCaptureStrideY;
++                tiledImage.dmaBufFd = decodedTiled->fd();
++                tiledImage.dmaBufSize = decodedTiled->size();
++                ImageConverter* const primaryConverter =
++                        (mMdpImageConverter && !mMdpFailed) ? mMdpImageConverter.get() : nullptr;
++                detiled = frame->detileFrom(primaryConverter, mImageConverter.get(), tiledImage,
++                                            mCodedSize.width, mCodedSize.height, &primaryFailed);
++            }
+             decodedTiled->syncEndRead();
+ 
+             if (primaryFailed && !mMdpFailed) {
+@@ -830,8 +844,12 @@ bool V4L2Decoder::changeResolution() {
+     mVideoFramePool.reset();
+     // Use flexible pixel 420 format YCBCR_420_888 for 8-bit and P010 for 10-bit.
+     const std::optional<struct v4l2_format> format = getFormatInfo();
+-    HalPixelFormat outputFormat = format->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_P010 ?
+-            HalPixelFormat::YCBCR_P010 : HalPixelFormat::YCBCR_420_888;
++    const uint32_t capturePixfmt = format->fmt.pix_mp.pixelformat;
++    HalPixelFormat outputFormat =
++            (capturePixfmt == V4L2_PIX_FMT_P010 || capturePixfmt == kMt21S10TFourcc ||
++             capturePixfmt == kMt21S10RFourcc)
++                    ? HalPixelFormat::YCBCR_P010
++                    : HalPixelFormat::YCBCR_420_888;
+     mVideoFramePool = mGetPoolCb.Run(mCodedSize, outputFormat,
+                                      mOutputQueue->allocatedBuffersCount());
+     if (!mVideoFramePool) {
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+index 432b48a..17324b0 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+@@ -31,12 +31,15 @@
+ 
+ namespace android {
+ 
++constexpr uint32_t kMt21S10TFourcc = v4l2_fourcc('M', 'T', 'S', 'T');
++constexpr uint32_t kMt21S10RFourcc = v4l2_fourcc('M', 'T', 'S', 'R');
++
+ // Currently we only support flexible pixel 420 format YCBCR_420_888 in Android.
+ // Here is the list of flexible 420 format.
+ constexpr std::initializer_list<uint32_t> kSupportedOutputFourccs = {
+         Fourcc::YU12, Fourcc::YV12, Fourcc::YM12, Fourcc::YM21,
+         Fourcc::NV12, Fourcc::NV21, Fourcc::NM12, Fourcc::NM21,
+-        Fourcc::P010,
++        Fourcc::P010, kMt21S10TFourcc, kMt21S10RFourcc,
+ };
+ 
+ class V4L2Decoder : public VideoDecoder {
+@@ -148,6 +151,8 @@ private:
+     bool mMdpFailed = false;
+     TiledCaptureBufferPool mTiledCaptureBuffers;
+     uint32_t mCaptureStrideY = 0;
++    bool mCaptureIsMt10 = false;
++    bool mCaptureMt10Raster = false;
+ 
+     // Currently enqueued frame at the deocder device, mapped using V4L2 buffer ID.
+     std::map<size_t, std::unique_ptr<VideoFrame>> mFrameAtDevice;
+-- 
+2.43.0
+

@@ -41,9 +41,6 @@ constexpr int64_t kLockoutTimedMs = 30000;   // HIDL 2.1 does not report a durat
 constexpr int64_t kMaxResetLockoutHatAgeMs = 60000;
 
 fp::AcquiredInfo mapAcquired(hfp::FingerprintAcquiredInfo a) {
-    // HIDL: GOOD=0 ... VENDOR=6; AIDL: UNKNOWN=0, GOOD=1 ... VENDOR=7 - shifted by 1
-    // (verified 14.09 against the real generated headers: HIDL 2.1's own types.hal and the AIDL
-    // V4 AcquiredInfo.h - see BRIDGES-REVIEW-1409).
     int32_t v = static_cast<int32_t>(a);
     if (v < 0 || v > 6) return fp::AcquiredInfo::UNKNOWN;
     return static_cast<fp::AcquiredInfo>(v + 1);
@@ -98,14 +95,6 @@ Return<void> HidlCallback::onError(uint64_t, hfp::FingerprintError error, int32_
     if (raw == 7) {            // ERROR_LOCKOUT
         cb_->onLockoutTimed(kLockoutTimedMs);
     } else if (raw == 9) {     // vendor extension, NOT part of the real HIDL 2.1 FingerprintError
-                                // enum (verified 14.09 against hardware/interfaces/biometrics/
-                                // fingerprint/2.1/types.hal in the LineageOS tree: it only defines
-                                // 0-8). C++ enums are not wire-validated, so a vendor blob can
-                                // legally send an out-of-range value; this mapping is UNVERIFIED
-                                // against the actual Silead binary (device unavailable during this
-                                // review) - see BRIDGES-REVIEW-1409 "fingerprint: dead
-                                // code or real vendor quirk?". Left in place (harmless if never
-                                // sent, correct if it is) but flagged rather than silently trusted.
         cb_->onLockoutPermanent();
     } else {
         cb_->onError(mapError(error), vendorCode);
@@ -328,19 +317,6 @@ ndk::ScopedAStatus SessionBridge::invalidateAuthenticatorId() {
 }
 
 ndk::ScopedAStatus SessionBridge::resetLockout(const HardwareAuthToken& hat) {
-    // ISession.aidl#resetLockout: the HAL must (1) verify the HAT's authenticity/integrity (HMAC)
-    // and (2) verify its timestamp is recent, calling onError(UNABLE_TO_PROCESS) if either check
-    // fails; only then may it clear the lockout counter. The PREVIOUS version of this bridge
-    // ignored `hat` entirely and unconditionally called onLockoutCleared() - any caller with an
-    // arbitrary/expired HAT could clear the anti-bruteforce lockout counter, defeating it.
-    //
-    // Full fix is not possible over this HIDL generation: HIDL 2.1 has no request that hands a
-    // HAT to the TEE/keymaster for HMAC verification (that mechanism postdates this HAL version),
-    // and the bridge has no access to the verification key itself. What IS checkable without that
-    // key is requirement (2), the timestamp recency check, which at least rejects a stale/replayed
-    // HAT. A well-formed *forged* HAT with a fresh timestamp still passes this partial check - see
-    // BRIDGES-REVIEW-1409 "fingerprint: resetLockout" for the residual gap and why closing
-    // it needs a HIDL-level (not bridge-level) fix.
     if (!dead_.load(std::memory_order_relaxed)) {
         const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       ::android::base::boot_clock::now().time_since_epoch())

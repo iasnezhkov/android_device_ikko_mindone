@@ -177,12 +177,6 @@ struct hf_manager_event {
     };
 } __packed __aligned(4);
 
-// HF_MANAGER_REQUEST_SENSOR_INFO payload. NOTE: this is the *entire*
-// per-sensor description the kernel exposes - there is no maxRange/
-// resolution/power/minDelay/maxDelay/fifo field anywhere in the ABI.
-// See SensorTypeMap.h and SENSORS-HAL-PLAN-1309.md ("static property
-// table") for how the HAL fills in the AIDL SensorInfo fields this
-// struct does not carry.
 struct sensor_info {
     uint8_t sensor_type;
     uint8_t padding[3];

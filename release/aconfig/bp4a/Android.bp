@@ -1,8 +1,0 @@
-// SPDX-License-Identifier: Apache-2.0
-
-aconfig_value_set {
-    name: "aconfig_value_set-mindone-bp4a",
-    srcs: [
-        "*/Android.bp",
-    ],
-}

@@ -2,13 +2,6 @@
  * SPDX-FileCopyrightText: The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: AIDL ISession (fingerprint V4) over HIDL IBiometricsFingerprint@2.1 + client callback.
-//
-// Review 14.09 (BRIDGES-REVIEW-1409): added `dead_`/HidlCallback::deactivate() so (a) a
-// session created while the HIDL HAL is down, or (b) a session whose HIDL HAL crashes mid-flight,
-// reports Error::HW_UNAVAILABLE instead of dereferencing a null/stale sp<> or hanging forever, and
-// (c) a stray HIDL callback that arrives after close() is dropped instead of being delivered to a
-// session the framework already believes is closed.
 #pragma once
 #include <aidl/android/hardware/biometrics/common/BnCancellationSignal.h>
 #include <aidl/android/hardware/biometrics/fingerprint/BnSession.h>

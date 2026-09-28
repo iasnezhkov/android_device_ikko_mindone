@@ -245,14 +245,6 @@ void CalibrationStore::onKernelEvent(const hf_manager_event& ke) {
     } else if (ke.action == CALI_ACTION && layout->cali.length > 0) {
         persistRegion(*layout, /*isBias=*/false, ke.word, layout->cali.length / 4);
     }
-    // TEMP_ACTION is subscribed to (pushAll() above) but not yet persisted
-    // here: the temp region's field semantics (6 int32 for gyro - per-axis
-    // offset+slope? a bucketed table?) are not confirmed against real
-    // hardware, unlike bias/cali which map 1:1 onto the same *_bias.json/
-    // *_cali.json shape already proven by mag/gyro's real files. Wire it
-    // the same way as the two branches above (a third cache + "<name>_
-    // temp.json") once that's confirmed - see docs/SENSORS-HAL-
-    // CALIBRATION-1309.md open item.
 }
 
 void CalibrationStore::persistRegion(const SensorLayout& layout, bool isBias,

@@ -3,11 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-// mind_one minimal RIL, phase 1 skeleton. See README-INTEGRATION.md and RIL-MINIMAL-1409.
-// Not wired into device/ikko/mindone/ yet -- staged here pending the A/B validation plan in
-// README-INTEGRATION.md. 64-bit only, matching this device's vendor partition
-// (BOARD_USES_SYSTEM_OTHER / TARGET_ARCH == arm64, no 32-bit vendor libs shipped for new code
-// per the project's "english only / 64-bit only" house rules).
 cc_binary {
     name: "android.hardware.radio@1.6-service.mindone",
     vendor: true,

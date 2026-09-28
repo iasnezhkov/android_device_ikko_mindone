@@ -6,11 +6,10 @@ the device**. The phone was on the cable but read-only for this task: allowed re
 or reboot. Everything else was done device-free inside a Linux build environment holding the Android tree,
 with `file`/`readelf`/`nm`/`strings`/`llvm-objdump`/`clang++ -fsyntax-only` only -- the build
 itself was never touched (`m`/`mm`/`ninja` never invoked). `device/ikko/mindone/` was not modified. No binaries were committed to git (see
-"What was deliberately not committed" below). Full narrative and citations:
-RIL-MINIMAL-1409. Facts recorded: the fact log F4410-F4413 (and F4374, corrected).
+"What was deliberately not committed" below).
 
-This continues MODEM-STACK-1409 (the original 37/39-handler, 96+256-AT-command
-reconnaissance) and sits alongside the other Q23 CCCI-userspace work
+This continues the earlier modem-stack work (the original 37/39-handler,
+96+256-AT-command reconnaissance) and sits alongside the other Q23 CCCI-userspace work
 (`modem/ccci-userspace/`, `modem/mux/`) -- this task's own slice is the RIL layer
 specifically: which AT commands the stock RIL actually sends per handler class, and a real HIDL
 `IRadio` service skeleton that could eventually replace it.
@@ -37,8 +36,7 @@ codegen/                             The scripts that generated RadioImpl.h/Radi
                                       IRadioIndication_1.6.h, IRadioResponse_1.0.h, ~3 MB total)
                                       were deliberately NOT committed -- see "What was
                                       deliberately not committed" below; re-running these scripts
-                                      needs them re-fetched from the build tree first (commands are in
-                                      RIL-MINIMAL-1409).
+                                      needs them re-fetched from the build tree first.
 src/                                 The skeleton itself:
   at_tok.{h,c}                         Verbatim copy of hardware/ril/reference-ril/at_tok.{h,c}
                                         (Apache-2.0, AOSP), unmodified.
@@ -72,13 +70,12 @@ manifest_mindone_ril.xml             VINTF fragment for slot1 -- NOT additive, s
   commands cited in `AT-MAP-NOTES.md` "Method"; moved to scratchpad, not committed.
 - The fetched copies of AOSP's own generated HIDL headers (`types_1.x.h`, `IRadio_1.6.h`, etc.,
   ~3 MB) used by `codegen/`'s parser scripts -- these are build-tree output, not our code, and
-  fully regenerable by the commands cited in
-  RIL-MINIMAL-1409; moved to scratchpad, not committed.
+  fully regenerable from the build tree; not committed.
 None of these were "binaries" in the git-diff sense except the one `.rodata` slice; all are
 excluded for the same reason: derived, regenerable, and bulky, not because of any license issue
 (at_tok.{h,c} IS committed, verbatim, since it's small, Apache-2.0, and directly used).
 
-## HAL version choice, briefly (full citation trail: RIL-MINIMAL-1409)
+## HAL version choice, briefly
 
 `android.hardware.radio@1.6::IRadio`, instance `slot1`. Three independent confirmations: the
 framework's own `compatibility_matrix.6.xml` requires "1.5-6" for this instance; the stock
@@ -132,7 +129,7 @@ enforcing trial, not for the first test).
    are made by this plan (one new executable under `/vendor/bin/hw/`, disabled by default), so
    rollback does not need a reflash.
 
-## Risks -- see RIL-MINIMAL-1409 "Risks" for the full blacklist
+## Risks
 
 The short version: never send an `AT+EGMR` write form (IMEI/factory calibration), never send
 `AT+ECFGSET`/`AT+ESBP` variants beyond the ones already confirmed read-safe in the boot
