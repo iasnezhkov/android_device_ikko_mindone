@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Date: Thu, 8 Oct 2026 14:49:02 +0300
+Subject: [PATCH] Return failed encoder work and stop queuing after a fatal
+ error
+
+Reject already posted work after the component enters ERROR so a failed
+first converted-layout negotiation cannot recreate the input converter
+and abort the Codec2 service at its initialization assertion.
+
+Return conversion failures through onWorkDone with zero processed
+worklets. If encode rejects a successfully converted frame, return its
+converter slot before reporting that work as failed. The frame has not
+entered the encoder request queue, so no later input callback owns it.
+
+Reviewed against C2Work result semantics and V4L2Encoder::encode ownership.
+Device validation is performed with the Android Auto plane-layout fix.
+---
+ components/EncodeComponent.cpp | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/components/EncodeComponent.cpp b/components/EncodeComponent.cpp
+index e77c3d0..fe6091a 100644
+--- a/components/EncodeComponent.cpp
++++ b/components/EncodeComponent.cpp
+@@ -461,6 +461,19 @@ void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+     ALOG_ASSERT(mEncoderTaskRunner->RunsTasksInCurrentSequence());
+     ALOG_ASSERT(mEncoder);
+ 
++    auto failWork = [this, &work](c2_status_t status) {
++        work->result = status;
++        work->input.buffers.clear();
++        work->workletsProcessed = 0;
++        std::list<std::unique_ptr<C2Work>> failedWorks;
++        failedWorks.emplace_back(std::move(work));
++        mListener->onWorkDone_nb(weak_from_this(), std::move(failedWorks));
++    };
++    if (mComponentState == ComponentState::ERROR) {
++        failWork(C2_BAD_STATE);
++        return;
++    }
++
+     // Currently only a single worklet per work item is supported. An input buffer should always be
+     // supplied unless this is a drain or CSD request.
+     ALOG_ASSERT(work->input.buffers.size() <= 1u && work->worklets.size() == 1u);
+@@ -542,6 +555,7 @@ void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+             if (status != C2_OK) {
+                 ALOGE("Failed to convert input block (index: %" PRIu64 ")", index);
+                 reportError(status);
++                failWork(status);
+                 return;
+             }
+         } else {
+@@ -572,6 +586,10 @@ void EncodeComponent::queueTask(std::unique_ptr<C2Work> work) {
+             } while (0);
+         }
+         if (!encode(inputBlock, index, timestamp)) {
++            if (mInputFormatConverter) {
++                mInputFormatConverter->returnBlock(index);
++            }
++            failWork(C2_CORRUPTED);
+             return;
+         }
+     }

@@ -36,15 +36,15 @@ userspace, camera libraries) are not part of this repository at all — each use
 from their own device, as [docs/BLOBS.md](docs/BLOBS.md) describes.
 
 <table>
-<tr><td width="25%"><b>🎧 Audio HAL</b><br><sub>2 700 lines</sub></td>
+<tr><td width="25%"><b>🎧 Audio HAL</b><br><sub>2 800 lines</sub></td>
 <td>A complete primary HAL, written from scratch. Not a wrapper.</td></tr>
 <tr><td><b>📐 Sensors HAL</b><br><sub>2 500 lines</sub></td>
 <td>Straight onto the kernel's <code>hf_manager</code>, calibration from <code>nvcfg</code>.</td></tr>
-<tr><td><b>🌉 HIDL bridges</b><br><sub>2 700 lines</sub></td>
+<tr><td><b>🌉 HIDL bridges</b><br><sub>2 800 lines</sub></td>
 <td>Five services keeping closed HIDL HALs reachable: four bridge to AIDL as VINTF rises toward
 Android 17, one proxies the camera provider (opt-in, not yet verified on hardware).</td></tr>
-<tr><td><b>🎬 Video (Codec2)</b><br><sub>~2 300 lines of patches</sub></td>
-<td>Hardware decode/encode through the open V4L2 Codec2 HAL — 27 patches to
+<tr><td><b>🎬 Video (Codec2)</b><br><sub>29 patches</sub></td>
+<td>Hardware decode/encode through the open V4L2 Codec2 HAL — 29 patches to
 <code>external_v4l2_codec2</code> adding MediaTek block-format support, on by default.</td></tr>
 <tr><td><b>📡 Modem stack</b><br><sub>11 000 lines</sub></td>
 <td>Open CCCI userspace. <b>Not shipped</b>, except one small status helper — see why below.</td></tr>
@@ -130,7 +130,7 @@ warm cache.
 
 | ✅ Works | |
 |---|---|
-| **Audio** | works day to day: speaker, calls on earpiece and speaker, Bluetooth A2DP, microphone. Still being worked on — see below |
+| **Audio** | media speaker, microphone and Bluetooth A2DP; cellular call microphone and switching between earpiece and speaker confirmed on 11 October 2026. See the validation limits below |
 | **Cellular** | calls, SMS, mobile data *(stock modem stack)* |
 | **Wireless** | Wi-Fi, Bluetooth, NFC |
 | **Video** | hardware decode: AVC, HEVC (incl. 10-bit Main10), VP9, MPEG-4, H.263. Hardware encode: AVC, HEVC. Through the open V4L2 Codec2 HAL, on by default |
@@ -161,6 +161,32 @@ Worth being explicit, because "it works" means different things to different peo
 | **VTS / CTS** | **No.** Neither has been run. There is no compatibility evidence of any kind, and none is claimed |
 | **Any certification** | None. Not by Google, not by LineageOS, not by anyone |
 | **Reproducible builds** | Kernel only, on one machine into one path (byte-identical `Image`). Cross-machine untested |
+
+### Current source and installed validation
+
+On 11 October 2026, a cellular call confirmed microphone audio and working receive audio while
+switching earpiece → speaker → earpiece. The accepted audio HAL and matching kernel modules were
+then installed through a signed OTA; their hashes and persistent loading were verified after
+reboot, with 50 post-install checks passing. No additional call was made after that final
+persistence-only reboot. Incoming-call acceptance, VoIP and Bluetooth call audio were not part
+of this test; it does not establish those paths as working.
+
+The source snapshot also contains changes with narrower validation:
+
+- Codec2 Surface/YUV encoder layout fixes passed on-device frame-pattern checks and were
+  installed persistently. A real Android Auto head-unit session and injected fatal encoder
+  failures remain untested.
+- Thermal sensor and cooling-request retry changes passed a native build and a temporary healthy
+  service test. The additional initial cooling-request fix has host regression coverage, but its
+  native build and retained-state device test remain pending. These patches are not all installed.
+- The power HAL node-restoration patch has host and native build/test coverage; its device
+  installation and failure-recovery scenario remain pending.
+- Learned battery-state persistence is installed and passed the default userspace-gauge boot
+  path. Restoration with the optional kernel gauge, shutdown failures and power-loss durability
+  are not established by that check.
+
+This is a source update, not evidence that every included change is running on the tested phone.
+No battery-capacity, energy-saving or performance improvement is claimed from these checks.
 
 If you need a device that passes a compliance suite, this is not it yet.
 

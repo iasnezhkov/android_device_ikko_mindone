@@ -1048,3 +1048,11 @@ on property:persist.sys.bcct_enable=*
 # wangchengju BCCT CUST enable switch (sync to kernel)
 on property:persist.vendor.bcct_cust_enable=*
     write /proc/mtk_battery_cmd/bcct_cust_enable ${persist.vendor.bcct_cust_enable}
+
+on property:vendor.thermal.link_ready=1
+    chown system system /dev/thermal/cdev-by-name/charger-cooler/cur_state
+    chmod 0644 /dev/thermal/cdev-by-name/charger-cooler/cur_state
+    chown system system /dev/thermal/cdev-by-name/lcd-backlight/cur_state
+    chmod 0644 /dev/thermal/cdev-by-name/lcd-backlight/cur_state
+    chown system system /dev/thermal/cdev-by-name/mutt-pa1/cur_state
+    chmod 0644 /dev/thermal/cdev-by-name/mutt-pa1/cur_state

@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 04 Oct 2026 03:16:44 +0300
+Subject: [PATCH 2/2] thermal: retry unaccepted cooling requests
+
+An unchanged aggregate after a failed sysfs write was never retried.
+Keep the last accepted request separate from pending work, and revisit
+pending requests on the watcher even when no sensor produces a change.
+Read the latest aggregate at each attempt, coalesce early changes, and
+admit a retry no sooner than two seconds after the failed write completes.
+An unchanged accepted request needs no write. A failed release remains
+pending until its actual sysfs write succeeds, even when its quantity
+matches the previously accepted request.
+
+Capture a failed write's errno before logging, preserving the existing
+two-argument writer. Unknown errno remains explicit rather than implying
+unsupported operation. Keep all thermal trips, request conversion,
+sensor freshness intervals and power hint behavior unchanged.
+
+Acceptance describes the sysfs/provider request, not hardware application
+or external writer ownership. Retry admission does not bound blocking
+providers or mutex waits. The disabled-HAL constructor path remains
+outside the active watcher retry contract.
+
+Exact-source host controls exercise the reconstructed sensor-retry base,
+all three configured nodes, unchanged recovery, partial failure/release,
+stronger and latest requests before deadlines, errno305/ENOMEM/EBUSY,
+late endpoints, unknown errno, remaining-time rounding and finite idle
+recovery. Android compilation and device behavior are separate gates.
+---
+diff --git a/aidl/thermal/thermal-helper.cpp b/aidl/thermal/thermal-helper.cpp
+--- a/aidl/thermal/thermal-helper.cpp
++++ b/aidl/thermal/thermal-helper.cpp
+@@ -694,30 +694,66 @@
+     return true;
+ }
+ 
+-void ThermalHelperImpl::updateCoolingDevices(const std::vector<std::string> &updated_cdev) {
++std::chrono::milliseconds ThermalHelperImpl::updateCoolingDevices(
++        const std::vector<std::string> &updated_cdev) {
++    std::lock_guard<std::mutex> lock(cooling_device_request_mutex_);
+     for (const auto &target_cdev : updated_cdev) {
++        if (cooling_device_info_map_.count(target_cdev)) {
++            cooling_device_request_status_map_.try_emplace(target_cdev);
++        }
++    }
++
++    const auto now = boot_clock::now();
++    for (auto &[target_cdev, status] : cooling_device_request_status_map_) {
++        if (status.pending && now < status.next_retry_time) {
++            continue;
++        }
++
+         int max_state;
++        if (!thermal_throttling_.getCdevMaxRequest(target_cdev, &max_state)) {
++            status.pending = true;
++            status.next_retry_time = boot_clock::now() + kMinPollIntervalMs;
++            continue;
++        }
+         const auto &cdev_info = cooling_device_info_map_.at(target_cdev);
+-        if (thermal_throttling_.getCdevMaxRequest(target_cdev, &max_state)) {
+-            const auto request =
+-                    cdev_info.apply_powercap
+-                            ? static_cast<int>(std::lround(cdev_info.state2power[max_state] /
+-                                                           cdev_info.multiplier))
+-                            : max_state;
+-            if (cooling_devices_.writeCdevFile(target_cdev, std::to_string(request))) {
+-                ATRACE_INT(target_cdev.c_str(), request);
+-                if (cdev_info.apply_powercap) {
+-                    LOG(INFO) << "Successfully update cdev " << target_cdev << " budget to "
+-                              << request << "(state:" << max_state << ")";
+-                } else {
+-                    LOG(INFO) << "Successfully update cdev " << target_cdev << " sysfs to "
+-                              << request;
+-                }
+-            } else {
+-                LOG(ERROR) << "Failed to update cdev " << target_cdev << " sysfs to " << request;
+-            }
+-        }
+-    }
++        const auto request =
++                cdev_info.apply_powercap
++                        ? static_cast<int>(std::lround(cdev_info.state2power[max_state] /
++                                                       cdev_info.multiplier))
++                        : max_state;
++        if (!status.pending && status.accepted_request == request) {
++            continue;
++        }
++
++        int write_errno = 0;
++        if (cooling_devices_.writeCdevFile(target_cdev, std::to_string(request), &write_errno)) {
++            status.accepted_request = request;
++            status.pending = false;
++            status.last_write_errno = 0;
++            status.next_retry_time = boot_clock::time_point::min();
++            ATRACE_INT(target_cdev.c_str(), request);
++            LOG(INFO) << "Accepted cdev " << target_cdev << " sysfs request " << request
++                      << "(state:" << max_state << ")";
++        } else {
++            status.pending = true;
++            status.last_write_errno = write_errno;
++            status.next_retry_time = boot_clock::now() + kMinPollIntervalMs;
++            LOG(ERROR) << "Failed to update cdev " << target_cdev << " sysfs to " << request
++                       << " errno " << (write_errno > 0 ? std::to_string(write_errno) : "UNKNOWN");
++        }
++    }
++
++    auto min_sleep_ms = std::chrono::milliseconds::max();
++    const auto completed = boot_clock::now();
++    for (const auto &[target_cdev, status] : cooling_device_request_status_map_) {
++        if (status.pending) {
++            const auto remaining = std::max(
++                    std::chrono::milliseconds::zero(),
++                    std::chrono::ceil<std::chrono::milliseconds>(status.next_retry_time - completed));
++            min_sleep_ms = std::min(min_sleep_ms, remaining);
++        }
++    }
++    return min_sleep_ms;
+ }
+ 
+ std::pair<ThrottlingSeverity, ThrottlingSeverity> ThermalHelperImpl::getSeverityFromThresholds(
+@@ -1841,9 +1877,7 @@
+         }
+     }
+ 
+-    if (!cooling_devices_to_update.empty()) {
+-        updateCoolingDevices(cooling_devices_to_update);
+-    }
++    min_sleep_ms = std::min(min_sleep_ms, updateCoolingDevices(cooling_devices_to_update));
+ 
+     int count_failed_reporting = thermal_stats_helper_.reportStats();
+     if (count_failed_reporting != 0) {
+diff --git a/aidl/thermal/thermal-helper.h b/aidl/thermal/thermal-helper.h
+--- a/aidl/thermal/thermal-helper.h
++++ b/aidl/thermal/thermal-helper.h
+@@ -22,6 +22,7 @@
+ #include <chrono>
+ #include <map>
+ #include <mutex>
++#include <optional>
+ #include <shared_mutex>
+ #include <string>
+ #include <string_view>
+@@ -85,6 +86,13 @@
+     std::queue<ThermalSample> thermal_history;
+     bool pending_notification;
+     OverrideStatus override_status;
++};
++
++struct CoolingDeviceRequestStatus {
++    std::optional<int> accepted_request;
++    bool pending = false;
++    int last_write_errno = 0;
++    boot_clock::time_point next_retry_time = boot_clock::time_point::min();
+ };
+ 
+ class ThermalHelper {
+@@ -241,7 +249,8 @@
+     float readPredictionAfterTimeMs(std::string_view sensor_name, const size_t time_ms);
+     bool readTemperaturePredictions(std::string_view sensor_name, std::vector<float> *predictions);
+     float getThermalRising(const SensorStatus &sensor_status, const ThermalSample &curr_sample);
+-    void updateCoolingDevices(const std::vector<std::string> &cooling_devices_to_update);
++    std::chrono::milliseconds updateCoolingDevices(
++            const std::vector<std::string> &cooling_devices_to_update);
+     // Check the max throttling for binded cooling device
+     void maxCoolingRequestCheck(
+             std::unordered_map<std::string, BindedCdevInfo> *binded_cdev_info_map);
+@@ -253,6 +262,8 @@
+     PowerFiles power_files_;
+     ThermalFiles thermal_sensors_;
+     ThermalFiles cooling_devices_;
++    std::mutex cooling_device_request_mutex_;
++    std::unordered_map<std::string, CoolingDeviceRequestStatus> cooling_device_request_status_map_;
+     ThermalThrottling thermal_throttling_;
+     bool is_initialized_;
+     const NotificationCallback cb_;
+diff --git a/aidl/thermal/utils/thermal_files.cpp b/aidl/thermal/utils/thermal_files.cpp
+--- a/aidl/thermal/utils/thermal_files.cpp
++++ b/aidl/thermal/utils/thermal_files.cpp
+@@ -25,6 +25,7 @@
+ #include <android-base/strings.h>
+ #include <utils/Trace.h>
+ 
++#include <cerrno>
+ #include <string_view>
+ 
+ namespace aidl {
+@@ -93,11 +94,23 @@
+ }
+ 
+ bool ThermalFiles::writeCdevFile(std::string_view cdev_name, std::string_view data) {
++    return writeCdevFile(cdev_name, data, nullptr);
++}
++
++bool ThermalFiles::writeCdevFile(std::string_view cdev_name, std::string_view data, int *error) {
+     const auto path_info =
+             getThermalFilePath(::android::base::StringPrintf("%s_%s", cdev_name.data(), "w"));
+ 
+     ATRACE_NAME(StringPrintf("ThermalFiles::writeCdevFile - %s", cdev_name.data()).c_str());
++    if (error) {
++        *error = 0;
++    }
++    errno = 0;
+     if (!::android::base::WriteStringToFile(data.data(), path_info.path)) {
++        const int write_errno = errno;
++        if (error) {
++            *error = write_errno;
++        }
+         PLOG(WARNING) << "Failed to write cdev: " << cdev_name << " to " << data.data();
+         return false;
+     }
+diff --git a/aidl/thermal/utils/thermal_files.h b/aidl/thermal/utils/thermal_files.h
+--- a/aidl/thermal/utils/thermal_files.h
++++ b/aidl/thermal/utils/thermal_files.h
+@@ -48,6 +48,7 @@
+     // is read, this function will fill in data accordingly then return true.
+     bool readThermalFile(std::string_view thermal_name, std::string *data) const;
+     bool writeCdevFile(std::string_view thermal_name, std::string_view data);
++    bool writeCdevFile(std::string_view thermal_name, std::string_view data, int *error);
+     size_t getNumThermalFiles() const { return thermal_name_to_path_map_.size(); }
+ 
+   private:

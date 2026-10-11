@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 04 Oct 2026 07:03:00 +0300
+Subject: [PATCH 3/3] thermal: reconcile the initial cooling request
+
+A cold startup initializes the aggregate at zero, which never reaches
+its writer without a later sensor transition. Admit that initial request
+once all registered producers have computed after a valid watcher read.
+Keep the existing changed-aggregate protective writes and their order.
+The existing helper acceptance cache and bounded retry handle the admitted
+request without redundant healthy writes or fabricated acknowledgement.
+
+Registration precedes watcher startup. Current owned nodes have only
+hard-limit producers. Complex PID validity, failed registration and
+external writer ownership are outside this startup reconciliation.
+---
+diff --git a/aidl/thermal/utils/thermal_throttling.cpp b/aidl/thermal/utils/thermal_throttling.cpp
+--- a/aidl/thermal/utils/thermal_throttling.cpp
++++ b/aidl/thermal/utils/thermal_throttling.cpp
+@@ -168,6 +168,10 @@
+                 }
+             }
+         }
++    }
++    for (const auto &cdev_request :
++         thermal_throttling_status_map_.at(sensor_name.data()).cdev_status_map) {
++        initial_cdev_sensor_map_[cdev_request.first].insert(sensor_name.data());
+     }
+     return true;
+ }
+@@ -879,6 +883,14 @@
+             thermal_stats_helper->updateSensorCdevRequestStats(sensor_name, cdev_name,
+                                                                cdev_request_pair.second);
+         }
++        auto initial = initial_cdev_sensor_map_.find(cdev_name);
++        if (initial != initial_cdev_sensor_map_.end()) {
++            initial->second.erase(sensor_name.data());
++            if (initial->second.empty()) {
++                cooling_devices_to_update->emplace_back(cdev_name);
++                initial_cdev_sensor_map_.erase(initial);
++            }
++        }
+     }
+ }
+
+diff --git a/aidl/thermal/utils/thermal_throttling.h b/aidl/thermal/utils/thermal_throttling.h
+--- a/aidl/thermal/utils/thermal_throttling.h
++++ b/aidl/thermal/utils/thermal_throttling.h
+@@ -137,6 +137,7 @@
+     std::shared_mutex cdev_all_request_map_mutex_;
+     // Set of all request for a cooling device from each sensor
+     std::unordered_map<std::string, std::multiset<int, std::greater<int>>> cdev_all_request_map_;
++    std::unordered_map<std::string, std::unordered_set<std::string>> initial_cdev_sensor_map_;
+ };
+
+ }  // namespace implementation

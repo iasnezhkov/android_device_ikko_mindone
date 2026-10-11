@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sun, 04 Oct 2026 05:42:00 +0300
+Subject: [PATCH] perfmgr: retry partially failed node transitions
+
+Required node errors already preserve the previous selected index and
+request a retry in 500ms or sooner. A failed transition may nevertheless
+write an earlier path, accept a prefix before a later error, truncate a
+file, or replace a held descriptor. Cancellation or expiry back to the
+previous index then skips the write despite these side effects.
+
+Require a rewrite after a required failure, including when the latest
+selection equals the previous index. Clear the existing reset state only
+on the already-existing successful update path. Preserve all values,
+hint durations, request priority, defaults, retry cadence and intentional
+AllowFailure/ENOENT behavior. Add no field or symbol.
+
+The mutable reset-state getter already becomes false on successful
+updates. Its consumers in the exact Google/Lineage PowerHAL subtrees are
+only initialization/property tests. Unknown outside clients are not
+claimed absent. Current configured File nodes are single-path and their
+stores have no source-proved short successful write; this is generic
+restoration hardening, not demonstrated current-device energy savings.
+
+Source-bound ASan/UBSan controls exercise partial/default/prior-index
+restoration, descriptor lifetime, actual two-pass looper scheduling,
+expiry, latest selection and optional absence. Separate exact native
+android-base write-loop controls prove prefix acceptance before EIO.
+The 500ms retry sleep does not bound blocking syscalls, mutex waits,
+zero-progress writes, external ownership or hardware application.
+---
+diff --git a/power-libperfmgr/libperfmgr/FileNode.cc b/power-libperfmgr/libperfmgr/FileNode.cc
+--- a/power-libperfmgr/libperfmgr/FileNode.cc
++++ b/power-libperfmgr/libperfmgr/FileNode.cc
+@@ -87,6 +87,7 @@
+                     // Retry in 500ms or sooner
+                     expire_time = std::min(expire_time, std::chrono::milliseconds(500));
+                     successfullyUpdated = false;
++                    reset_on_init_ = true;
+                 }
+             } else {
+                 // For regular file system, we need fsync

@@ -12,12 +12,14 @@
 #include <malloc.h>
 #include <math.h>
 #include <pthread.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <log/log.h>
 #include <cutils/str_parms.h>
@@ -39,7 +41,7 @@
 #define SCO_RATE_NB             8000
 #define SCO_RATE_WB             16000
 #define PCM_DEVICE_SPEECH_HOSTLESS  22
-#define SPEECH_HOSTLESS_RATE        8000
+#define SPEECH_HOSTLESS_RATE        48000
 #define SPEECH_HOSTLESS_CHANNELS    2
 #define SPEECH_HOSTLESS_PERIOD_SIZE (SPEECH_HOSTLESS_RATE / 50)
 #define SPEECH_HOSTLESS_PERIOD_COUNT 4
@@ -129,6 +131,7 @@ struct mindone_audio_device {
      * can call set_voice_volume()/set_mic_mute() outside a call, and those must not touch it. */
     bool in_call;
     bool speech_on;
+    int speech_fd;
     enum output_device voice_out_device;
     struct pcm *speech_hostless_out;
     struct pcm *speech_hostless_in;
@@ -303,6 +306,10 @@ static void endpoint_release(struct mindone_audio_device *adev, enum output_devi
     off_path = output_path_off_name(d);
     if (off_path) {
         audio_route_apply_path(adev->route, off_path);
+        if (d == OUT_DEVICE_SPEAKER && adev->out_ep_users[OUT_DEVICE_EARPIECE] > 0)
+            audio_route_apply_path(adev->route, output_path_name(OUT_DEVICE_EARPIECE));
+        else if (d == OUT_DEVICE_EARPIECE && adev->out_ep_users[OUT_DEVICE_SPEAKER] > 0)
+            audio_route_apply_path(adev->route, output_path_name(OUT_DEVICE_SPEAKER));
         audio_route_update_mixer(adev->route);
     }
 }
@@ -539,7 +546,7 @@ static int output_pcm_device(const struct mindone_stream_out *out, enum output_d
 #define SPH_APP_NORMAL_CALL 0
 
 #define SPH_CCCI_CHANNEL 5
-#define SPH_CCCI_PAYLOAD_MAGIC 0xA522
+#define SPH_CCCI_PAYLOAD_MAGIC 0xA2A2
 #define SPH_TASK_SPEECH_ON 25
 
 #define SPH_INFO_PAYLOAD_SIZE 128
@@ -553,9 +560,11 @@ static int output_pcm_device(const struct mindone_stream_out *out, enum output_d
 #define SPH_INFO_OFF_EMI_PARAM_OFFSET 24
 #define SPH_INFO_OFF_SMARTPA_CONFIG 84
 #define SPH_INFO_PATH_SHM_CCCI 0
+#define SPH_INFO_PATH_SHM_USIP 2
 #define SPH_INFO_EMI_EMPTY_VALID 2
 #define SPH_INFO_EMI_REAL_VALID 1
 #define SPH_INFO_SMARTPA_SINGLE 1
+#define SPH_INFO_RATE_48K 3
 
 #define PROP_SPH_PARAM_ENABLE "vendor.audio.mindone.sph_param"
 
@@ -563,20 +572,17 @@ static int output_pcm_device(const struct mindone_stream_out *out, enum output_d
 #define SPEECHPARSER_LIB "/vendor/lib64/libspeechparser_vendor.so"
 
 #define CCCI_IOC_MAGIC 'C'
-#define CCCI_IOC_SMEM_BASE _IOR(CCCI_IOC_MAGIC, 48, unsigned int)
 #define CCCI_IOC_SMEM_LEN _IOR(CCCI_IOC_MAGIC, 49, unsigned int)
-
-#define SPH_SHM_SIZE 53248
-#define SPH_SHM_OFF_AP_FLAG 32
-#define SPH_SHM_OFF_SPH_PARAM_OFFSET 40
-#define SPH_SHM_OFF_SPH_PARAM_SIZE 44
-#define SPH_SHM_OFF_SPH_PARAM_WIDX 52
+#define SPH_SHM_SIZE 53248u
 #define SPH_SHM_OFF_MD_VERSION 120
+#define USIP_NODE "/dev/usip"
+#define USIP_IOC_SIZE _IOWR('D', 0xf0, uint64_t)
+#define USIP_MAP_SIZE 0x30000u
+#define USIP_PARAM_OFFSET 0x4000u
+#define USIP_PARAM_SIZE 0x2bfe0u
+#define USIP_INIT_CTL "Speech_SHM_USIP"
+#define USIP_WIDX_CTL "Speech_SHM_Widx"
 
-#define SPH_SHM_SPH_PARAM_OFFSET 128
-#define SPH_SHM_SPH_PARAM_SIZE 12288
-
-#define SP_MDVERSION_PROVEN_FALLBACK 0x3000u
 #define SP_PARAM_BUF_CAPACITY 49152u
 #define SP_IDX_VOLUME_DEFAULT 3u
 
@@ -629,11 +635,11 @@ struct ccci_sph_payload_hdr {
     uint16_t payload_size;
 } __attribute__((packed));
 
-static void build_sph_info(unsigned char *out, bool wb)
+static void build_sph_info(unsigned char *out)
 {
     memset(out, 0, SPH_INFO_PAYLOAD_SIZE);
     out[SPH_INFO_OFF_APP] = SPH_APP_NORMAL_CALL;
-    out[SPH_INFO_OFF_RATE_ENUM] = wb ? 1 : 0;
+    out[SPH_INFO_OFF_RATE_ENUM] = SPH_INFO_RATE_48K;
     out[SPH_INFO_OFF_PATH] = SPH_INFO_PATH_SHM_CCCI;
     out[SPH_INFO_OFF_PARAM_EMI_VALID] = SPH_INFO_EMI_EMPTY_VALID;
     out[SPH_INFO_OFF_SMARTPA_CONFIG] = SPH_INFO_SMARTPA_SINGLE;
@@ -647,7 +653,7 @@ static void sph_put_u32_le(unsigned char *out, int off, uint32_t v)
     out[off + 3] = (unsigned char)((v >> 24) & 0xff);
 }
 
-static uint32_t sph_get_u32_le(const unsigned char *in, int off)
+static uint32_t sph_get_u32_le(const volatile unsigned char *in, int off)
 {
     return (uint32_t)in[off] | ((uint32_t)in[off + 1] << 8) | ((uint32_t)in[off + 2] << 16) |
            ((uint32_t)in[off + 3] << 24);
@@ -655,6 +661,7 @@ static uint32_t sph_get_u32_le(const unsigned char *in, int off)
 
 static void sph_info_set_real_params(unsigned char *info, uint32_t size, uint32_t offset)
 {
+    info[SPH_INFO_OFF_PATH] = SPH_INFO_PATH_SHM_USIP;
     info[SPH_INFO_OFF_PARAM_EMI_VALID] = SPH_INFO_EMI_REAL_VALID;
     sph_put_u32_le(info, SPH_INFO_OFF_EMI_PARAM_SIZE, size);
     sph_put_u32_le(info, SPH_INFO_OFF_EMI_PARAM_OFFSET, offset);
@@ -687,127 +694,178 @@ static void sph_input_attr_for_route(enum output_device out, struct sp_input_att
     }
 }
 
-static unsigned char *sph_smem_open(int *out_fd, unsigned int *out_len)
+static void sph_memory_barrier(void)
 {
-    int fd;
-    unsigned int base = 0;
-    unsigned int len = 0;
-    void *map;
-
-    fd = open(CCCI_RAW_AUDIO_NODE, O_RDWR);
-    if (fd < 0) {
-        ALOGE("%s: open(%s) failed: %s", __func__, CCCI_RAW_AUDIO_NODE, strerror(errno));
-        return NULL;
-    }
-    if (ioctl(fd, CCCI_IOC_SMEM_BASE, &base) < 0) {
-        ALOGE("%s: CCCI_IOC_SMEM_BASE failed: %s", __func__, strerror(errno));
-        close(fd);
-        return NULL;
-    }
-    if (ioctl(fd, CCCI_IOC_SMEM_LEN, &len) < 0 || len < SPH_SHM_SIZE) {
-        ALOGE("%s: CCCI_IOC_SMEM_LEN failed or too small (%u): %s", __func__, len,
-              strerror(errno));
-        close(fd);
-        return NULL;
-    }
-    map = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (map == MAP_FAILED) {
-        ALOGE("%s: mmap failed: %s", __func__, strerror(errno));
-        close(fd);
-        return NULL;
-    }
-    *out_fd = fd;
-    *out_len = len;
-    return (unsigned char *)map;
+#if defined(__aarch64__)
+    __asm__ __volatile__("dsb ish" ::: "memory");
+#else
+    __sync_synchronize();
+#endif
 }
 
-static bool sph_param_fetch_real(enum output_device out, unsigned char *info)
+static void sph_memory_copy(volatile unsigned char *dst, const unsigned char *src, size_t size)
 {
-    void *lib, *handle = NULL;
-    sp_handle_get_instance_fn get_instance = NULL;
-    sp_handle_init_fn init_fn = NULL;
-    sp_get_param_buffer_fn get_param = NULL;
-    sp_key_value_fn set_kv = NULL;
+    for (size_t i = 0; i < size; ++i)
+        dst[i] = src[i];
+    sph_memory_barrier();
+}
+
+static int sph_md_version(uint32_t *version)
+{
+    unsigned int len = 0;
+    int fd = open(CCCI_RAW_AUDIO_NODE, O_RDONLY | O_CLOEXEC);
+    const volatile unsigned char *map;
+    int rc = -EIO;
+
+    if (fd < 0)
+        return -errno;
+    if (ioctl(fd, CCCI_IOC_SMEM_LEN, &len) < 0 || len < SPH_SHM_SIZE)
+        goto done;
+    map = mmap(NULL, SPH_SHM_SIZE, PROT_READ, MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED)
+        goto done;
+    *version = sph_get_u32_le(map, SPH_SHM_OFF_MD_VERSION) & 0xffffu;
+    munmap((void *)map, SPH_SHM_SIZE);
+    if (*version && *version != 0xffffu)
+        rc = 0;
+done:
+    close(fd);
+    return rc;
+}
+
+static int sph_usip_write(struct mindone_audio_device *adev, const unsigned char *data,
+                          uint32_t size, uint32_t *offset)
+{
+    struct mixer_ctl *init_ctl = mixer_get_ctl_by_name(adev->mixer, USIP_INIT_CTL);
+    struct mixer_ctl *widx_ctl = mixer_get_ctl_by_name(adev->mixer, USIP_WIDX_CTL);
+    volatile unsigned char *map = MAP_FAILED;
+    uint64_t len = 0;
+    uint32_t widx;
+    int fd = -1, rc = -EIO, initialized, value;
+
+    if (!data || !offset || !size || size > USIP_PARAM_SIZE - 16u)
+        return -EINVAL;
+    if (!init_ctl || !widx_ctl || mixer_ctl_get_num_values(init_ctl) != 1 ||
+        mixer_ctl_get_num_values(widx_ctl) != 1 ||
+        mixer_ctl_get_type(init_ctl) != MIXER_CTL_TYPE_BOOL ||
+        mixer_ctl_get_type(widx_ctl) != MIXER_CTL_TYPE_INT)
+        return -ENODEV;
+    initialized = mixer_ctl_get_value(init_ctl, 0);
+    value = mixer_ctl_get_value(widx_ctl, 0);
+    if ((initialized != 0 && initialized != 1) || value < 0 ||
+        (uint32_t)value >= USIP_PARAM_SIZE)
+        return -EINVAL;
+    widx = initialized ? (uint32_t)value : 0;
+    fd = open(USIP_NODE, O_RDWR | O_CLOEXEC);
+    if (fd < 0)
+        return -errno;
+    if (ioctl(fd, USIP_IOC_SIZE, &len) < 0 || len < USIP_MAP_SIZE)
+        goto done;
+    map = mmap(NULL, USIP_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED)
+        goto done;
+    if (!initialized) {
+        for (size_t i = 0; i < 32; ++i) {
+            map[0xc00u + i] = 0x0a;
+            map[0x2ffe0u + i] = 0x0a;
+        }
+        *(volatile uint32_t *)(map + 0xc20u) = 0xc28u;
+        *(volatile uint32_t *)(map + 0xc24u) = USIP_PARAM_OFFSET;
+        sph_memory_barrier();
+        if (mixer_ctl_set_value(widx_ctl, 0, 0) ||
+            mixer_ctl_get_value(widx_ctl, 0) != 0 ||
+            mixer_ctl_set_value(init_ctl, 0, 1) ||
+            mixer_ctl_get_value(init_ctl, 0) != 1)
+            goto done;
+    } else if (sph_get_u32_le(map, 0xc20) != 0xc28u ||
+               sph_get_u32_le(map, 0xc24) != USIP_PARAM_OFFSET) {
+        goto done;
+    }
+    if (USIP_PARAM_SIZE - widx < size) {
+        widx = 0;
+        if (mixer_ctl_set_value(widx_ctl, 0, 0) ||
+            mixer_ctl_get_value(widx_ctl, 0) != 0)
+            goto done;
+    }
+    sph_memory_copy(map + USIP_PARAM_OFFSET + widx, data, size);
+    for (uint32_t i = 0; i < size; ++i) {
+        if (map[USIP_PARAM_OFFSET + widx + i] != data[i])
+            goto done;
+    }
+    value = (int)(widx + size);
+    if ((uint32_t)value == USIP_PARAM_SIZE)
+        value = 0;
+    if (mixer_ctl_set_value(widx_ctl, 0, value) ||
+        mixer_ctl_get_value(widx_ctl, 0) != value)
+        goto done;
+    *offset = widx;
+    rc = 0;
+done:
+    if (map != MAP_FAILED)
+        munmap((void *)map, USIP_MAP_SIZE);
+    close(fd);
+    if (rc)
+        ALOGE("%s: USIP parameter write failed (%d)", __func__, rc);
+    return rc;
+}
+
+static int sph_param_fetch_real(struct mindone_audio_device *adev, enum output_device out,
+                                unsigned char *info)
+{
+    void *lib = NULL, *handle;
     struct sp_input_attr attr;
     struct sp_out_buf out_buf;
-    static unsigned char param_buf[SP_PARAM_BUF_CAPACITY];
-    unsigned char *shm;
-    int smem_fd = -1;
-    unsigned int smem_len = 0;
-    unsigned int md_version;
-    bool ok = false;
+    unsigned char *param_buf = NULL;
+    uint32_t md_version, offset;
+    int rc = sph_md_version(&md_version);
 
-    shm = sph_smem_open(&smem_fd, &smem_len);
-    if (!shm)
-        return false;
-
-    md_version = sph_get_u32_le(shm, SPH_SHM_OFF_MD_VERSION) & 0xffffu;
-    if (!md_version)
-        md_version = SP_MDVERSION_PROVEN_FALLBACK;
-
+    if (rc)
+        return rc;
     lib = dlopen(SPEECHPARSER_LIB, RTLD_NOW);
-    if (!lib) {
-        ALOGE("%s: dlopen(%s) failed: %s", __func__, SPEECHPARSER_LIB, dlerror());
-        munmap(shm, smem_len);
-        close(smem_fd);
-        return false;
-    }
-
-    get_instance = (sp_handle_get_instance_fn)dlsym(lib, "spHandleGetInstance");
-    init_fn = (sp_handle_init_fn)dlsym(lib, "spHandleInit");
-    get_param = (sp_get_param_buffer_fn)dlsym(lib, "getParamBuffer");
-    set_kv = (sp_key_value_fn)dlsym(lib, "setKeyValuePair");
-    if (!get_instance || !get_param || !set_kv) {
-        ALOGE("%s: dlsym failed on %s", __func__, SPEECHPARSER_LIB);
-        goto out_dlclose;
-    }
-
+    if (!lib)
+        return -ENOENT;
+    sp_handle_get_instance_fn get_instance =
+        (sp_handle_get_instance_fn)dlsym(lib, "spHandleGetInstance");
+    sp_handle_init_fn init_fn = (sp_handle_init_fn)dlsym(lib, "spHandleInit");
+    sp_get_param_buffer_fn get_param = (sp_get_param_buffer_fn)dlsym(lib, "getParamBuffer");
+    sp_key_value_fn set_kv = (sp_key_value_fn)dlsym(lib, "setKeyValuePair");
+    rc = -ENOSYS;
+    if (!get_instance || !init_fn || !get_param || !set_kv)
+        goto done;
     handle = get_instance();
-    if (!handle) {
-        ALOGE("%s: spHandleGetInstance() returned NULL", __func__);
-        goto out_dlclose;
+    rc = -EIO;
+    if (!handle || init_fn(handle) <= 0)
+        goto done;
+    char query[64];
+    struct sp_kv kv = { .reserved0 = 0, .stringAddr = query };
+    snprintf(query, sizeof(query), "SPEECH_PARSER_SET_PARAM,MDVERSION=%u", md_version);
+    if (set_kv(handle, &kv))
+        goto done;
+    param_buf = calloc(1, SP_PARAM_BUF_CAPACITY);
+    if (!param_buf) {
+        rc = -ENOMEM;
+        goto done;
     }
-    if (init_fn)
-        init_fn(handle);
-
-    {
-        char query[64];
-        struct sp_kv kv;
-
-        snprintf(query, sizeof(query), "SPEECH_PARSER_SET_PARAM,MDVERSION=%u", md_version);
-        kv.reserved0 = 0;
-        kv.stringAddr = query;
-        set_kv(handle, &kv);
-    }
-
     sph_input_attr_for_route(out, &attr);
-
-    memset(param_buf, 0, sizeof(param_buf));
     memset(&out_buf, 0, sizeof(out_buf));
-    out_buf.memorySize = sizeof(param_buf);
+    out_buf.memorySize = SP_PARAM_BUF_CAPACITY;
     out_buf.bufferAddr = param_buf;
-
-    if (get_param(handle, &attr, &out_buf) != 0 || out_buf.dataSize == 0 ||
-        out_buf.dataSize > sizeof(param_buf) || out_buf.dataSize > SPH_SHM_SPH_PARAM_SIZE - 16) {
-        ALOGE("%s: getParamBuffer failed or blob does not fit the %u-byte ring (dataSize=%u)",
-              __func__, (unsigned int)(SPH_SHM_SPH_PARAM_SIZE - 16), out_buf.dataSize);
-        goto out_dlclose;
+    if (get_param(handle, &attr, &out_buf) || out_buf.bufferAddr != param_buf ||
+        !out_buf.dataSize || out_buf.dataSize > out_buf.memorySize ||
+        out_buf.memorySize > SP_PARAM_BUF_CAPACITY)
+        goto done;
+    rc = sph_usip_write(adev, param_buf, out_buf.dataSize, &offset);
+    if (!rc) {
+        sph_info_set_real_params(info, out_buf.dataSize, offset);
+        ALOGI("%s: USIP params route=%d size=%u offset=%u", __func__, out,
+              out_buf.dataSize, offset);
     }
-
-    sph_put_u32_le(shm, SPH_SHM_OFF_AP_FLAG, 1);
-    sph_put_u32_le(shm, SPH_SHM_OFF_SPH_PARAM_OFFSET, SPH_SHM_SPH_PARAM_OFFSET);
-    sph_put_u32_le(shm, SPH_SHM_OFF_SPH_PARAM_SIZE, SPH_SHM_SPH_PARAM_SIZE);
-    memcpy(shm + SPH_SHM_SPH_PARAM_OFFSET, param_buf, out_buf.dataSize);
-    sph_put_u32_le(shm, SPH_SHM_OFF_SPH_PARAM_WIDX, out_buf.dataSize);
-
-    sph_info_set_real_params(info, out_buf.dataSize, 0);
-    ok = true;
-
-out_dlclose:
+done:
+    free(param_buf);
     dlclose(lib);
-    munmap(shm, smem_len);
-    close(smem_fd);
-    return ok;
+    if (rc)
+        ALOGE("%s: parameters unavailable (%d)", __func__, rc);
+    return rc;
 }
 
 static int ccci_send_mailbox(int fd, uint16_t msg_id, uint16_t param16, uint32_t param32)
@@ -844,44 +902,212 @@ static int ccci_send_payload(int fd, uint16_t msg_id, const void *payload, uint1
     return write(fd, buf, total) == (ssize_t)total ? 0 : -1;
 }
 
-static void speech_ccci_on(enum output_device out, bool wb)
+static int64_t sph_monotonic_ms(void)
 {
-    unsigned char info[SPH_INFO_PAYLOAD_SIZE];
-    int fd;
-
-    build_sph_info(info, wb);
-    if (property_get_bool(PROP_SPH_PARAM_ENABLE, false)) {
-        if (sph_param_fetch_real(out, info))
-            ALOGI("%s: real speech params loaded for %s", __func__,
-                  output_path_name(out) ? output_path_name(out) : "bt-sco");
-        else
-            ALOGW("%s: real speech params unavailable, sending param_emi_valid=%d", __func__,
-                  SPH_INFO_EMI_EMPTY_VALID);
-    }
-
-    fd = open(CCCI_AUD_NODE, O_RDWR);
-    if (fd < 0) {
-        ALOGE("%s: open(%s) failed: %s", __func__, CCCI_AUD_NODE, strerror(errno));
-        return;
-    }
-    if (ccci_send_payload(fd, SPH_MSG_ID_SET_SPEECH_MODE, info, SPH_INFO_PAYLOAD_SIZE))
-        ALOGE("%s: SetSpeechMode write failed: %s", __func__, strerror(errno));
-    if (ccci_send_payload(fd, SPH_MSG_ID_SPEECH_ON, info, SPH_INFO_PAYLOAD_SIZE))
-        ALOGE("%s: SpeechOn write failed: %s", __func__, strerror(errno));
-    close(fd);
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts))
+        return -1;
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-static void speech_ccci_off(void)
+static int ccci_receive(int fd, uint16_t expected, bool stale)
 {
-    int fd = open(CCCI_AUD_NODE, O_RDWR);
-
-    if (fd < 0) {
-        ALOGE("%s: open(%s) failed: %s", __func__, CCCI_AUD_NODE, strerror(errno));
-        return;
+    unsigned char buf[4096];
+    int64_t now = sph_monotonic_ms();
+    if (now < 0)
+        return -EIO;
+    int64_t deadline = now + (stale ? 200 : 1000);
+    for (;;) {
+        struct pollfd pfd = { .fd = fd, .events = POLLIN };
+        now = sph_monotonic_ms();
+        if (now < 0 || now >= deadline)
+            return -ETIMEDOUT;
+        int timeout = (int)(deadline - now);
+        if (stale && timeout > 50)
+            timeout = 50;
+        int rc = poll(&pfd, 1, timeout);
+        if (rc < 0 && errno == EINTR)
+            continue;
+        if (!rc)
+            return stale ? 0 : -ETIMEDOUT;
+        if (rc < 0 || !(pfd.revents & POLLIN) ||
+            (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)))
+            return -EIO;
+        ssize_t n = read(fd, buf, sizeof(buf));
+        if (n < 0 && (errno == EINTR || errno == EAGAIN))
+            continue;
+        if (n < 16)
+            return -EIO;
+        uint32_t first = sph_get_u32_le(buf, 0);
+        uint32_t channel = sph_get_u32_le(buf, 8) & 0xffffu;
+        uint32_t args = sph_get_u32_le(buf, first == UINT32_MAX ? 4 : 12);
+        uint16_t id = (uint16_t)(args >> 16);
+        ALOGI("CCCI RX phase=%s id=0x%04x channel=%u raw16=0x%04x raw32=0x%08x",
+              stale ? "stale" : "ack", id, channel, (unsigned int)(args & 0xffffu),
+              sph_get_u32_le(buf, 12));
+        if (channel != 4 || (first == UINT32_MAX && n != 16) ||
+            (first != UINT32_MAX &&
+             (n < 26 || sph_get_u32_le(buf, 4) != (uint32_t)n ||
+              (sph_get_u32_le(buf, 16) & 0xffffu) != 0x1234u ||
+              (sph_get_u32_le(buf, 20) & 0xffffu) + 26u != (uint32_t)n)))
+            return -EPROTO;
+        if (id == 0xafa0 && first != UINT32_MAX && n == 58 &&
+            (sph_get_u32_le(buf, 16) >> 16) == 26) {
+            if (ccci_send_mailbox(fd, 0x2fa0, 0, 0))
+                return -EIO;
+        }
+        if (!stale && id == expected)
+            return 0;
     }
-    if (ccci_send_mailbox(fd, SPH_MSG_ID_SPEECH_OFF, 0, 0))
-        ALOGE("%s: SpeechOff write failed: %s", __func__, strerror(errno));
-    close(fd);
+}
+
+static int speech_rx_pump(struct mindone_audio_device *adev, const char *value)
+{
+    unsigned char buf[4096];
+    unsigned int frames = 0, replies = 0;
+    int rc = -EAGAIN;
+    int64_t now, deadline;
+
+    if (strcmp(value, "1"))
+        return -EINVAL;
+    if (!adev->in_call || !adev->speech_on || adev->speech_fd < 0)
+        return -ENOTCONN;
+    now = sph_monotonic_ms();
+    if (now < 0)
+        return -EIO;
+    deadline = now + 100;
+    for (unsigned int attempt = 0; attempt < 8; ++attempt) {
+        struct pollfd pfd = { .fd = adev->speech_fd, .events = POLLIN };
+        now = sph_monotonic_ms();
+        if (now < 0) {
+            rc = -EIO;
+            break;
+        }
+        if (now >= deadline)
+            break;
+        int ready = poll(&pfd, 1, 0);
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (!ready) {
+            rc = 0;
+            break;
+        }
+        if (ready < 0 || !(pfd.revents & POLLIN) ||
+            (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+            rc = -EIO;
+            break;
+        }
+        ssize_t n = read(adev->speech_fd, buf, sizeof(buf));
+        if (n < 0 && (errno == EAGAIN || errno == EINTR))
+            continue;
+        if (n < 16) {
+            rc = -EIO;
+            break;
+        }
+        ++frames;
+        uint32_t first = sph_get_u32_le(buf, 0);
+        uint32_t channel = sph_get_u32_le(buf, 8) & 0xffffu;
+        uint32_t args = sph_get_u32_le(buf, first == UINT32_MAX ? 4 : 12);
+        uint16_t id = (uint16_t)(args >> 16);
+        if (channel != 4 || (first == UINT32_MAX && n != 16) ||
+            (first != UINT32_MAX &&
+             (n < 26 || sph_get_u32_le(buf, 4) != (uint32_t)n ||
+              (sph_get_u32_le(buf, 16) & 0xffffu) != 0x1234u ||
+              (sph_get_u32_le(buf, 20) & 0xffffu) + 26u != (uint32_t)n))) {
+            rc = -EPROTO;
+            break;
+        }
+        ALOGI("CCCI RX phase=pump id=0x%04x bytes=%zd raw16=0x%04x raw32=0x%08x",
+              id, n, (unsigned int)(args & 0xffffu), sph_get_u32_le(buf, 12));
+        if (id != 0xaf90)
+            continue;
+        if (first == UINT32_MAX || n != 210 ||
+            (sph_get_u32_le(buf, 16) >> 16) != 0x14 ||
+            (sph_get_u32_le(buf, 20) >> 16) != 1 ||
+            (sph_get_u32_le(buf, 22) >> 16) != 1) {
+            ALOGE("CCCI RX phase=pump rejected AF90 layout bytes=%zd", n);
+            rc = -EPROTO;
+            break;
+        }
+        now = sph_monotonic_ms();
+        if (now < 0 || now >= deadline) {
+            rc = now < 0 ? -EIO : -EAGAIN;
+            break;
+        }
+        int write_rc = ccci_send_mailbox(adev->speech_fd, 0x2f90, 0, 0);
+        ALOGI("CCCI RX phase=pump AF90 task=20 payload=184 reply=0x2f90 write_rc=%d",
+              write_rc);
+        if (write_rc) {
+            rc = -EIO;
+            break;
+        }
+        ++replies;
+    }
+    ALOGI("%s: frames=%u replies=%u rc=%d", __func__, frames, replies, rc);
+    return rc;
+}
+
+static int speech_ccci_off(struct mindone_audio_device *adev)
+{
+    int rc = 0;
+    if (adev->speech_fd < 0)
+        return 0;
+    int drain_rc = ccci_receive(adev->speech_fd, 0, true);
+    if (ccci_send_mailbox(adev->speech_fd, SPH_MSG_ID_SPEECH_OFF, 0, 0))
+        rc = -EIO;
+    else if (!drain_rc)
+        rc = ccci_receive(adev->speech_fd, SPH_MSG_ID_SPEECH_OFF | 0x8000, false);
+    else
+        rc = drain_rc;
+    close(adev->speech_fd);
+    adev->speech_fd = -1;
+    if (rc)
+        ALOGE("%s: SpeechOff not acknowledged (%d)", __func__, rc);
+    return rc;
+}
+
+static int speech_ccci_on(struct mindone_audio_device *adev, enum output_device out)
+{
+    unsigned char info[SPH_INFO_PAYLOAD_SIZE];
+    const uint16_t messages[] = { SPH_MSG_ID_SET_SPEECH_MODE, SPH_MSG_ID_SPEECH_ON };
+    bool on_sent = false;
+    int rc = 0;
+
+    if (adev->speech_fd >= 0)
+        return -EBUSY;
+    adev->speech_fd = open(CCCI_AUD_NODE, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+    if (adev->speech_fd < 0)
+        return -errno;
+    for (size_t i = 0; i < sizeof(messages) / sizeof(messages[0]); ++i) {
+        build_sph_info(info);
+        if (property_get_bool(PROP_SPH_PARAM_ENABLE, true)) {
+            rc = sph_param_fetch_real(adev, out, info);
+            if (rc)
+                break;
+        }
+        rc = ccci_receive(adev->speech_fd, 0, true);
+        if (rc)
+            break;
+        if (messages[i] == SPH_MSG_ID_SPEECH_ON)
+            on_sent = true;
+        if (ccci_send_payload(adev->speech_fd, messages[i], info, sizeof(info))) {
+            rc = -EIO;
+            break;
+        }
+        rc = ccci_receive(adev->speech_fd, messages[i] | 0x8000, false);
+        if (rc)
+            break;
+    }
+    if (rc) {
+        ALOGE("%s: speech start failed (%d)", __func__, rc);
+        if (on_sent)
+            speech_ccci_off(adev);
+        else {
+            close(adev->speech_fd);
+            adev->speech_fd = -1;
+        }
+    }
+    return rc;
 }
 
 static struct pcm *speech_hostless_pcm_open(bool capture)
@@ -895,6 +1121,7 @@ static struct pcm *speech_hostless_pcm_open(bool capture)
     c.format = PCM_FORMAT_S16_LE;
     c.period_size = SPEECH_HOSTLESS_PERIOD_SIZE;
     c.period_count = SPEECH_HOSTLESS_PERIOD_COUNT;
+    c.stop_threshold = UINT32_MAX;
     pcm = pcm_open(PCM_CARD, PCM_DEVICE_SPEECH_HOSTLESS, capture ? PCM_IN : PCM_OUT, &c);
     if (!pcm || !pcm_is_ready(pcm)) {
         ALOGE("%s: pcm_open(device=%d, capture=%d) failed: %s", __func__,
@@ -905,21 +1132,7 @@ static struct pcm *speech_hostless_pcm_open(bool capture)
         }
         return NULL;
     }
-    if (pcm_start(pcm)) {
-        ALOGE("%s: pcm_start(device=%d, capture=%d) failed: %s", __func__,
-              PCM_DEVICE_SPEECH_HOSTLESS, capture, pcm_get_error(pcm));
-        pcm_close(pcm);
-        return NULL;
-    }
     return pcm;
-}
-
-static void speech_hostless_open(struct mindone_audio_device *adev)
-{
-    if (adev->speech_hostless_out || adev->speech_hostless_in)
-        return;
-    adev->speech_hostless_out = speech_hostless_pcm_open(false);
-    adev->speech_hostless_in = speech_hostless_pcm_open(true);
 }
 
 static void speech_hostless_close(struct mindone_audio_device *adev)
@@ -934,10 +1147,39 @@ static void speech_hostless_close(struct mindone_audio_device *adev)
     }
 }
 
-static void voice_route_enable(struct mindone_audio_device *adev, enum output_device out)
+static int speech_hostless_open(struct mindone_audio_device *adev)
+{
+    if (adev->speech_hostless_out && adev->speech_hostless_in)
+        return 0;
+    if (adev->speech_hostless_out || adev->speech_hostless_in)
+        goto fail;
+    adev->speech_hostless_in = speech_hostless_pcm_open(true);
+    if (!adev->speech_hostless_in)
+        goto fail;
+    adev->speech_hostless_out = speech_hostless_pcm_open(false);
+    if (!adev->speech_hostless_out)
+        goto fail;
+    if (pcm_start(adev->speech_hostless_out)) {
+        ALOGE("%s: playback start failed: %s", __func__,
+              pcm_get_error(adev->speech_hostless_out));
+        goto fail;
+    }
+    if (pcm_start(adev->speech_hostless_in)) {
+        ALOGE("%s: capture start failed: %s", __func__,
+              pcm_get_error(adev->speech_hostless_in));
+        goto fail;
+    }
+    return 0;
+
+fail:
+    speech_hostless_close(adev);
+    return -EIO;
+}
+
+static int voice_route_enable(struct mindone_audio_device *adev, enum output_device out)
 {
     if (adev->in_call)
-        return;
+        return 0;
 
     if (out == OUT_DEVICE_BT_SCO) {
         /* See the header: the modem <-> btcvsd copy loop does not exist yet. The earpiece is the
@@ -968,14 +1210,27 @@ static void voice_route_enable(struct mindone_audio_device *adev, enum output_de
     audio_route_update_mixer(adev->route);
 
     if (!adev->speech_on) {
-        speech_hostless_open(adev);
-        speech_ccci_on(out, false);
+        int rc = speech_hostless_open(adev);
+        if (!rc)
+            rc = speech_ccci_on(adev, out);
+        if (rc) {
+            speech_hostless_close(adev);
+            audio_route_apply_path(adev->route, "voice-echo-ref-off");
+            audio_route_apply_path(adev->route, "voice-uplink-off");
+            audio_route_apply_path(adev->route, "voice-downlink-off");
+            audio_route_apply_path(adev->route, "mic-off");
+            audio_route_update_mixer(adev->route);
+            endpoint_release(adev, adev->voice_out_device);
+            adev->voice_out_device = OUT_DEVICE_NONE;
+            return rc;
+        }
         adev->speech_on = true;
     }
     adev->in_call = true;
 
     set_hw_output_volume(adev, out, adev->voice_volume);
     ALOGI("%s: voice route up on %s", __func__, output_path_name(out) ? output_path_name(out) : "bt-sco");
+    return 0;
 }
 
 static void voice_route_disable(struct mindone_audio_device *adev, bool speech_off)
@@ -990,7 +1245,7 @@ static void voice_route_disable(struct mindone_audio_device *adev, bool speech_o
     audio_route_update_mixer(adev->route);
 
     if (speech_off && adev->speech_on) {
-        speech_ccci_off();
+        speech_ccci_off(adev);
         speech_hostless_close(adev);
         adev->speech_on = false;
     }
@@ -2105,13 +2360,38 @@ static void adev_close_input_stream(struct audio_hw_device *dev,
  * as "bt_wbs=on|off" (mSBC) and, on newer stacks, "bt_swb=on|off" (LC3); btcvsd knows only NB
  * and WB, so super-wideband is served as WB. A SCO stream already open runs at the old rate and
  * is restarted by its next write/read. Everything else is accepted and ignored, as before. */
+static int speech_set_dl_gain(struct mindone_audio_device *adev, const char *value)
+{
+    const char *digits = value;
+    char *end;
+    long gain;
+    int rc;
+
+    if (*digits == '-')
+        ++digits;
+    if (!*digits)
+        return -EINVAL;
+    for (const char *p = digits; *p; ++p)
+        if (*p < '0' || *p > '9')
+            return -EINVAL;
+    errno = 0;
+    gain = strtol(value, &end, 10);
+    if (errno || *end || gain < -255 || gain > 0)
+        return -EINVAL;
+    if (!adev->in_call || !adev->speech_on || adev->speech_fd < 0)
+        return -ENOTCONN;
+    rc = ccci_send_mailbox(adev->speech_fd, 0x2f00, (uint16_t)(int16_t)gain, 0);
+    ALOGI("%s: gain=%ld write_rc=%d", __func__, gain, rc);
+    return rc ? -EIO : 0;
+}
+
 static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
 {
     struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
     struct str_parms *parms;
     char value[32];
     bool wb, changed = false;
-    int i;
+    int i, rc = 0;
 
     parms = str_parms_create_str(kvpairs);
     if (!parms)
@@ -2136,10 +2416,16 @@ static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
         if (adev->active_in && adev->active_in->routed_device == IN_DEVICE_BT_SCO)
             adev->active_in->reopen_pending = true;
     }
+    int len = str_parms_get_str(parms, "mindone_speech_dl_gain", value, sizeof(value));
+    if (len >= 0)
+        rc = len >= (int)sizeof(value) ? -EINVAL : speech_set_dl_gain(adev, value);
+    len = str_parms_get_str(parms, "mindone_speech_rx_pump", value, sizeof(value));
+    if (len >= 0 && !rc)
+        rc = len >= (int)sizeof(value) ? -EINVAL : speech_rx_pump(adev, value);
     pthread_mutex_unlock(&adev->lock);
 
     str_parms_destroy(parms);
-    return 0;
+    return rc;
 }
 
 static char *adev_get_parameters(const struct audio_hw_device *dev, const char *keys)
@@ -2212,19 +2498,21 @@ static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
         pthread_mutex_unlock(&adev->lock);
         return 0;
     }
-    adev->mode = mode;
+    int rc = 0;
 
     /* IN_COMMUNICATION (VoIP) does NOT go through the modem - its audio is ordinary playback and
      * capture from the app. Only IN_CALL means a circuit call on the "PCM 2" backend. */
     want_call = (mode == AUDIO_MODE_IN_CALL);
 
     if (want_call)
-        voice_route_enable(adev, voice_output_device(adev));
+        rc = voice_route_enable(adev, voice_output_device(adev));
     else
         voice_route_disable(adev, true);
+    if (!rc)
+        adev->mode = mode;
 
     pthread_mutex_unlock(&adev->lock);
-    return 0;
+    return rc;
 }
 
 /* 15.09: a real mute during a call, by cutting the uplink crossbar rather than guessing at gain
@@ -2307,6 +2595,12 @@ static int adev_create_audio_patch(struct audio_hw_device *dev,
     if (!sources || !sinks || num_sources < 1 || num_sinks < 1 || !handle)
         return -EINVAL;
 
+    if (sinks[0].type == AUDIO_PORT_TYPE_DEVICE &&
+        sinks[0].ext.device.type == AUDIO_DEVICE_OUT_TELEPHONY_TX) {
+        *handle = AUDIO_PATCH_HANDLE_NONE + 1;
+        return 0;
+    }
+
     pthread_mutex_lock(&adev->lock);
 
     if (sinks[0].type == AUDIO_PORT_TYPE_DEVICE) {
@@ -2317,7 +2611,11 @@ static int adev_create_audio_patch(struct audio_hw_device *dev,
             /* A device change mid-call (earpiece -> speakerphone) has to move the whole voice
              * route, not just the endpoint, because the echo reference depends on it. */
             voice_route_disable(adev, false);
-            voice_route_enable(adev, d);
+            int rc = voice_route_enable(adev, d);
+            if (rc) {
+                pthread_mutex_unlock(&adev->lock);
+                return rc;
+            }
         } else {
             /* One patch per output thread: the source mix port names it by the io handle we
              * were given at open. With API 3.0 the framework routes ONLY through patches -- no
@@ -2443,6 +2741,11 @@ static int adev_close(hw_device_t *device)
 {
     struct mindone_audio_device *adev = (struct mindone_audio_device *)device;
 
+    pthread_mutex_lock(&adev->lock);
+    voice_route_disable(adev, true);
+    speech_ccci_off(adev);
+    speech_hostless_close(adev);
+    pthread_mutex_unlock(&adev->lock);
     if (adev->route)
         audio_route_free(adev->route);
     if (adev->mixer)
@@ -2468,6 +2771,7 @@ static int adev_open(const hw_module_t *module, const char *name,
      * step, not silence-until-set. Anything that applies it before the framework has told us a
      * real call volume would therefore turn the sound down rather than leave it alone. Start at
      * full and let set_voice_volume() lower it. */
+    adev->speech_fd = -1;
     adev->voice_volume = 1.0f;
 
     adev->mixer = mixer_open(PCM_CARD);

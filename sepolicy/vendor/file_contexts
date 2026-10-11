@@ -24,5 +24,6 @@
 /vendor/bin/mindone_rpcd        u:object_r:ccci_rpcd_exec:s0
 /vendor/bin/gauge-learned\.sh   u:object_r:gauge_learned_exec:s0
 /data/vendor/gauge(/.*)?   u:object_r:gauge_learned_data_file:s0
+/dev/gauge-learned(/.*)?   u:object_r:gauge_learned_boot_file:s0
 /vendor/bin/mindone-fast-insmod\.sh   u:object_r:init_insmod_sh_exec:s0
 /vendor/etc/mindone-insmod\.schedule   u:object_r:mindone_fast_insmod_data_file:s0

@@ -1,0 +1,156 @@
+From 0a7b70cbcc0a9743487af7bceaf8d53aae2bc31d Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Sat, 3 Oct 2026 16:46:52 +0300
+Subject: [PATCH] thermal: retry failed watched sensors without an infinite
+ Looper wait
+
+A due sensor returning ERROR or UNDER_COLLECTING skipped the sleep vote.
+When all watched sensors failed, milliseconds::max narrowed to -1 in
+Looper::pollOnce(int), allowing an indefinite wait for another event.
+Retain the last successful severity, cooling request and timestamps,
+retry at the existing 2000 ms minimum interval, and force an uncached
+read after a dedicated retry deadline. Early thermal events neither
+advance that deadline nor replace the failed sensor's cached sample.
+
+Use the remaining interval for finite Looper waits, cap it at INT_MAX,
+and reserve -1 for an actual idle watcher. Treat a healthy polling
+interval boundary as due rather than returning a zero sleep vote.
+
+Exact-source host regressions cover all-error/collecting retry, early
+events, recovery, retained cooling, healthy cadence, finite timeout
+narrowing and no-sensor idle. Android compilation and device recovery
+from a sensor error remain separate integration checks.
+---
+ aidl/thermal/thermal-helper.cpp        | 31 +++++++++++++++++++++-----
+ aidl/thermal/thermal-helper.h          |  1 +
+ aidl/thermal/utils/thermal_watcher.cpp | 15 +++++++++++--
+ 3 files changed, 40 insertions(+), 7 deletions(-)
+
+diff --git a/aidl/thermal/thermal-helper.cpp b/aidl/thermal/thermal-helper.cpp
+index 7f5874a..6ef4628 100644
+--- a/aidl/thermal/thermal-helper.cpp
++++ b/aidl/thermal/thermal-helper.cpp
+@@ -246,6 +246,7 @@ ThermalHelperImpl::ThermalHelperImpl(const NotificationCallback &cb)
+                 .prev_hot_severity = ThrottlingSeverity::NONE,
+                 .prev_cold_severity = ThrottlingSeverity::NONE,
+                 .last_update_time = boot_clock::time_point::min(),
++                .next_retry_time = boot_clock::time_point::min(),
+                 .thermal_cached = {NAN, boot_clock::time_point::min()},
+                 .count_threshold_counted = count_threshold_counted,
+                 .pending_notification = false,
+@@ -1624,6 +1625,9 @@ std::chrono::milliseconds ThermalHelperImpl::thermalWatcherCallbackFunc(
+     for (const auto &[sensor, temp] : uevent_sensor_map) {
+         if (!std::isnan(temp)) {
+             std::unique_lock<std::shared_mutex> _lock(sensor_status_map_mutex_);
++            if (sensor_status_map_[sensor].next_retry_time != boot_clock::time_point::min()) {
++                continue;
++            }
+             sensor_status_map_[sensor].thermal_cached.temp = temp;
+             sensor_status_map_[sensor].thermal_cached.timestamp = now;
+         }
+@@ -1665,13 +1669,23 @@ std::chrono::milliseconds ThermalHelperImpl::thermalWatcherCallbackFunc(
+             }
+         }
+         // Force update if it's first time we update temperature value after device boot
+-        if (sensor_status.last_update_time == boot_clock::time_point::min()) {
++        if (sensor_status.last_update_time != boot_clock::time_point::min()) {
++            time_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
++                    now - sensor_status.last_update_time);
++        }
++        if (sensor_status.next_retry_time != boot_clock::time_point::min()) {
++            if (now < sensor_status.next_retry_time) {
++                auto retry_remaining = std::chrono::ceil<std::chrono::milliseconds>(
++                        sensor_status.next_retry_time - now);
++                min_sleep_ms = std::min(min_sleep_ms, retry_remaining);
++                continue;
++            }
++            force_update = true;
++            force_no_cache = true;
++        } else if (sensor_status.last_update_time == boot_clock::time_point::min()) {
+             force_update = true;
+
+         } else {
+-            // Handle other update event
+-            time_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+-                    now - sensor_status.last_update_time);
+             // Update triggered from genlink or uevent
+             if (uevent_sensor_map.size()) {
+                 // Checking virtual sensor
+@@ -1694,7 +1708,8 @@ std::chrono::milliseconds ThermalHelperImpl::thermalWatcherCallbackFunc(
+                         force_no_cache = true;
+                     }
+                 }
+-            } else if (time_elapsed_ms > sleep_ms) {
++            }
++            if (time_elapsed_ms >= sleep_ms) {
+                 // Update triggered from normal polling cylce
+                 force_update = true;
+             }
+@@ -1731,15 +1746,21 @@ std::chrono::milliseconds ThermalHelperImpl::thermalWatcherCallbackFunc(
+         if (ret == SensorReadStatus::ERROR) {
+             LOG(ERROR) << __func__
+                        << ": error reading temperature for sensor: " << name_status_pair.first;
++            sensor_status.next_retry_time = now + kMinPollIntervalMs;
++            min_sleep_ms = std::min(min_sleep_ms, kMinPollIntervalMs);
+             continue;
+         }
+
+         if (ret == SensorReadStatus::UNDER_COLLECTING) {
+             LOG(INFO) << __func__
+                       << ": data under collecting for sensor: " << name_status_pair.first;
++            sensor_status.next_retry_time = now + kMinPollIntervalMs;
++            min_sleep_ms = std::min(min_sleep_ms, kMinPollIntervalMs);
+             continue;
+         }
+
++        sensor_status.next_retry_time = boot_clock::time_point::min();
++
+         {
+             std::unique_lock<std::shared_mutex> _lock(sensor_status_map_mutex_);
+             if (sensor_status.pending_notification) {
+diff --git a/aidl/thermal/thermal-helper.h b/aidl/thermal/thermal-helper.h
+index f68ff8e..7216589 100644
+--- a/aidl/thermal/thermal-helper.h
++++ b/aidl/thermal/thermal-helper.h
+@@ -69,6 +69,7 @@ struct SensorStatus {
+     ThrottlingSeverity prev_hot_severity;
+     ThrottlingSeverity prev_cold_severity;
+     boot_clock::time_point last_update_time;
++    boot_clock::time_point next_retry_time;
+     ThermalSample thermal_cached;
+     std::vector<bool> count_threshold_counted;
+     std::queue<ThermalSample> thermal_history;
+diff --git a/aidl/thermal/utils/thermal_watcher.cpp b/aidl/thermal/utils/thermal_watcher.cpp
+index 4d21c00..efea834 100644
+--- a/aidl/thermal/utils/thermal_watcher.cpp
++++ b/aidl/thermal/utils/thermal_watcher.cpp
+@@ -21,7 +21,9 @@
+ #include <sys/types.h>
+ #include <utils/Trace.h>
+
++#include <algorithm>
+ #include <chrono>
++#include <limits>
+ #include <fstream>
+
+ #include "../thermal-helper.h"
+@@ -499,8 +501,17 @@ bool ThermalWatcher::threadLoop() {
+     auto time_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(boot_clock::now() -
+                                                                                  last_update_time_);
+
+-    if (time_elapsed_ms < sleep_ms_ &&
+-        looper_->pollOnce(sleep_ms_.count(), &fd, nullptr, nullptr) >= 0) {
++    int timeout_ms = 0;
++    if (sleep_ms_ == std::chrono::milliseconds::max()) {
++        timeout_ms = -1;
++    } else if (time_elapsed_ms < sleep_ms_) {
++        auto remaining = sleep_ms_ - std::max(time_elapsed_ms, std::chrono::milliseconds::zero());
++        timeout_ms = static_cast<int>(std::min(
++                remaining.count(),
++                static_cast<std::chrono::milliseconds::rep>(std::numeric_limits<int>::max())));
++    }
++
++    if (timeout_ms != 0 && looper_->pollOnce(timeout_ms, &fd, nullptr, nullptr) >= 0) {
+         ATRACE_NAME("ThermalWatcher::threadLoop - receive event");
+         if (fd != uevent_fd_.get() && fd != thermal_genl_fd_.get()) {
+             return true;

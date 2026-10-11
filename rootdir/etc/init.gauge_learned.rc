@@ -1,5 +1,6 @@
 on post-fs-data
     mkdir /data/vendor/gauge 0770 system system
+    mkdir /dev/gauge-learned 0770 system system
     chown system system /sys/class/power_supply/battery/learned_aging_bp
     chown system system /sys/class/power_supply/battery/learned_cycles_x100
     exec_background - system system -- /vendor/bin/gauge-learned.sh restore

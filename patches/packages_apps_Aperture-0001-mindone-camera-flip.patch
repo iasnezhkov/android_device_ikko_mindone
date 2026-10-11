@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: mind_one
+From: mind_one <mind_one@example.invalid>
 Date: Sun, 13 Sep 2026 00:00:00 +0000
 Subject: [PATCH] mindone: react to the flip-camera module's hall switch (P131/F4296)
 

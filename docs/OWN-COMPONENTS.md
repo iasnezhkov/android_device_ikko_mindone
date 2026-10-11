@@ -22,7 +22,14 @@ Notable device-specific parts:
   than one compromise.
 - **Voice-call routing.** The modem's speech path is brought up on a voice call and stays up
   when the call moves between earpiece and speaker: only the AFE path changes, as in the stock
-  HAL, instead of a speech off/on pair that left a gap in the call audio. Bluetooth SCO media and the SCO headset
+  HAL, instead of a speech off/on pair that left a gap in the call audio. The Gen95 path loads
+  device-specific parameters through the extracted speech parser and `/dev/usip`, validates
+  modem acknowledgements, and opens both 48 kHz hostless PCM directions before starting them.
+  Shared receiver ownership is preserved when media and call endpoints change. This requires
+  the matching kernel USIP support and ADDA playback-enable fix: updating the HAL alone does
+  not fix a kernel that clears playback enable during a route change. The 11 October cellular
+  call passed earpiece/speaker switching; see the [integration guide](../audio-hf/README-INTEGRATION.md)
+  for the persistent-install check and untested paths. Bluetooth SCO media and the SCO headset
   microphone are implemented but not yet verified on hardware, and calls over SCO are not wired
   up — see the README's Status table.
 
@@ -55,7 +62,7 @@ default build leaves the binary untouched.
 
 ## Video decode/encode — `patches/external_v4l2_codec2-*`
 
-Not a directory in this tree but a 27-patch series against the open `external_v4l2_codec2`
+Not a directory in this tree but a 29-patch series against the open `external_v4l2_codec2`
 project, applied at build time (`MINDONE_OWN_CODEC2`, on by default) in place of the stock MediaTek
 OMX/C2 HAL chain. It adds what MediaTek's SoC needs and the open project does not provide on its
 own: detiling MediaTek's block (tiled) pixel format through the MDP hardware block, with a CPU
@@ -63,6 +70,11 @@ fallback when MDP is unavailable; HEVC and MPEG-4/H.263 decode; an HEVC encoder;
 (P010) output down-converted to 8-bit for apps that request plain YUV — decoding straight into a
 10-bit `ByteBuffer` still does not work. `ro.vendor.v4l2_codec2.*` properties advertise exactly
 the codecs this device supports; `media.c2.hal.selection=aidl` selects the AIDL-side HAL.
+
+The latest encoder patches honor mapped YUV planes and negotiated input layouts, and return
+queued work after a fatal encoder failure. Surface and flexible-YUV frame-pattern tests passed
+on the device, with unchanged decoder controls. A real Android Auto head unit and the injected
+fatal-error path remain untested.
 
 ## Wi-Fi — `wifi/wpa_supplicant_8_lib/` and a patch to the vendor HAL wrapper
 
