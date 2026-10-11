@@ -112,11 +112,8 @@ enforcing trial, not for the first test).
 1. Build `android.hardware.radio@1.6-service.mindone` from `Android.bp` against the running
    system's ROM tree, alongside the stock blob (do not remove `mtkfusionrild`/`libmtk-ril.so` from
    `proprietary-files.txt` yet).
-2. sepolicy is an OPEN ITEM (see `init.mindone_ril.rc`'s own comment) -- no matching domain was
-   identified for this binary's path in this session; write and test one BEFORE attempting to
-   start the service under enforcing SELinux, or run the test with `setenforce 0`-equivalent
-   scoped exception (per this project's own rule, never plain `setenforce 0` -- use
-   `magiskpolicy --live` scoped to the one new domain).
+2. SELinux policy remains an open item. Define and validate the service domain and required
+   access rules before starting the service. Keep SELinux enforcing throughout the test.
 3. With adb root: `stop vendor.ril-daemon-mtk`, confirm the mux channels still exist
    (`ls -la /dev/radio/pttycmd1 /dev/radio/pttynoti` -- gsm0710muxd itself does not need to be
    stopped, it owns the ptys independently of which process reads them), `start vendor.mindone_ril`.

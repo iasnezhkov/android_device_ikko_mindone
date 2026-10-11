@@ -152,11 +152,6 @@
                    sampleRate="48000"
                    channels="2" />
         </EncoderProfile>
-        <!-- MindOne 2K: added by magisk-2k-recording, see modules/magisk-2k-recording/README.md.
-             qhd = CAMCORDER_QUALITY_QHD (2560x1440), the only quality above 1080p that
-             c2.mtk.avc.encoder actually advertises (media_codecs_c2.xml: max="2560x1440").
-             bitRate scaled from the 1080p line above by pixel-count ratio 2560*1440/(1920*1080)=16/9
-             (20000000*16/9=35555556), rounded down to 35000000. -->
         <EncoderProfile quality="qhd" fileFormat="mp4" duration="30">
             <Video codec="h264"
                    bitRate="35000000"
@@ -372,8 +367,6 @@
                    sampleRate="48000"
                    channels="2" />
         </EncoderProfile>
-        <!-- MindOne 2K: added by magisk-2k-recording, see modules/magisk-2k-recording/README.md.
-             Same reasoning as cameraId="0" above. -->
         <EncoderProfile quality="qhd" fileFormat="mp4" duration="30">
             <Video codec="h264"
                    bitRate="35000000"
