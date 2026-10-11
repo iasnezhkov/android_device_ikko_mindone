@@ -1,15 +1,9 @@
 # mind_one open CCCI userspace daemons -- integration plan
 
-Status: staged, device-untouched. Nothing under `device/ikko/mindone/` was
-modified by this work; nothing was written to the phone (the phone was
-cable-attached but read-only for this pass -- reads only: `/dev/ccci*`
-listings, `/proc/ccci*`, `dmesg`, `getprop`, `ls -laZ`, `/debug_ramdisk/su -c`
-for read-only inspection). All four daemons below were syntax-checked
-in a Linux build environment against the actual bionic/liblog/libcutils headers this
-device's ROM build uses
-and all four pass `-std=gnu11 -Wall -Wextra -Werror` cleanly. Nothing here
-has been build-tested with `m`/`ninja` (never run in the build tree per this
-task's constraints) or booted.
+Status: research implementation, not shipped and not accepted as a complete modem stack on
+hardware. The stock modem services remain the production configuration. Earlier syntax checks
+against Android headers do not establish a native build, enforcing-policy compatibility or a
+working modem lifecycle for the current source.
 
 ## What is implemented, per daemon
 
@@ -18,8 +12,8 @@ task's constraints) or booted.
 Faithful (cited against our own kernel source, `ccci_md_all/` in the kernel repository):
 - Every `CCCI_IOC_*` ioctl number, `_IO*()` macro shape, and the
   `strncmp(current->comm, "ccci_mdinit", ...)` gate on `CCCI_IOC_DO_START_MD`
-  (`fsm/ccci_fsm_ioctl.c:403,459-462`) -- satisfied by shipping the binary
-  under the exact same name/path as the blob it replaces.
+  (`fsm/ccci_fsm_ioctl.c:403,459-462`). The implementation sets the required task name with
+  `prctl(PR_SET_NAME, ...)`; this does not require replacing the stock executable path.
 - `/dev/ccci_monitor` liveness tie (`fsm/ccci_fsm_monitor.c:35-52`): held
   open for the daemon's whole life; closing it force-stops the modem.
 - `struct ccci_header` wire format for monitor messages
@@ -106,8 +100,8 @@ pass and is unrelated to core telephony boot/registration/SMS.
 
 `mux/n_gsm_ldisc_setup.c` is a working, cited draft of the
 `TIOCSETD(N_GSM0710)` + `GSMIOC_SETCONF` sequence against mainline n_gsm
-(`CONFIG_N_GSM` is confirmed NOT built today,
-`tools/kconfig/running-6.12-1209.config:3130`). It is **not** the
+(the earlier inspected kernel configuration had `CONFIG_N_GSM` disabled; check the exact
+candidate configuration before relying on it). It is **not** the
 recommended path and is not wired into any daemon: `mtkfusionrild` is
 proven (by `strings` on the actual guest binary) to open gsm0710muxd's own
 `/dev/radio/ptty*`/`atci*` naming scheme, not n_gsm's generic
@@ -131,64 +125,44 @@ ldisc-hijack bug is out of the way.
 | MD_SBP NVRAM read (mdinit) | Low -- confirmed (disassembly) to target Sales/Branding code, not IMEI | Read-only; failure falls back to `sbp=0`, matching kernel's own no-gate behavior |
 | `/vendor/firmware/modem_1_*.img` bit order (mdinit) | Low -- metadata bitmap only, wrong order is visible in `getprop`/logcat, not silent | N/A, documented inference |
 
-## A/B plan
+## Integration prerequisites -- not hardware accepted
 
-> 🔴 **There is no rescue slot on this device.** Both slots share one `super` region -- the six
-> logical partitions of `_a` and `_b` start at the same offsets -- so the system is physically one
-> copy, and slot `_b` does not boot at all. "Try it in the spare slot" is not available here; see
-> `docs/FLASHING.md`. What makes the test below safe is not a second slot but that nothing is
-> replaced: the stock binary stays in place and stays in `proprietary-files.txt`, ours is started
-> by hand next to it, and restoring the stock behaviour is `stop` + `start` of the stock service.
+Both slots have booted through Virtual A/B updates. Shared logical-partition extents do not
+make an inactive slot an independent rescue copy: verify the current slot metadata and snapshot
+state before an update, and do not assume the old system remains available after snapshot merge.
+See [FLASHING.md](../../docs/FLASHING.md).
 
-1. Build all three `cc_binary` modules from `Android.bp` against the
-   running system's ROM tree, alongside the stock blobs (do not
-   remove the stock binaries from `proprietary-files.txt` yet).
-2. With adb root:
-   - `stop ccci_mdinit` (or the actual stock service name in force)
-   - `stop vendor.ccci_rpcd`
-   - push `ccci_mdinit`/`ccci_fsd`/`ccci_rpcd` to `/vendor/bin/` (remount
-     vendor rw or use `adb push` + `chcon`/labels matching the existing
-     `ccci_mdinit_exec`/`ccci_fsd_exec`/`ccci_rpcd_exec` file_contexts --
-     same path means the label is already correct without a policy change)
-   - `start ccci_mdinit` (this also needs to start `ccci_fsd`/`ccci_rpcd`
-     per the init.rc changes above)
-3. Verify, in order:
-   - `getprop | grep -E "vendor.mtk.md|vendor.service.nvram_restore"` --
-     status property reaches `ready`
-   - `dmesg | grep -i ccci` -- HS1/HS2 handshake completes, no
-     `EXCEPTION_HS1_TIMEOUT`/`HS2_TIMEOUT`
-   - RIL registration: `getprop gsm.sim.state`, `dumpsys telephony.registry`
-     shows registered state
-   - SMS: send/receive a test SMS
-   - Data: bring up the default APN, confirm a `ccmniN` interface gets an
-     IP and passes traffic
-4. Rollback: `stop` the three `ccci_*` services, restore the stock
-   `/vendor/bin/ccci_mdinit`/`ccci_fsd`/`ccci_rpcd` from
-   a dump of the stock partitions, `start` them again.
-   No partition-level changes are made by this plan (only 3 executable
-   files under `/vendor/bin/`), so rollback does not need a reflash.
+The current Soong modules produce separate executables:
 
-## Sepolicy
+| Module | Executable |
+|---|---|
+| `mindone_mdinit` | `/vendor/bin/mindone_mdinit` |
+| `mindone_fsd` | `/vendor/bin/mindone_fsd` |
+| `mindone_rpcd` | `/vendor/bin/mindone_rpcd` |
 
-14.09: closed by labels -- `sepolicy/vendor/file_contexts` gives `mindone_mdinit`/`mindone_fsd`/`mindone_rpcd`
-the stock exec types (`ccci_mdinit_exec`/`ccci_fsd_exec`/`ccci_rpcd_exec`, defined in
-`device/mediatek/sepolicy_vndr/base/vendor/ccci_*.te`), so the stock domains and their rules apply as-is.
-Note: on an earlier build the stock file service runs inside `ccci_mdinit` (no `ccci_fsd` process), so the A/B
-swaps the trio together (`tools/rigs/modem-ab.sh swap-ccci`).
+The adjacent historical init fragments still name the stock `ccci_mdinit`, `ccci_fsd` and
+`vendor.ccci_rpcd` services and stock executable paths. They are not a ready integration for
+these module names and must not be installed unchanged. Before a test, prepare separate disabled
+services with distinct names and the executable paths above; review their lifecycle and startup
+order against the installed vendor configuration. Do not run both implementations against the
+same modem channels. In particular, the stock file server may be a thread inside its modem-init
+process rather than a separately stoppable service.
 
-### Original notes
+Preserve stock executable files and their product entries. Do not overwrite live vendor
+executables or treat restarting services as a guaranteed modem recovery procedure. A candidate
+needs a reviewed installation and recovery plan, an exact native build, and an owner-supervised
+validation window. Calls and SMS require the owner's explicit authorization.
 
-**No new sepolicy is needed.** `device/mediatek/sepolicy_vndr/base/vendor/`
-already defines (build environment, read-only, unmodified by this task):
-- `ccci_mdinit.te` / `ccci_fsd.te` / `ccci_rpcd.te` -- full domains with
-  every permission each daemon above actually uses (nvram/nvdata/protect_f/
-  protect_s file access for mdinit&fsd, `ccci_device`/`sysfs_ccci` for all
-  three, `misc2_block_device`/`bootdevice_block_device`/`md_block_device`
-  for rpcd).
-- `file_contexts` maps `/(vendor|system/vendor)/bin/ccci_mdinit` ->
-  `ccci_mdinit_exec`, `.../ccci_fsd` -> `ccci_fsd_exec`, `.../ccci_rpcd` ->
-  `ccci_rpcd_exec` -- i.e. `init_daemon_domain()` picks up the exact right
-  domain automatically **because we ship under the same names/paths**.
+## SELinux prerequisites
+
+The device tree labels the three `/vendor/bin/mindone_*` executables with the existing
+`ccci_mdinit_exec`, `ccci_fsd_exec` and `ccci_rpcd_exec` types. This is a starting point, not
+proof that the full replacement stack can run under the compiled policy.
+
+Before starting a candidate service, compile and validate its init configuration and SELinux
+policy, confirm the installed executable labels and process domains, and check the required
+CCCI, NVRAM and filesystem access. Keep SELinux enforcing throughout the test. Successful
+registration alone does not validate reset recovery, filesystem requests or call audio.
 
 ## Exact paths written by this task
 

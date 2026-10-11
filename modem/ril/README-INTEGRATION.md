@@ -1,12 +1,9 @@
 # mind_one minimal RIL -- phase 1: AT map + HIDL skeleton (Q23d)
 
-Status: design/reconnaissance + a syntax-checked skeleton, **not built, not flashed, not run on
-the device**. The phone was on the cable but read-only for this task: allowed reads only
-(`ls`/`getprop`/`ps`/`cat /proc/tty/ldiscs` via `/debug_ramdisk/su -c`), never a write, toggle,
-or reboot. Everything else was done device-free inside a Linux build environment holding the Android tree,
-with `file`/`readelf`/`nm`/`strings`/`llvm-objdump`/`clang++ -fsyntax-only` only -- the build
-itself was never touched (`m`/`mm`/`ninja` never invoked). `device/ikko/mindone/` was not modified. No binaries were committed to git (see
-"What was deliberately not committed" below).
+Status: research implementation, not shipped and not hardware accepted as a replacement RIL.
+The stock RIL remains the production configuration. Earlier syntax checks do not establish a
+native build or a working enforcing-policy integration for the current source. Emergency
+calling remains unimplemented, so this service is not suitable for a daily-use phone.
 
 This continues the earlier modem-stack work (the original 37/39-handler,
 96+256-AT-command reconnaissance) and sits alongside the other Q23 CCCI-userspace work
@@ -93,38 +90,26 @@ plus `android.hidl.{base,safe_union}@1.0`. All 5 `.c`/`.cpp` files pass
 build -- no `m`/`ninja` was run, no `.o`/binary was produced, and cross-translation-unit issues
 (duplicate symbols, missing `-l` at link time) are not caught by `-fsyntax-only`.
 
-## Sepolicy (closed 14.09)
+## Integration prerequisites -- not hardware accepted
 
-Labeled `rild_exec` (`sepolicy/vendor/file_contexts`) -> stock `rild` domain (AOSP `system/sepolicy/vendor/rild.te`
-+ `device/mediatek/sepolicy_vndr/base/vendor/rild.te`), same as the stock `mtkfusionrild` (`u:r:rild:s0` live).
-A/B via `tools/rigs/modem-ab.sh swap-ril` (B39 boots `ro.boot.selinux=permissive`, so the label matters for the
-enforcing trial, not for the first test).
+Both slots have booted through Virtual A/B updates. Before installing a candidate, verify the
+current slot metadata and snapshot state. Shared logical-partition extents do not provide an
+independent rescue copy after snapshot merge; see [FLASHING.md](../../docs/FLASHING.md).
 
-## A/B plan -- NOT run this session
+The module `android.hardware.radio@1.6-service.mindone` installs separately at
+`/vendor/bin/hw/android.hardware.radio@1.6-service.mindone`. Its init service is
+`vendor.mindone_ril`, disabled by default. Keep the stock executable and product entries intact;
+do not overwrite live vendor executables.
 
-> 🔴 **There is no rescue slot on this device.** Both slots share one `super` region -- the six
-> logical partitions of `_a` and `_b` start at the same offsets -- so the system is physically one
-> copy, and slot `_b` does not boot at all. "Try it in the spare slot" is not available here; see
-> `docs/FLASHING.md`. What makes the test below safe is not a second slot but that nothing is
-> replaced: the stock binary stays in place and stays in `proprietary-files.txt`, ours is started
-> by hand next to it, and restoring the stock behaviour is `stop` + `start` of the stock service.
+Before testing, complete a native build and validate the service's labels, domain transitions
+and required access against the compiled SELinux policy. Keep SELinux enforcing. Resolve the
+VINTF ownership of `IRadio/slot1` and confirm the actual stock service and mux-channel names;
+the two RILs must not compete for the same instance or channels.
 
-1. Build `android.hardware.radio@1.6-service.mindone` from `Android.bp` against the running
-   system's ROM tree, alongside the stock blob (do not remove `mtkfusionrild`/`libmtk-ril.so` from
-   `proprietary-files.txt` yet).
-2. SELinux policy remains an open item. Define and validate the service domain and required
-   access rules before starting the service. Keep SELinux enforcing throughout the test.
-3. With adb root: `stop vendor.ril-daemon-mtk`, confirm the mux channels still exist
-   (`ls -la /dev/radio/pttycmd1 /dev/radio/pttynoti` -- gsm0710muxd itself does not need to be
-   stopped, it owns the ptys independently of which process reads them), `start vendor.mindone_ril`.
-4. Verify, in order, read-only: `logcat -b radio` (our own log lines, tagged `mindone_ril*`),
-   `getprop gsm.sim.state`, `dumpsys telephony.registry` (registration state reaching something
-   other than "unknown"), a manual `ATD`/`AT+CMGS` capability check only if explicitly
-   authorizes a real call/SMS attempt (this touches the live network, unlike everything else in
-   this plan).
-5. Rollback: `stop vendor.mindone_ril`, `start vendor.ril-daemon-mtk`. No partition-level changes
-   are made by this plan (one new executable under `/vendor/bin/hw/`, disabled by default), so
-   rollback does not need a reflash.
+Prepare a bounded test and recovery plan with the owner before changing services. Do not treat
+stopping the candidate and starting the stock process as proven recovery after modem state has
+changed. Registration, unsolicited indications and error handling need validation independently
+of call audio. Any real call or SMS attempt requires the owner's explicit authorization.
 
 ## Risks
 
