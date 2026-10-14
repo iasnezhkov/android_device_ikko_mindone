@@ -1,4 +1,5 @@
 #include <android/log.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/ioctl.h>
 #include <stdint.h>
@@ -56,22 +57,36 @@ static int ccci_mdx_sta_open(void)
 	int fd;
 
 	for (;;) {
-		fd = open(CCCI_MDX_STA_DEV, O_RDWR | O_NOCTTY);
+		fd = open(CCCI_MDX_STA_DEV, O_RDWR | O_NOCTTY | O_CLOEXEC);
 		if (fd >= 0)
 			return fd;
 		sleep(1);
 	}
 }
 
-int main(void)
+static int ccci_reset_lock(int fd, unsigned long request)
 {
-	int fd = ccci_mdx_sta_open();
+	int ret;
 
-	ioctl(fd, CCCI_IOC_HOLD_RST_LOCK, -1);
+	do {
+		ret = ioctl(fd, request, -1);
+	} while (ret < 0 && errno == EINTR);
+	return ret;
+}
 
+static void ccci_read_status(int fd)
+{
 	for (;;) {
 		struct md_status_event ev = {0};
 		ssize_t n = read(fd, &ev, sizeof(ev));
+		if (n != (ssize_t)sizeof(ev)) {
+			int error = n < 0 ? errno : 0;
+			if (n < 0 && error == EINTR)
+				continue;
+			__android_log_print(ANDROID_LOG_ERROR, VOLTE_MD_STATUS_TAG,
+					    "modem status read failed: count=%zd errno=%d", n, error);
+			return;
+		}
 		uint32_t idx = (uint32_t)ev.event_type;
 		const char *status = idx < MD_STA_EV_COUNT ? kMdStaEventName[idx] : "invalid";
 		char prop[PROP_VALUE_MAX];
@@ -83,7 +98,23 @@ int main(void)
 				     "volte_ims_md_status_read_looper %d %s count = %d property = %s",
 				     ev.event_type, status, (int)n, prop);
 	}
+}
 
-	ioctl(fd, CCCI_IOC_FREE_RST_LOCK, -1);
-	return 0;
+int main(void)
+{
+	for (;;) {
+		int fd = ccci_mdx_sta_open();
+
+		if (ccci_reset_lock(fd, CCCI_IOC_HOLD_RST_LOCK) < 0) {
+			__android_log_print(ANDROID_LOG_ERROR, VOLTE_MD_STATUS_TAG,
+					    "modem reset lock acquire failed: errno=%d", errno);
+		} else {
+			ccci_read_status(fd);
+			if (ccci_reset_lock(fd, CCCI_IOC_FREE_RST_LOCK) < 0)
+				__android_log_print(ANDROID_LOG_ERROR, VOLTE_MD_STATUS_TAG,
+						    "modem reset lock release failed: errno=%d", errno);
+		}
+		close(fd);
+		sleep(1);
+	}
 }

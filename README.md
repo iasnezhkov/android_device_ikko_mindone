@@ -43,8 +43,8 @@ from their own device, as [docs/BLOBS.md](docs/BLOBS.md) describes.
 <tr><td><b>🌉 HIDL bridges</b><br><sub>2 800 lines</sub></td>
 <td>Five services keeping closed HIDL HALs reachable: four bridge to AIDL as VINTF rises toward
 Android 17, one proxies the camera provider (opt-in, not yet verified on hardware).</td></tr>
-<tr><td><b>🎬 Video (Codec2)</b><br><sub>29 patches</sub></td>
-<td>Hardware decode/encode through the open V4L2 Codec2 HAL — 29 patches to
+<tr><td><b>🎬 Video (Codec2)</b><br><sub>35 patches</sub></td>
+<td>Hardware decode/encode through the open V4L2 Codec2 HAL — 35 patches to
 <code>external_v4l2_codec2</code> adding MediaTek block-format support, on by default.</td></tr>
 <tr><td><b>📡 Modem stack</b><br><sub>11 000 lines</sub></td>
 <td>Open CCCI userspace. <b>Not shipped</b>, except one small status helper — see why below.</td></tr>
@@ -89,9 +89,18 @@ cp <kernel-out>/Image.gz                                 device/ikko/mindone/ker
 cp <kernel-out>/arch/arm64/boot/dts/mediatek/mindone.dtb device/ikko/mindone/kernel/dtb/
 cp <k6set>/*.ko                                          device/ikko/mindone/kernel/modules/
 
-# 5 · build
+# 5 · apply and verify the ordered patches after each repo sync
+bash device/ikko/mindone/apply-patches.sh apply
+bash device/ikko/mindone/apply-patches.sh check
+
+# 6 · build
 source build/envsetup.sh && breakfast mindone && mka bacon
 ```
+
+The patch helper requires Bash 4 or newer, Python 3 and Git. It resolves the synced
+`lineage-23.2` upstream refs, checks every series before changing any project, and
+leaves already applied series unchanged. Conflicting local changes are refused; preserve
+those changes before retrying. `apply --dry-run` previews the operation.
 
 One SurfaceFlinger flag (a persistent on-disk shader cache, which avoids a first-navigation hitch
 after every boot) is turned on by a release configuration that is not part of this repository yet.
@@ -140,6 +149,7 @@ warm cache.
 | 🚧 Unfinished | |
 |---|---|
 | **RPMB** | hardware-backed key storage fails its MAC check; falls back safely, boot unaffected |
+| **Camera colour** | some saved JPEGs show a green cast; the cause remains unresolved. RAW metadata and paired RAW/JPEG lifetime fixes do not establish a fix for JPEG colour |
 | **50 MP capture / 120 fps** | not available with this camera HAL yet — stills top out at 12.5 MP, high-speed video does not reach 120 fps |
 | **10-bit ByteBuffers** | the V4L2 Codec2 HAL's down-conversion to 8-bit works for normal playback; decoding straight into a P010 buffer when an app explicitly asks for one still fails |
 | **60 Hz panel mode** | implemented, held back: the panel does not report its physical size, so a second refresh-rate mode would reach apps as `dpi 0` |

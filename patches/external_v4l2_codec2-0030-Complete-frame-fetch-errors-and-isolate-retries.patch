@@ -1,0 +1,80 @@
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Subject: [PATCH] Complete failed decoder frame requests and isolate retries
+
+Return terminal allocator and fence failures to the pending client instead
+of retaining an unanswered output request. Keep transient backoff state
+inside each pool so independent decoder threads do not share mutable
+retry counters. Reject a successful allocation without a block.
+
+Exact-source host fault injection covers terminal and legacy errors,
+fence completion and failure, retry reset, independent pools, successful
+frames and invalid identities. Device playback remains to be validated.
+
+diff --git a/components/VideoFramePool.cpp b/components/VideoFramePool.cpp
+--- a/components/VideoFramePool.cpp
++++ b/components/VideoFramePool.cpp
+@@ -216,8 +216,6 @@
+     constexpr size_t kFetchRetryDelayInit = 256;   // Initial delay: 256us
+     constexpr size_t kFetchRetryDelayMax = 16384;  // Max delay: 16ms (1 frame at 60fps)
+     constexpr size_t kFenceWaitTimeoutNs = 16000000;  // 16ms (1 frame at 60fps)
+-    static size_t sNumRetries = 0;
+-    static size_t sDelay = kFetchRetryDelayInit;
+ 
+     C2Fence fence;
+     std::shared_ptr<C2GraphicBlock> block;
+@@ -252,6 +250,8 @@
+                                             &block);
+     }
+ 
++    if (err == C2_OK && !block) err = C2_CORRUPTED;
++
+     std::optional<uint32_t> bufferId;
+     if (err == C2_OK) {
+         bufferId = getBufferIdFromGraphicBlock(*mBlockPool, *block);
+@@ -270,23 +270,26 @@
+     }
+ 
+     if (err == C2_TIMED_OUT || err == C2_BLOCKING) {
+-        ALOGV("%s(): fetchGraphicBlock() timeout, waiting %zuus (%zu retry)", __func__, sDelay,
+-              sNumRetries + 1);
++        ALOGV("%s(): fetchGraphicBlock() timeout, waiting %zuus (%zu retry)", __func__, mFetchDelayUs,
++              mFetchRetries + 1);
+         mFetchTaskRunner->PostDelayedTask(
+                 FROM_HERE, ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis),
+-                ::base::TimeDelta::FromMicroseconds(sDelay));
+-
+-        sDelay = std::min(sDelay * 4, kFetchRetryDelayMax);  // Exponential backoff
+-        sNumRetries++;
++                ::base::TimeDelta::FromMicroseconds(mFetchDelayUs));
++
++        mFetchDelayUs = std::min(mFetchDelayUs * 4, kFetchRetryDelayMax);  // Exponential backoff
++        mFetchRetries++;
+         return;
+     }
+ 
+     // Reset to the default value.
+-    sNumRetries = 0;
+-    sDelay = kFetchRetryDelayInit;
++    mFetchRetries = 0;
++    mFetchDelayUs = kFetchRetryDelayInit;
+ 
+     if (err != C2_OK) {
+         ALOGE("%s(): Failed to fetch block, err=%d", __func__, err);
++        mClientTaskRunner->PostTask(
++                FROM_HERE, ::base::BindOnce(&VideoFramePool::onVideoFrameReady, mClientWeakThis,
++                                          std::optional<FrameWithBlockId>{}));
+         return;
+     }
+ 
+diff --git a/components/include/v4l2_codec2/components/VideoFramePool.h b/components/include/v4l2_codec2/components/VideoFramePool.h
+--- a/components/include/v4l2_codec2/components/VideoFramePool.h
++++ b/components/include/v4l2_codec2/components/VideoFramePool.h
+@@ -79,6 +79,8 @@
+     const C2MemoryUsage mMemoryUsage;
+ 
+     GetVideoFrameCB mOutputCb;
++    size_t mFetchRetries = 0;
++    size_t mFetchDelayUs = 256;
+ 
+     scoped_refptr<::base::SequencedTaskRunner> mClientTaskRunner;
+     ::base::Thread mFetchThread{"VideoFramePoolFetchThread"};

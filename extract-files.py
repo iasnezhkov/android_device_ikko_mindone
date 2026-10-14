@@ -8,6 +8,7 @@ from audio_param_tuning import (
 from camera_metastore_fixup import fix_imx766_stream_table
 from camerahalserver_instance_fixup import fix_provider_instance_name
 from halsensor_poweron_fixup import drop_poweron_sleep
+from rxfilter_firmware import install_firmware
 
 from extract_utils.fixups_blob import (
     blob_fixup,
@@ -56,12 +57,20 @@ def fixup_halsensor_poweron(ctx, file, file_path, *args, **kwargs):
     drop_poweron_sleep(file_path)
 
 
+def fixup_rxfilter_firmware(ctx, file, file_path, *args, **kwargs):
+    install_firmware(file_path)
+
+
 def fixup_speech_vol_audio_param(ctx, file, file_path, *args, **kwargs):
     """Back off the handset uplink gain in the device's own volume tables."""
     tune_speech_vol_audio_param(file_path)
 
 
 blob_fixups: blob_fixups_user_type = {
+    (
+        'vendor/firmware/WIFI_RAM_CODE_soc2_2_1d_1.bin',
+    ): blob_fixup()
+        .call(fixup_rxfilter_firmware, need_tmp_dir=False),
     # The speech tuning tables are MediaTek's and are not kept in this repository. They are
     # extracted from the device and then adjusted in place: see audio_param_tuning.py for the
     # three values that are ours and the reasoning behind each.

@@ -1,0 +1,320 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Date: Tue, 13 Oct 2026 12:40:00 +0300
+Subject: [PATCH] Describe actual planar output layout to the MDP converter
+
+diff --git a/common/include/v4l2_codec2/common/ImageConverter.h b/common/include/v4l2_codec2/common/ImageConverter.h
+--- a/common/include/v4l2_codec2/common/ImageConverter.h
++++ b/common/include/v4l2_codec2/common/ImageConverter.h
+@@ -27,2 +27,7 @@
+     size_t sizeUV = 0;
++    size_t strideV = 0;
++    size_t offsetV = 0;
++    size_t sizeV = 0;
++    size_t dmaBufSize = 0;
++    uint32_t chromaStep = 2;
+ };
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -9,2 +9,5 @@
+
++#include <algorithm>
++#include <limits>
++#include <sys/stat.h>
+ #include <mutex>
+@@ -19,24 +22,68 @@
+
+-constexpr int kNV12PlaneGeometryCacheSlots = 4;
+-
+-struct NV12PlaneGeometry {
++constexpr int kNV12PlaneGeometryCacheSlots = 32;
++
++struct NV12PlaneGeometry : NV12WritableImage {
+     bool valid = false;
+-    size_t strideY = 0;
+-    size_t offsetY = 0;
+-    size_t sizeY = 0;
+-    size_t strideUV = 0;
+-    size_t offsetUV = 0;
+-    size_t sizeUV = 0;
+ };
+
++bool readNV12PlaneGeometry(const C2GraphicView& view, size_t allocationSize,
++                          int width, int height, NV12PlaneGeometry* geometry) {
++    if (view.error() != C2_OK || width <= 0 || height <= 0 ||
++        static_cast<uint32_t>(width) > view.crop().width ||
++        static_cast<uint32_t>(height) > view.crop().height) {
++        return false;
++    }
++    const C2PlanarLayout layout = view.layout();
++    if (!allocationSize ||
++        layout.type != C2PlanarLayout::TYPE_YUV || layout.numPlanes != 3 ||
++        layout.planes[0].offset != 0 ||
++        view.crop().left != 0 || view.crop().top != 0) {
++        return false;
++    }
++    const uint8_t* const* data = view.data();
++    if (!data) return false;
++    uintptr_t addresses[3];
++    for (uint32_t i = 0; i < 3; ++i) {
++        const auto& plane = layout.planes[i];
++        const uint32_t sampling = i == C2PlanarLayout::PLANE_Y ? 1 : 2;
++        if (!data[i] || plane.rowInc <= 0 || plane.bitDepth != 8 ||
++            plane.allocatedDepth != 8 || plane.rightShift != 0 ||
++            plane.colSampling != sampling || plane.rowSampling != sampling ||
++            (sampling == 1 ? plane.colInc != 1 :
++                            (plane.colInc != 1 && plane.colInc != 2))) {
++            return false;
++        }
++        addresses[i] = reinterpret_cast<uintptr_t>(data[i]);
++    }
++    if (layout.planes[1].colInc != layout.planes[2].colInc ||
++        addresses[1] < addresses[0] || addresses[2] < addresses[0] ||
++        addresses[1] - addresses[0] >= allocationSize ||
++        addresses[2] - addresses[0] >= allocationSize) {
++        return false;
++    }
++    geometry->strideY = layout.planes[0].rowInc;
++    geometry->strideUV = layout.planes[1].rowInc;
++    geometry->strideV = layout.planes[2].rowInc;
++    geometry->offsetUV = addresses[1] - addresses[0];
++    geometry->offsetV = addresses[2] - addresses[0];
++    geometry->sizeY = std::min(geometry->offsetUV, geometry->offsetV);
++    geometry->sizeUV = allocationSize - geometry->offsetUV;
++    geometry->sizeV = allocationSize - geometry->offsetV;
++    geometry->dmaBufSize = allocationSize;
++    geometry->chromaStep = layout.planes[1].colInc;
++    geometry->valid = true;
++    return true;
++}
++
+ struct NV12PlaneGeometryKey {
+-    int width = 0;
+-    int height = 0;
+-    uint32_t format = 0;
++    dev_t device = 0;
++    ino_t inode = 0;
++    off_t size = 0;
++    uint32_t width = 0, height = 0, format = 0, stride = 0;
+     uint64_t usage = 0;
+-    uint32_t stride = 0;
+
+     bool operator==(const NV12PlaneGeometryKey& o) const {
+-        return width == o.width && height == o.height && format == o.format &&
+-               usage == o.usage && stride == o.stride;
++        return device == o.device && inode == o.inode && size == o.size &&
++               width == o.width && height == o.height && format == o.format &&
++               stride == o.stride && usage == o.usage;
+     }
+@@ -53,3 +100,4 @@
+
+-bool lookupNV12PlaneGeometry(const NV12PlaneGeometryKey& key, NV12PlaneGeometry* out) {
++bool lookupNV12PlaneGeometry(const NV12PlaneGeometryKey& key,
++                            NV12PlaneGeometry* out) {
+     std::lock_guard<std::mutex> lock(g_nv12PlaneGeometryCacheMutex);
+@@ -64,3 +112,4 @@
+
+-void storeNV12PlaneGeometry(const NV12PlaneGeometryKey& key, const NV12PlaneGeometry& geometry) {
++void storeNV12PlaneGeometry(const NV12PlaneGeometryKey& key,
++                           const NV12PlaneGeometry& geometry) {
+     std::lock_guard<std::mutex> lock(g_nv12PlaneGeometryCacheMutex);
+@@ -129,34 +178,25 @@
+         bool queried = false;
+-        if (handle && handle->numFds > 1) {
++        struct stat info = {};
++        if (handle && handle->numFds > 1 && width > 0 && height > 0 &&
++            mGraphicBlock->crop().left == 0 && mGraphicBlock->crop().top == 0 &&
++            static_cast<uint32_t>(width) <= mGraphicBlock->crop().width &&
++            static_cast<uint32_t>(height) <= mGraphicBlock->crop().height &&
++            fstat(handle->data[1], &info) == 0 && info.st_size > 0 &&
++            static_cast<uint64_t>(info.st_size) <= std::numeric_limits<size_t>::max()) {
+             NV12PlaneGeometry geometry;
+             NV12PlaneGeometryKey key;
+-            uint32_t allocWidth = 0, allocHeight = 0, generation = 0, igbpSlot = 0;
++            key.device = info.st_dev;
++            key.inode = info.st_ino;
++            key.size = info.st_size;
++            uint32_t generation = 0, igbpSlot = 0;
+             uint64_t igbpId = 0;
+-            _UnwrapNativeCodec2GrallocMetadata(handle, &allocWidth, &allocHeight, &key.format,
++            _UnwrapNativeCodec2GrallocMetadata(handle, &key.width, &key.height, &key.format,
+                                                &key.usage, &key.stride, &generation, &igbpId,
+                                                &igbpSlot);
+-            key.width = static_cast<int>(allocWidth);
+-            key.height = static_cast<int>(allocHeight);
+-            const bool keyed = key.stride != 0;
+-            if (!keyed || !lookupNV12PlaneGeometry(key, &geometry)) {
++            if (!lookupNV12PlaneGeometry(key, &geometry)) {
+                 C2Acquirable<C2GraphicView> writable = mGraphicBlock->map();
+                 C2GraphicView view = writable.get();
+-                if (view.error() == C2_OK && view.layout().numPlanes >= 2) {
+-                    const C2PlanarLayout layout = view.layout();
+-                    uint8_t* const* data = view.data();
+-                    geometry.strideY =
+-                            static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
+-                    geometry.strideUV =
+-                            static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
+-                    geometry.offsetY = 0;
+-                    geometry.offsetUV = static_cast<size_t>(data[C2PlanarLayout::PLANE_U] -
+-                                                            data[C2PlanarLayout::PLANE_Y]);
+-                    geometry.sizeY = geometry.offsetUV;
+-                    geometry.valid = true;
+-                    if (keyed) {
+-                        storeNV12PlaneGeometry(key, geometry);
+-                    }
+-                } else {
+-                    ALOGE("Failed to map the graphic block for the zero-copy path, err=%d",
+-                          view.error());
++                if (readNV12PlaneGeometry(view, static_cast<size_t>(info.st_size),
++                                          width, height, &geometry)) {
++                    storeNV12PlaneGeometry(key, geometry);
+                 }
+@@ -164,10 +204,4 @@
+             if (geometry.valid) {
+-                NV12WritableImage dst;
++                NV12WritableImage dst = geometry;
+                 dst.dmaBufFd = handle->data[1];
+-                dst.strideY = geometry.strideY;
+-                dst.offsetY = geometry.offsetY;
+-                dst.sizeY = geometry.sizeY;
+-                dst.strideUV = geometry.strideUV;
+-                dst.offsetUV = geometry.offsetUV;
+-                dst.sizeUV = geometry.sizeUV;
+                 queried = true;
+diff --git a/v4l2/MdpImageConverter.cpp b/v4l2/MdpImageConverter.cpp
+--- a/v4l2/MdpImageConverter.cpp
++++ b/v4l2/MdpImageConverter.cpp
+@@ -10,2 +10,4 @@
+
++#include <algorithm>
++#include <limits>
+ #include <memory>
+@@ -17,3 +19,6 @@
+     DP_COLOR_420_BLKP = 13434956,
+-    DP_COLOR_NV12 = 4982860,
++    DP_COLOR_NV12 = 0x4c084c,
++    DP_COLOR_NV21 = 0x4c086c,
++    DP_COLOR_I420 = 0x6c0848,
++    DP_COLOR_YV12 = 0x6c0868,
+ };
+@@ -23,2 +28,5 @@
+ };
++
++enum DP_PROFILE_ENUM { DP_PROFILE_BT601 = 0 };
++enum DpSecure { DP_SECURE_NONE = 0 };
+
+@@ -33,4 +41,5 @@
+     int setSrcBuffer(int fd, unsigned int* planeSizes, unsigned int planeCount);
+-    int setDstConfig(int width, int height, DP_COLOR_ENUM color, DpInterlaceFormat interlace,
+-                      DpRect* roi);
++    int setDstConfig(int width, int height, int yPitch, int uvPitch, DP_COLOR_ENUM color,
++                     DP_PROFILE_ENUM profile, DpInterlaceFormat interlace, DpRect* roi,
++                     DpSecure secure, bool dither);
+     int setDstBuffer(int fd, unsigned int* planeSizes, unsigned int planeCount);
+@@ -89,15 +98,54 @@
+
+-    unsigned int srcPlaneSizes[2];
+-    unsigned int dstPlaneSizes[2];
++    if (!src.y || !src.uv || src.strideY > UINT32_MAX || src.strideUV > UINT32_MAX) {
++        return false;
++    }
++    const uint64_t yBytes = static_cast<uint64_t>(src.strideY) * height;
++    const uint64_t uvBytes = static_cast<uint64_t>(src.strideUV) * (height / 2);
++    if (width % 16 || height % 32 || src.strideY != static_cast<size_t>(width) ||
++        src.strideUV != src.strideY || yBytes > UINT32_MAX || uvBytes > UINT32_MAX ||
++        yBytes + uvBytes > src.dmaBufSize ||
++        reinterpret_cast<uintptr_t>(src.uv) < reinterpret_cast<uintptr_t>(src.y) ||
++        reinterpret_cast<uintptr_t>(src.uv) - reinterpret_cast<uintptr_t>(src.y) != yBytes ||
++        dst.offsetY != 0 ||
++        dst.strideY < static_cast<size_t>(width) || dst.strideY > INT32_MAX ||
++        dst.strideUV > INT32_MAX || dst.strideV != dst.strideUV ||
++        (dst.chromaStep != 1 && dst.chromaStep != 2)) {
++        return false;
++    }
++    const uint64_t chromaWidth = (static_cast<uint64_t>(width) + 1) / 2;
++    const uint64_t chromaRows = (static_cast<uint64_t>(height) + 1) / 2;
++    const uint64_t dstYBytes = static_cast<uint64_t>(dst.strideY) * height;
++    const uint64_t dstChromaBytes = static_cast<uint64_t>(dst.strideUV) * chromaRows;
++    const size_t first = std::min(dst.offsetUV, dst.offsetV);
++    const size_t second = std::max(dst.offsetUV, dst.offsetV);
++    if (dst.strideUV < chromaWidth * dst.chromaStep || first < dstYBytes ||
++        first > UINT32_MAX || second >= dst.dmaBufSize ||
++        dstYBytes > dst.sizeY || dstChromaBytes > UINT32_MAX) {
++        return false;
++    }
++    unsigned int srcPlaneSizes[2] = {static_cast<unsigned int>(yBytes),
++                                     static_cast<unsigned int>(uvBytes)};
++    unsigned int dstPlaneSizes[3] = {static_cast<unsigned int>(first), 0, 0};
++    unsigned int dstPlaneCount;
++    DP_COLOR_ENUM dstColor;
++    if (dst.chromaStep == 2) {
++        if (second - first != 1 || dstChromaBytes > dst.dmaBufSize - first ||
++            dstChromaBytes > (dst.offsetUV == first ? dst.sizeUV : dst.sizeV)) {
++            return false;
++        }
++        dstPlaneCount = 2;
++        dstPlaneSizes[1] = static_cast<unsigned int>(dstChromaBytes);
++        dstColor = dst.offsetUV == first ? DP_COLOR_NV12 : DP_COLOR_NV21;
++    } else {
++        if (second - first < dstChromaBytes || second - first > UINT32_MAX ||
++            dstChromaBytes > dst.dmaBufSize - second ||
++            dstChromaBytes > dst.sizeUV || dstChromaBytes > dst.sizeV) {
++            return false;
++        }
++        dstPlaneCount = 3;
++        dstPlaneSizes[1] = static_cast<unsigned int>(second - first);
++        dstPlaneSizes[2] = static_cast<unsigned int>(dstChromaBytes);
++        dstColor = dst.offsetUV == first ? DP_COLOR_I420 : DP_COLOR_YV12;
++    }
+     int rc;
+-
+-    srcPlaneSizes[0] = static_cast<unsigned int>(width) * static_cast<unsigned int>(height);
+-    srcPlaneSizes[1] = srcPlaneSizes[0] / 2;
+-
+-    const size_t uvOffset =
+-            dst.offsetUV != 0 ? dst.offsetUV : dst.strideY * static_cast<size_t>(height);
+-    const size_t uvSize =
+-            dst.sizeUV != 0 ? dst.sizeUV : dst.strideUV * static_cast<size_t>((height + 1) / 2);
+-    dstPlaneSizes[0] = static_cast<unsigned int>(uvOffset);
+-    dstPlaneSizes[1] = static_cast<unsigned int>(uvSize);
+
+@@ -110,2 +158,7 @@
+     cfg.dstPlaneSize1 = dstPlaneSizes[1];
++    cfg.dstPlaneSize2 = dstPlaneSizes[2];
++    cfg.dstPlaneCount = dstPlaneCount;
++    cfg.dstColor = dstColor;
++    cfg.dstStrideY = dst.strideY;
++    cfg.dstStrideUV = dst.strideUV;
+
+@@ -128,3 +181,5 @@
+     }
+-    rc = stream->setDstConfig(width, height, DP_COLOR_NV12, DP_INTERLACE_NONE, nullptr);
++    rc = stream->setDstConfig(width, height, static_cast<int>(dst.strideY),
++                              static_cast<int>(dst.strideUV), dstColor, DP_PROFILE_BT601,
++                              DP_INTERLACE_NONE, nullptr, DP_SECURE_NONE, true);
+     if (rc != 0) {
+@@ -133,3 +188,3 @@
+     }
+-    rc = stream->setDstBuffer(dst.dmaBufFd, dstPlaneSizes, 2);
++    rc = stream->setDstBuffer(dst.dmaBufFd, dstPlaneSizes, dstPlaneCount);
+     if (rc != 0) {
+diff --git a/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h b/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
+--- a/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
++++ b/v4l2/include/v4l2_codec2/v4l2/MdpReplay.h
+@@ -208,2 +208,7 @@
+     uint32_t dstPlaneSize1 = 0;
++    uint32_t dstPlaneSize2 = 0;
++    uint32_t dstPlaneCount = 0;
++    uint32_t dstColor = 0;
++    uint32_t dstStrideY = 0;
++    uint32_t dstStrideUV = 0;
+
+@@ -212,3 +217,6 @@
+                srcPlaneSize0 == other.srcPlaneSize0 && srcPlaneSize1 == other.srcPlaneSize1 &&
+-               dstPlaneSize0 == other.dstPlaneSize0 && dstPlaneSize1 == other.dstPlaneSize1;
++               dstPlaneSize0 == other.dstPlaneSize0 && dstPlaneSize1 == other.dstPlaneSize1 &&
++               dstPlaneSize2 == other.dstPlaneSize2 && dstPlaneCount == other.dstPlaneCount &&
++               dstColor == other.dstColor && dstStrideY == other.dstStrideY &&
++               dstStrideUV == other.dstStrideUV;
+     }

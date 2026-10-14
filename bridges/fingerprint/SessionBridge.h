@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
+#include "RemovalBatch.h"
 #include <aidl/android/hardware/biometrics/common/BnCancellationSignal.h>
 #include <aidl/android/hardware/biometrics/fingerprint/BnSession.h>
 #include <aidl/android/hardware/biometrics/fingerprint/ISessionCallback.h>
@@ -34,14 +35,19 @@ class HidlCallback : public hfp::IBiometricsFingerprintClientCallback {
     // the stock HAL (a straggler already in flight, or a stale binder that has not yet noticed
     // its peer is gone) are dropped instead of being delivered to a session the framework already
     // believes is closed/dead.
-    void deactivate() { active_.store(false, std::memory_order_relaxed); }
+    void deactivate() {
+        active_.store(false, std::memory_order_relaxed);
+        removal_.cancel();
+    }
+    bool removeEnrollments(const std::vector<int32_t>& ids,
+                           ::android::sp<hfp::IBiometricsFingerprint> hidl, uint32_t userId);
 
   private:
     std::shared_ptr<fp::ISessionCallback> cb_;
     std::atomic<bool> active_{true};
     std::mutex lock_;
     std::vector<int32_t> enumerated_;
-    std::vector<int32_t> removed_;
+    RemovalBatch removal_;
 };
 
 class CancellationSignal : public ::aidl::android::hardware::biometrics::common::BnCancellationSignal {

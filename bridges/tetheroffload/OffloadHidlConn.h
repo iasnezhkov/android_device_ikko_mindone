@@ -38,9 +38,12 @@ class OffloadHidlConn {
 
   private:
     friend class OffloadDeathRecipient;
-    void onServiceDied();
+    void onServiceDied(uint64_t generation);
 
     mutable std::mutex mLock;
+    std::mutex mConnectLock;
+    std::mutex mEventLock;
+    uint64_t mGeneration = 0;
     ::android::sp<hcfg::IOffloadConfig> mConfig;
     ::android::sp<hctl0::IOffloadControl> mControl;
     ::android::sp<hctl1::IOffloadControl> mControl11;

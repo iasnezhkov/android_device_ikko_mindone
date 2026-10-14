@@ -134,6 +134,7 @@ class Sensors : public BnSensors {
     void stopWakeLockThreadLocked();
     void readWakeLockFMQ();
     void updateWakeLock(int32_t eventsWritten, int32_t eventsHandled);
+    void updateWakeLockLocked(int32_t eventsWritten, int32_t eventsHandled);
 };
 
 }  // namespace sensors

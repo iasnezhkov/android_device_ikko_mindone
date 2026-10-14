@@ -1,0 +1,1177 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Date: Tue, 13 Oct 2026 23:05:00 +0300
+Subject: [PATCH] Complete RAW and JPEG capture and save lifetimes separately
+
+diff --git a/app/libs/Android.bp b/app/libs/Android.bp
+--- a/app/libs/Android.bp
++++ b/app/libs/Android.bp
+@@ -642,7 +642,12 @@
+
+ android_library {
+     name: "Aperture_androidx.camera_camera-core",
+-    srcs: ["mindone/DngImage2Disk.java"],
++    srcs: [
++        "mindone/DngImage2Disk.java",
++        "mindone/ProcessingNode.java",
++        "mindone/CaptureNode.java",
++        "mindone/RequestWithCallback.java",
++    ],
+     manifest: "mindone/AndroidManifest.xml",
+     resource_dirs: [],
+     licenses: ["Aperture_camera-core-source-license"],
+diff --git a/app/libs/mindone/NOTICE b/app/libs/mindone/NOTICE
+--- a/app/libs/mindone/NOTICE
++++ b/app/libs/mindone/NOTICE
+@@ -1,6 +1,11 @@
+ DngImage2Disk.java is derived from AndroidX Camera 1.7.0-alpha03.
+ Modified to use per-image capture metadata and close the DNG creator.
+
++CaptureNode.java, ProcessingNode.java and RequestWithCallback.java are derived
++from AndroidX Camera 1.7.0-alpha03 and modified to separate frame arrival from
++processing completion, retain image reader ownership and reject stale callbacks.
++
++Copyright 2022 The Android Open Source Project
+ Copyright 2024 The Android Open Source Project
+
+
+diff --git a/app/libs/mindone/filter_camera_core.py b/app/libs/mindone/filter_camera_core.py
+--- a/app/libs/mindone/filter_camera_core.py
++++ b/app/libs/mindone/filter_camera_core.py
+@@ -7,8 +7,17 @@
+
+ EXPECTED_SHA256 = "7350bb3f9e9b786905d8d2d24ab38a4f6b9c749c95033610da1cca6f60a2115c"
+ EXCLUDED = {
++    "androidx/camera/core/imagecapture/CaptureNode$1.class",
++    "androidx/camera/core/imagecapture/CaptureNode$2.class",
++    "androidx/camera/core/imagecapture/CaptureNode$In$1.class",
++    "androidx/camera/core/imagecapture/CaptureNode$In.class",
++    "androidx/camera/core/imagecapture/CaptureNode.class",
++    "androidx/camera/core/imagecapture/DngImage2Disk$In.class",
+     "androidx/camera/core/imagecapture/DngImage2Disk.class",
+-    "androidx/camera/core/imagecapture/DngImage2Disk$In.class",
++    "androidx/camera/core/imagecapture/ProcessingNode$In.class",
++    "androidx/camera/core/imagecapture/ProcessingNode$InputPacket.class",
++    "androidx/camera/core/imagecapture/ProcessingNode.class",
++    "androidx/camera/core/imagecapture/RequestWithCallback.class",
+ }
+
+
+diff --git a/app/libs/mindone/CaptureNode.java b/app/libs/mindone/CaptureNode.java
+new file mode 100644
+--- /dev/null
++++ b/app/libs/mindone/CaptureNode.java
+@@ -0,0 +1,481 @@
++package androidx.camera.core.imagecapture;
++
++import static android.graphics.ImageFormat.JPEG;
++import static android.graphics.ImageFormat.RAW_SENSOR;
++
++import static androidx.camera.core.ImageCapture.ERROR_CAPTURE_FAILED;
++import static androidx.camera.core.impl.utils.Threads.checkMainThread;
++import static androidx.camera.core.impl.CaptureConfig.CAPTURE_CONFIG_ID_TAG_KEY;
++import static androidx.camera.core.impl.utils.executor.CameraXExecutors.mainThreadExecutor;
++import static androidx.core.util.Preconditions.checkState;
++
++import static java.util.Objects.requireNonNull;
++
++import android.graphics.ImageFormat;
++import android.media.ImageReader;
++import android.util.Size;
++import android.view.Surface;
++
++import androidx.camera.core.ForwardingImageProxy;
++import androidx.camera.core.ImageCaptureException;
++import androidx.camera.core.ImageProxy;
++import androidx.camera.core.ImageReaderProxyProvider;
++import androidx.camera.core.ImageReaderProxys;
++import androidx.camera.core.Logger;
++import androidx.camera.core.MetadataImageReader;
++import androidx.camera.core.SafeCloseImageReaderProxy;
++import androidx.camera.core.impl.CameraCaptureCallback;
++import androidx.camera.core.impl.CameraCaptureCallbacks;
++import androidx.camera.core.impl.DeferrableSurface;
++import androidx.camera.core.impl.ImageReaderProxy;
++import androidx.camera.core.impl.ImmediateSurface;
++import androidx.camera.core.impl.TagBundle;
++import androidx.camera.core.impl.utils.executor.CameraXExecutors;
++import androidx.camera.core.impl.utils.futures.FutureCallback;
++import androidx.camera.core.impl.utils.futures.Futures;
++import androidx.camera.core.processing.Edge;
++import androidx.camera.core.processing.Node;
++import androidx.core.util.Consumer;
++
++import java.util.List;
++import java.util.HashSet;
++import java.util.Set;
++
++class CaptureNode implements Node<CaptureNode.In, ProcessingNode.In> {
++
++    private static final String TAG = "CaptureNode";
++
++    static final int MAX_IMAGES = 4;
++
++    ProcessingRequest mCurrentRequest = null;
++    private final Set<Integer> mReceivedFormats = new HashSet<>();
++
++    SafeCloseImageReaderProxy mSafeCloseImageReaderProxy;
++
++    SafeCloseImageReaderProxy mSecondarySafeCloseImageReaderProxy;
++
++    SafeCloseImageReaderProxy mSafeCloseImageReaderForPostview;
++
++    private ProcessingNode.In  mOutputEdge;
++    private In mInputEdge;
++    private NoMetadataImageReader mNoMetadataImageReader = null;
++
++    @Override
++    public ProcessingNode.In transform(In inputEdge) {
++        checkState(mInputEdge == null && mSafeCloseImageReaderProxy == null,
++                "CaptureNode does not support recreation yet.");
++        mInputEdge = inputEdge;
++        Size size = inputEdge.getSize();
++        int format = inputEdge.getInputFormat();
++
++        Consumer<ProcessingRequest> requestConsumer;
++        ImageReaderProxy wrappedImageReader;
++        ImageReaderProxy secondaryWrappedImageReader = null;
++        boolean hasMetadata = !inputEdge.isVirtualCamera();
++        CameraCaptureCallback progressCallback = new CameraCaptureCallback() {
++            @Override
++            public void onCaptureStarted(int captureConfigId) {
++                mainThreadExecutor().execute(() -> {
++                    if (mCurrentRequest != null) {
++                        mCurrentRequest.onCaptureStarted();
++                    }
++                });
++            }
++
++            @Override
++            public void onCaptureProcessProgressed(int captureConfigId, int progress) {
++                mainThreadExecutor().execute(() -> {
++                    if (mCurrentRequest != null) {
++                        mCurrentRequest.onCaptureProcessProgressed(progress);
++                    }
++                });
++            }
++        };
++
++        CameraCaptureCallback cameraCaptureCallbacks;
++        CameraCaptureCallback secondaryCameraCaptureCallback = null;
++        boolean isSimultaneousCaptureEnabled = inputEdge.getOutputFormats().size() > 1;
++        if (hasMetadata && inputEdge.getImageReaderProxyProvider() == null) {
++            if (isSimultaneousCaptureEnabled) {
++                MetadataImageReader metadataImageReader = new MetadataImageReader(size.getWidth(),
++                        size.getHeight(), JPEG, MAX_IMAGES);
++                cameraCaptureCallbacks =
++                        CameraCaptureCallbacks.createComboCallback(
++                                progressCallback, metadataImageReader.getCameraCaptureCallback());
++                wrappedImageReader = metadataImageReader;
++
++                MetadataImageReader secondaryMetadataImageReader = new MetadataImageReader(
++                        size.getWidth(), size.getHeight(), RAW_SENSOR, MAX_IMAGES);
++                secondaryCameraCaptureCallback =
++                        CameraCaptureCallbacks.createComboCallback(
++                                progressCallback,
++                                secondaryMetadataImageReader.getCameraCaptureCallback());
++                secondaryWrappedImageReader = secondaryMetadataImageReader;
++            } else {
++
++                MetadataImageReader metadataImageReader = new MetadataImageReader(size.getWidth(),
++                        size.getHeight(), format, MAX_IMAGES);
++                cameraCaptureCallbacks =
++                        CameraCaptureCallbacks.createComboCallback(
++                                progressCallback, metadataImageReader.getCameraCaptureCallback());
++                wrappedImageReader = metadataImageReader;
++            }
++
++            requestConsumer = this::onRequestAvailable;
++        } else {
++            cameraCaptureCallbacks = progressCallback;
++
++            mNoMetadataImageReader = new NoMetadataImageReader(
++                    createImageReaderProxy(inputEdge.getImageReaderProxyProvider(),
++                            size.getWidth(), size.getHeight(), format));
++            wrappedImageReader = mNoMetadataImageReader;
++
++            requestConsumer = request -> {
++                onRequestAvailable(request);
++                mNoMetadataImageReader.acceptProcessingRequest(request);
++            };
++        }
++        inputEdge.setCameraCaptureCallback(cameraCaptureCallbacks);
++        if (isSimultaneousCaptureEnabled && secondaryCameraCaptureCallback != null) {
++            inputEdge.setSecondaryCameraCaptureCallback(secondaryCameraCaptureCallback);
++        }
++        inputEdge.setSurface(requireNonNull(wrappedImageReader.getSurface()));
++        mSafeCloseImageReaderProxy = new SafeCloseImageReaderProxy(wrappedImageReader);
++
++        setOnImageAvailableListener(mSafeCloseImageReaderProxy);
++
++        PostviewSettings postviewSettings = inputEdge.getPostviewSettings();
++        if (postviewSettings != null) {
++            ImageReaderProxy postviewImageReader =
++                    createImageReaderProxy(inputEdge.getImageReaderProxyProvider(),
++                            postviewSettings.getResolution().getWidth(),
++                            postviewSettings.getResolution().getHeight(),
++                            postviewSettings.getInputFormat());
++            mSafeCloseImageReaderForPostview = new SafeCloseImageReaderProxy(postviewImageReader);
++            mSafeCloseImageReaderForPostview.setOnImageAvailableListener(imageReader -> {
++                try {
++                    ImageProxy image = imageReader.acquireLatestImage();
++                    if (image != null) {
++                        propagatePostviewImage(image);
++                    }
++                } catch (IllegalStateException e) {
++                    Logger.e(TAG, "Failed to acquire latest image of postview", e);
++                }
++            }, mainThreadExecutor());
++
++            inputEdge.setPostviewSurface(postviewImageReader.getSurface(),
++                    postviewSettings.getResolution(), postviewSettings.getInputFormat());
++        }
++
++        if (isSimultaneousCaptureEnabled && secondaryWrappedImageReader != null) {
++            inputEdge.setSecondarySurface(secondaryWrappedImageReader.getSurface());
++            mSecondarySafeCloseImageReaderProxy = new SafeCloseImageReaderProxy(
++                    secondaryWrappedImageReader);
++            setOnImageAvailableListener(mSecondarySafeCloseImageReaderProxy);
++        }
++
++        inputEdge.getRequestEdge().setListener(requestConsumer);
++        inputEdge.getErrorEdge().setListener(this::sendCaptureError);
++
++        mOutputEdge = ProcessingNode.In.of(
++                inputEdge.getInputFormat(),
++                inputEdge.getOutputFormats());
++
++        return mOutputEdge;
++    }
++
++    private static ImageReaderProxy createImageReaderProxy(
++            ImageReaderProxyProvider imageReaderProxyProvider, int width, int height,
++            int format) {
++        if (imageReaderProxyProvider != null) {
++            return imageReaderProxyProvider.newInstance(width, height, format, MAX_IMAGES, 0);
++        } else {
++            return ImageReaderProxys.createIsolatedReader(width, height, format, MAX_IMAGES);
++        }
++    }
++
++    private void setOnImageAvailableListener(ImageReaderProxy imageReaderProxy) {
++        imageReaderProxy.setOnImageAvailableListener(imageReader -> {
++            try {
++                ImageProxy image = imageReader.acquireLatestImage();
++
++                Logger.d(TAG, "OnImageAvailableListener: mCurrentRequest ID = "
++                        + (mCurrentRequest == null ? null : mCurrentRequest.getRequestId())
++                        + ", image.isNull = " + (image == null));
++
++                if (image != null) {
++                    onImageProxyAvailable(image);
++                } else {
++                    if (mCurrentRequest != null) {
++                        sendCaptureError(
++                                TakePictureManager.CaptureError.of(
++                                        mCurrentRequest.getRequestId(),
++                                        new ImageCaptureException(ERROR_CAPTURE_FAILED,
++                                                "Failed to acquire latest image", null)));
++                    }
++                }
++            } catch (IllegalStateException e) {
++                if (mCurrentRequest != null) {
++                    sendCaptureError(
++                            TakePictureManager.CaptureError.of(mCurrentRequest.getRequestId(),
++                                    new ImageCaptureException(
++                                            ERROR_CAPTURE_FAILED,
++                                            "Failed to acquire latest image", e)));
++                }
++            }
++        }, mainThreadExecutor());
++    }
++
++    void onImageProxyAvailable(ImageProxy imageProxy) {
++        checkMainThread();
++        if (mCurrentRequest == null) {
++
++            Logger.w(TAG, "Discarding ImageProxy which was inadvertently acquired: " + imageProxy);
++            imageProxy.close();
++        } else {
++
++            TagBundle tagBundle = imageProxy.getImageInfo().getTagBundle();
++            Integer stageId = (Integer) tagBundle.getTag(mCurrentRequest.getTagBundleKey());
++            if (stageId == null || !mCurrentRequest.getStageIds().contains(stageId)
++                    || (mNoMetadataImageReader == null && !Integer.valueOf(
++                            mCurrentRequest.getRequestId()).equals(
++                                    tagBundle.getTag(CAPTURE_CONFIG_ID_TAG_KEY)))) {
++                Logger.w(TAG, "Discarding ImageProxy which was acquired for another request"
++                        + ", mCurrentRequest id = " + mCurrentRequest.getRequestId()
++                        + ", ImageProxy tagBundle keys = " + tagBundle.listKeys());
++                imageProxy.close();
++                return;
++            }
++
++            matchAndPropagateImage(imageProxy);
++        }
++    }
++
++    private void matchAndPropagateImage(ImageProxy imageProxy) {
++        checkMainThread();
++        ProcessingRequest request = requireNonNull(mCurrentRequest);
++        boolean simultaneous = mInputEdge != null && mInputEdge.getOutputFormats().size() > 1;
++        if (simultaneous && (!mInputEdge.getOutputFormats().contains(imageProxy.getFormat())
++                || !mReceivedFormats.add(imageProxy.getFormat()))) {
++            imageProxy.close();
++            return;
++        }
++        requireNonNull(mOutputEdge).getEdge().accept(
++                ProcessingNode.InputPacket.of(request, imageProxy));
++        if (!simultaneous || mReceivedFormats.containsAll(mInputEdge.getOutputFormats())) {
++            mCurrentRequest = null;
++            request.onImageCaptured();
++        }
++    }
++
++    private void propagatePostviewImage(ImageProxy imageProxy) {
++        if (mCurrentRequest == null) {
++            Logger.w(TAG, "Postview image is closed due to request completed or aborted");
++            imageProxy.close();
++            return;
++        }
++        requireNonNull(mOutputEdge).getPostviewEdge().accept(
++                ProcessingNode.InputPacket.of(mCurrentRequest, imageProxy));
++    }
++
++    void onRequestAvailable(ProcessingRequest request) {
++        checkMainThread();
++        checkState(request.getStageIds().size() == 1,
++                "only one capture stage is supported.");
++
++        checkState(getCapacity() > 0,
++                "Too many acquire images. Close image to be able to process next.");
++
++        mCurrentRequest = request;
++        mReceivedFormats.clear();
++
++        Futures.addCallback(request.getCaptureFuture(), new FutureCallback<Void>() {
++            @Override
++            public void onSuccess(Void result) {
++
++            }
++
++            @Override
++            public void onFailure(Throwable t) {
++                checkMainThread();
++                if (request == mCurrentRequest) {
++                    Logger.w(TAG, "request aborted, id=" + mCurrentRequest.getRequestId());
++                    if (mNoMetadataImageReader != null) {
++                        mNoMetadataImageReader.clearProcessingRequest();
++                    }
++                    mCurrentRequest = null;
++                }
++            }
++        }, CameraXExecutors.directExecutor());
++    }
++
++    void sendCaptureError(TakePictureManager.CaptureError error) {
++        checkMainThread();
++        if (mCurrentRequest != null
++                && mCurrentRequest.getRequestId() == error.getRequestId()) {
++            mCurrentRequest.onCaptureFailure(error.getImageCaptureException());
++        }
++    }
++
++    @Override
++    public void release() {
++        checkMainThread();
++        releaseInputResources(requireNonNull(mInputEdge),
++                requireNonNull(mSafeCloseImageReaderProxy),
++                mSecondarySafeCloseImageReaderProxy,
++                mSafeCloseImageReaderForPostview);
++
++    }
++
++    private void releaseInputResources(CaptureNode.In inputEdge,
++            SafeCloseImageReaderProxy imageReader,
++            SafeCloseImageReaderProxy secondaryImageReader,
++            SafeCloseImageReaderProxy imageReaderForPostview) {
++        inputEdge.getSurface().close();
++
++        inputEdge.getSurface().getTerminationFuture().addListener(() -> {
++            imageReader.safeClose();
++        }, mainThreadExecutor());
++
++        if (inputEdge.getPostviewSurface() != null) {
++            inputEdge.getPostviewSurface().close();
++            inputEdge.getPostviewSurface().getTerminationFuture().addListener(() -> {
++                if (imageReaderForPostview != null) {
++                    imageReaderForPostview.safeClose();
++                }
++            }, mainThreadExecutor());
++        }
++
++        if (inputEdge.getOutputFormats().size() > 1 && inputEdge.getSecondarySurface() != null) {
++            inputEdge.getSecondarySurface().close();
++            inputEdge.getSecondarySurface().getTerminationFuture().addListener(() -> {
++                if (secondaryImageReader != null) {
++                    secondaryImageReader.safeClose();
++                }
++            }, mainThreadExecutor());
++        }
++    }
++
++    In getInputEdge() {
++        return requireNonNull(mInputEdge);
++    }
++
++    public SafeCloseImageReaderProxy getSafeCloseImageReaderProxy() {
++        return requireNonNull(mSafeCloseImageReaderProxy);
++    }
++
++    public int getCapacity() {
++        checkMainThread();
++        checkState(mSafeCloseImageReaderProxy != null,
++                "The ImageReader is not initialized.");
++        int capacity = mSafeCloseImageReaderProxy.getCapacity();
++        return mSecondarySafeCloseImageReaderProxy == null ? capacity
++                : Math.min(capacity, mSecondarySafeCloseImageReaderProxy.getCapacity());
++    }
++
++    public void setOnImageCloseListener(ForwardingImageProxy.OnImageCloseListener listener) {
++        checkMainThread();
++        checkState(mSafeCloseImageReaderProxy != null,
++                "The ImageReader is not initialized.");
++        mSafeCloseImageReaderProxy.setOnImageCloseListener(listener);
++        if (mSecondarySafeCloseImageReaderProxy != null) {
++            mSecondarySafeCloseImageReaderProxy.setOnImageCloseListener(listener);
++        }
++    }
++
++    abstract static class In {
++
++        private CameraCaptureCallback mCameraCaptureCallback =
++                new CameraCaptureCallback() {};
++
++        private CameraCaptureCallback mSecondaryCameraCaptureCallback;
++
++        private DeferrableSurface mSurface;
++
++        private DeferrableSurface mSecondarySurface;
++
++        private DeferrableSurface mPostviewSurface = null;
++
++        abstract Size getSize();
++
++        abstract int getInputFormat();
++
++        @SuppressWarnings("AutoValueImmutableFields")
++        abstract List<Integer> getOutputFormats();
++
++        abstract boolean isVirtualCamera();
++
++        abstract ImageReaderProxyProvider getImageReaderProxyProvider();
++
++        abstract PostviewSettings getPostviewSettings();
++
++        abstract Edge<ProcessingRequest> getRequestEdge();
++
++        abstract Edge<TakePictureManager.CaptureError> getErrorEdge();
++
++        DeferrableSurface getSurface() {
++            return requireNonNull(mSurface);
++        }
++
++        DeferrableSurface getPostviewSurface() {
++            return mPostviewSurface;
++        }
++
++        DeferrableSurface getSecondarySurface() {
++            return mSecondarySurface;
++        }
++
++        void setSurface(Surface surface) {
++            checkState(mSurface == null, "The surface is already set.");
++            mSurface = new ImmediateSurface(surface, getSize(), getInputFormat());
++        }
++
++        void setPostviewSurface(Surface surface, Size size, int imageFormat) {
++            mPostviewSurface = new ImmediateSurface(surface, size, imageFormat);
++        }
++
++        void setSecondarySurface(Surface surface) {
++            checkState(mSecondarySurface == null, "The secondary surface is "
++                    + "already set.");
++            mSecondarySurface = new ImmediateSurface(surface, getSize(), getInputFormat());
++        }
++
++        CameraCaptureCallback getCameraCaptureCallback() {
++            return mCameraCaptureCallback;
++        }
++
++        void setCameraCaptureCallback(CameraCaptureCallback cameraCaptureCallback) {
++            mCameraCaptureCallback = cameraCaptureCallback;
++        }
++
++        CameraCaptureCallback getSecondaryCameraCaptureCallback() {
++            return mSecondaryCameraCaptureCallback;
++        }
++
++        void setSecondaryCameraCaptureCallback(
++                CameraCaptureCallback cameraCaptureCallback) {
++            mSecondaryCameraCaptureCallback = cameraCaptureCallback;
++        }
++
++        static In of(
++                Size size,
++                int inputFormat,
++                List<Integer> outputFormats,
++                boolean isVirtualCamera,
++                ImageReaderProxyProvider imageReaderProxyProvider) {
++            return new AutoValue_CaptureNode_In(size, inputFormat, outputFormats, isVirtualCamera,
++                    imageReaderProxyProvider, null, new Edge<>(), new Edge<>());
++        }
++
++        static In of(
++                Size size,
++                int inputFormat,
++                List<Integer> outputFormats,
++                boolean isVirtualCamera,
++                ImageReaderProxyProvider imageReaderProxyProvider,
++                PostviewSettings postviewSettings) {
++            return new AutoValue_CaptureNode_In(size, inputFormat, outputFormats, isVirtualCamera,
++                    imageReaderProxyProvider, postviewSettings, new Edge<>(), new Edge<>());
++        }
++    }
++}
+diff --git a/app/libs/mindone/ProcessingNode.java b/app/libs/mindone/ProcessingNode.java
+new file mode 100644
+--- /dev/null
++++ b/app/libs/mindone/ProcessingNode.java
+@@ -0,0 +1,375 @@
++package androidx.camera.core.imagecapture;
++
++import static android.graphics.ImageFormat.JPEG;
++import static android.graphics.ImageFormat.JPEG_R;
++import static android.graphics.ImageFormat.RAW_SENSOR;
++import static android.graphics.ImageFormat.YUV_420_888;
++
++import static androidx.camera.core.ImageCapture.ERROR_UNKNOWN;
++import static androidx.camera.core.impl.utils.executor.CameraXExecutors.mainThreadExecutor;
++import static androidx.camera.core.internal.utils.ImageUtil.isJpegFormats;
++import static androidx.camera.core.internal.utils.ImageUtil.isRawFormats;
++import static androidx.core.util.Preconditions.checkArgument;
++import static androidx.core.util.Preconditions.checkState;
++
++import static java.util.Objects.requireNonNull;
++
++import android.graphics.Bitmap;
++import android.graphics.ImageFormat;
++import android.hardware.camera2.CameraCharacteristics;
++
++import androidx.camera.core.CameraXTracer;
++import androidx.camera.core.ImageCapture;
++import androidx.camera.core.ImageCaptureException;
++import androidx.camera.core.ImageProxy;
++import androidx.camera.core.Logger;
++import androidx.camera.core.impl.Quirks;
++import androidx.camera.core.impl.utils.executor.CameraXExecutors;
++import androidx.camera.core.internal.compat.quirk.DeviceQuirks;
++import androidx.camera.core.internal.compat.quirk.IncorrectJpegMetadataQuirk;
++import androidx.camera.core.internal.compat.quirk.LowMemoryQuirk;
++import androidx.camera.core.processing.Edge;
++import androidx.camera.core.processing.InternalImageProcessor;
++import androidx.camera.core.processing.Node;
++import androidx.camera.core.processing.Operation;
++import androidx.camera.core.processing.Packet;
++
++import androidx.camera.core.impl.utils.futures.FutureCallback;
++import androidx.camera.core.impl.utils.futures.Futures;
++
++import java.util.List;
++import java.util.concurrent.Executor;
++
++public class ProcessingNode implements Node<ProcessingNode.In, Void> {
++    private static final String TAG = "ProcessingNode";
++    final Executor mBlockingExecutor;
++    final InternalImageProcessor mImageProcessor;
++
++    private final CameraCharacteristics mCameraCharacteristics;
++
++    DngImage2Disk mDngImage2Disk;
++
++    private ProcessingNode.In mInputEdge;
++    private Operation<InputPacket, Packet<ImageProxy>> mInput2Packet;
++    private Operation<Image2JpegBytes.In, Packet<byte[]>> mImage2JpegBytes;
++    private Operation<Bitmap2JpegBytes.In, Packet<byte[]>> mBitmap2JpegBytes;
++    private Operation<JpegBytes2Disk.In, ImageCapture.OutputFileResults> mJpegBytes2Disk;
++    private Operation<Packet<byte[]>, Packet<Bitmap>> mJpegBytes2CroppedBitmap;
++    private Operation<Packet<ImageProxy>, ImageProxy> mJpegImage2Result;
++    private Operation<Packet<byte[]>, Packet<ImageProxy>> mJpegBytes2Image;
++    private Operation<Packet<ImageProxy>, Bitmap> mImage2Bitmap;
++    private Operation<Packet<Bitmap>, Packet<Bitmap>> mBitmapEffect;
++    private final Quirks mQuirks;
++    private final boolean mHasIncorrectJpegMetadataQuirk;
++
++    ProcessingNode(Executor blockingExecutor,
++            CameraCharacteristics cameraCharacteristics) {
++        this(blockingExecutor, cameraCharacteristics,
++                null, DeviceQuirks.getAll());
++    }
++
++    ProcessingNode(Executor blockingExecutor,
++            Quirks quirks,
++            CameraCharacteristics cameraCharacteristics) {
++        this(blockingExecutor, cameraCharacteristics, null, quirks);
++    }
++
++    ProcessingNode(Executor blockingExecutor,
++            CameraCharacteristics cameraCharacteristics,
++            InternalImageProcessor imageProcessor) {
++        this(blockingExecutor, cameraCharacteristics, imageProcessor, DeviceQuirks.getAll());
++    }
++
++    ProcessingNode(Executor blockingExecutor,
++            CameraCharacteristics cameraCharacteristics,
++            InternalImageProcessor imageProcessor,
++            Quirks quirks) {
++        boolean isLowMemoryDevice = DeviceQuirks.get(LowMemoryQuirk.class) != null;
++        if (isLowMemoryDevice) {
++            mBlockingExecutor = CameraXExecutors.newSequentialExecutor(blockingExecutor);
++        } else {
++            mBlockingExecutor = blockingExecutor;
++        }
++        mImageProcessor = imageProcessor;
++        mCameraCharacteristics = cameraCharacteristics;
++        mQuirks = quirks;
++        mHasIncorrectJpegMetadataQuirk = quirks.contains(IncorrectJpegMetadataQuirk.class);
++    }
++
++    @Override
++    public Void transform(ProcessingNode.In inputEdge) {
++        mInputEdge = inputEdge;
++
++        inputEdge.getEdge().setListener(
++                inputPacket -> {
++                    if (inputPacket.getProcessingRequest().isAborted()) {
++
++                        inputPacket.getImageProxy().close();
++                        return;
++                    }
++                    Futures.addCallback(inputPacket.getProcessingRequest().getCaptureFuture(),
++                            new FutureCallback<Void>() {
++                                @Override
++                                public void onSuccess(Void unused) {
++                                    mBlockingExecutor.execute(() -> {
++                                        if (inputPacket.getProcessingRequest().isAborted()) {
++                                            inputPacket.getImageProxy().close();
++                                            return;
++                                        }
++                                        processInputPacket(inputPacket);
++                                    });
++                                }
++
++                                @Override
++                                public void onFailure(Throwable error) {
++                                    inputPacket.getImageProxy().close();
++                                }
++                            }, mainThreadExecutor());
++                });
++        inputEdge.getPostviewEdge().setListener(
++                inputPacket ->  {
++                    if (inputPacket.getProcessingRequest().isAborted()) {
++                        Logger.w(TAG,
++                                "The postview image is closed due to request aborted");
++
++                        inputPacket.getImageProxy().close();
++                        return;
++                    }
++                    mBlockingExecutor.execute(() -> processPostviewInputPacket(inputPacket));
++                }
++        );
++
++        mInput2Packet = new ProcessingInput2Packet();
++        mImage2JpegBytes = new Image2JpegBytes(mQuirks);
++        mJpegBytes2CroppedBitmap = new JpegBytes2CroppedBitmap();
++        mBitmap2JpegBytes = new Bitmap2JpegBytes();
++        mJpegBytes2Disk = new JpegBytes2Disk();
++        mJpegImage2Result = new JpegImage2Result();
++        mImage2Bitmap = new Image2Bitmap();
++        if (inputEdge.getInputFormat() == YUV_420_888 || mImageProcessor != null
++                || mHasIncorrectJpegMetadataQuirk) {
++
++            mJpegBytes2Image = new JpegBytes2Image();
++        }
++        if (mImageProcessor != null) {
++            mBitmapEffect = new BitmapEffect(mImageProcessor);
++        }
++
++        return null;
++    }
++
++    @Override
++    public void release() {
++    }
++
++    void processInputPacket(InputPacket inputPacket) {
++        CameraXTracer.trace("processInputPacket", () -> {
++            ProcessingRequest request = inputPacket.getProcessingRequest();
++            try {
++
++                if (inputPacket.getProcessingRequest().isInMemoryCapture()) {
++                    ImageProxy result = processInMemoryCapture(inputPacket);
++                    mainThreadExecutor().execute(() -> request.onFinalResult(result));
++                } else {
++                    ImageCapture.OutputFileResults result = processOnDiskCapture(inputPacket);
++                    mainThreadExecutor().execute(() -> request.onFinalResult(result));
++                }
++            } catch (ImageCaptureException e) {
++                inputPacket.getImageProxy().close();
++                sendError(request, e);
++            } catch (OutOfMemoryError e) {
++                inputPacket.getImageProxy().close();
++                sendError(request, new ImageCaptureException(
++                        ERROR_UNKNOWN, "Processing failed due to low memory.", e));
++            } catch (RuntimeException e) {
++                inputPacket.getImageProxy().close();
++
++                sendError(request,
++                        new ImageCaptureException(ERROR_UNKNOWN, "Processing failed.", e));
++            }
++        });
++    }
++
++    void processPostviewInputPacket(InputPacket inputPacket) {
++        ProcessingRequest request = inputPacket.getProcessingRequest();
++        try {
++            Packet<ImageProxy> image = mInput2Packet.apply(inputPacket);
++            int imageFormat = image.getFormat();
++            checkArgument(
++                    imageFormat == YUV_420_888 || imageFormat == JPEG || imageFormat == JPEG_R,
++                    String.format(
++                            "Postview only supports to convert YUV, JPEG and JPEG_R format image "
++                                    + "to the postview output bitmap. Image format: %s",
++                            imageFormat));
++            Bitmap bitmap = mImage2Bitmap.apply(image);
++            mainThreadExecutor().execute(() -> request.onPostviewBitmapAvailable(bitmap));
++        } catch (Exception e) {
++            inputPacket.getImageProxy().close();
++            Logger.e(TAG, "process postview input packet failed.", e);
++        }
++    }
++
++    ImageCapture.OutputFileResults processOnDiskCapture(InputPacket inputPacket)
++            throws ImageCaptureException {
++        Logger.d(TAG, "processOnDiskCapture: request ID = "
++                + inputPacket.getProcessingRequest().getRequestId());
++        List<Integer> outputFormats = mInputEdge.getOutputFormats();
++        checkArgument(!outputFormats.isEmpty());
++        int format = outputFormats.get(0);
++        checkArgument(isJpegFormats(format)
++                || isRawFormats(format),
++                String.format("On-disk capture only support JPEG and"
++                + " JPEG/R and RAW output formats. Output format: %s", format));
++        ProcessingRequest request = inputPacket.getProcessingRequest();
++        checkArgument(request.getOutputFileOptions() != null,
++                "OutputFileOptions cannot be empty");
++        Packet<ImageProxy> originalImage = mInput2Packet.apply(inputPacket);
++        boolean isSimultaneousCaptureEnabled = outputFormats.size() > 1;
++        if (isSimultaneousCaptureEnabled) {
++
++            checkArgument(request.getOutputFileOptions() != null
++                            && request.getSecondaryOutputFileOptions() != null,
++                    "The number of OutputFileOptions for simultaneous capture "
++                            + "should be at least two");
++            ImageCapture.OutputFileResults outputFileResults = null;
++            switch (originalImage.getFormat()) {
++                case RAW_SENSOR:
++                    outputFileResults = saveRawToDisk(originalImage,
++                            requireNonNull(request.getOutputFileOptions()));
++                    return outputFileResults;
++                case JPEG:
++                default:
++                    outputFileResults = saveJpegToDisk(originalImage,
++                            requireNonNull(request.getSecondaryOutputFileOptions()),
++                            request.getJpegQuality());
++                    return outputFileResults;
++            }
++        } else {
++            switch (format) {
++                case RAW_SENSOR:
++                    return saveRawToDisk(originalImage,
++                            requireNonNull(request.getOutputFileOptions()));
++                case JPEG:
++                default:
++                    return saveJpegToDisk(originalImage,
++                            requireNonNull(request.getOutputFileOptions()),
++                            request.getJpegQuality());
++            }
++        }
++    }
++
++    private ImageCapture.OutputFileResults saveRawToDisk(
++            Packet<ImageProxy> originalImage,
++            ImageCapture.OutputFileOptions outputFileOptions)
++            throws ImageCaptureException {
++
++        if (mDngImage2Disk == null) {
++            if (mCameraCharacteristics == null) {
++                throw new ImageCaptureException(ERROR_UNKNOWN,
++                        "CameraCharacteristics is null, DngCreator cannot be created", null);
++            }
++            if (originalImage.getCameraCaptureResult().getCaptureResult() == null) {
++                throw new ImageCaptureException(ERROR_UNKNOWN,
++                        "CameraCaptureResult is null, DngCreator cannot be created", null);
++            }
++            mDngImage2Disk = new DngImage2Disk(
++                    requireNonNull(mCameraCharacteristics),
++                    requireNonNull(originalImage.getCameraCaptureResult().getCaptureResult()));
++        }
++        return mDngImage2Disk.apply(DngImage2Disk.In.of(
++                originalImage.getData(),
++                originalImage.getRotationDegrees(),
++                requireNonNull(outputFileOptions)));
++    }
++
++    private ImageCapture.OutputFileResults saveJpegToDisk(
++            Packet<ImageProxy> originalImage,
++            ImageCapture.OutputFileOptions outputFileOptions,
++            int jpegQuality) throws ImageCaptureException {
++        Packet<byte[]> jpegBytes = mImage2JpegBytes.apply(
++                Image2JpegBytes.In.of(originalImage, jpegQuality));
++        if (jpegBytes.hasCropping() || mBitmapEffect != null) {
++            jpegBytes = cropAndMaybeApplyEffect(jpegBytes, jpegQuality);
++        }
++        return mJpegBytes2Disk.apply(
++                JpegBytes2Disk.In.of(jpegBytes, requireNonNull(outputFileOptions)));
++    }
++
++    ImageProxy processInMemoryCapture(InputPacket inputPacket)
++            throws ImageCaptureException {
++        Logger.d(TAG, "processInMemoryCapture: request ID = "
++                + inputPacket.getProcessingRequest().getRequestId());
++        ProcessingRequest request = inputPacket.getProcessingRequest();
++        Packet<ImageProxy> image = mInput2Packet.apply(inputPacket);
++
++        List<Integer> outputFormats = mInputEdge.getOutputFormats();
++        checkArgument(!outputFormats.isEmpty());
++        int format = outputFormats.get(0);
++
++        if ((image.getFormat() == YUV_420_888 || mBitmapEffect != null
++                || mHasIncorrectJpegMetadataQuirk) && (format == JPEG)) {
++            Packet<byte[]> jpegBytes = mImage2JpegBytes.apply(
++                    Image2JpegBytes.In.of(image, request.getJpegQuality()));
++            if (mBitmapEffect != null) {
++                jpegBytes = cropAndMaybeApplyEffect(jpegBytes, request.getJpegQuality());
++            }
++            image = mJpegBytes2Image.apply(jpegBytes);
++        }
++        ImageProxy imageProxy = mJpegImage2Result.apply(image);
++        return imageProxy;
++    }
++
++    private Packet<byte[]> cropAndMaybeApplyEffect(Packet<byte[]> jpegPacket, int jpegQuality)
++            throws ImageCaptureException {
++        checkState(isJpegFormats(jpegPacket.getFormat()));
++        Packet<Bitmap> bitmapPacket = mJpegBytes2CroppedBitmap.apply(jpegPacket);
++        if (mBitmapEffect != null) {
++
++            bitmapPacket = mBitmapEffect.apply(bitmapPacket);
++        }
++        return mBitmap2JpegBytes.apply(
++                Bitmap2JpegBytes.In.of(bitmapPacket, jpegQuality));
++    }
++
++    private void sendError(ProcessingRequest request,
++            ImageCaptureException e) {
++        mainThreadExecutor().execute(() -> {
++            request.onProcessFailure(e);
++        });
++    }
++
++    abstract static class InputPacket {
++
++        abstract ProcessingRequest getProcessingRequest();
++
++        abstract ImageProxy getImageProxy();
++
++        static InputPacket of(ProcessingRequest processingRequest,
++                ImageProxy imageProxy) {
++            return new AutoValue_ProcessingNode_InputPacket(processingRequest, imageProxy);
++        }
++    }
++
++    abstract static class In {
++
++        abstract Edge<InputPacket> getEdge();
++
++        abstract Edge<InputPacket> getPostviewEdge();
++
++        abstract int getInputFormat();
++
++        @SuppressWarnings("AutoValueImmutableFields")
++        abstract List<Integer> getOutputFormats();
++
++        static In of(int inputFormat,
++                List<Integer> outputFormats) {
++            return new AutoValue_ProcessingNode_In(new Edge<>(), new Edge<>(),
++                    inputFormat, outputFormats);
++        }
++    }
++
++    void injectProcessingInput2Packet(
++            Operation<InputPacket, Packet<ImageProxy>> input2Packet) {
++        mInput2Packet = input2Packet;
++    }
++}
+diff --git a/app/libs/mindone/RequestWithCallback.java b/app/libs/mindone/RequestWithCallback.java
+new file mode 100644
+--- /dev/null
++++ b/app/libs/mindone/RequestWithCallback.java
+@@ -0,0 +1,247 @@
++package androidx.camera.core.imagecapture;
++
++import static androidx.camera.core.impl.utils.Threads.checkMainThread;
++import static androidx.core.util.Preconditions.checkState;
++
++import static java.util.Objects.requireNonNull;
++
++import android.graphics.Bitmap;
++
++import androidx.camera.core.ImageCapture;
++import androidx.camera.core.ImageCaptureException;
++import androidx.camera.core.ImageProxy;
++import androidx.concurrent.futures.CallbackToFutureAdapter;
++
++import com.google.common.util.concurrent.ListenableFuture;
++
++public class RequestWithCallback implements TakePictureCallback {
++
++    private final TakePictureRequest mTakePictureRequest;
++    private final TakePictureRequest.RetryControl mRetryControl;
++    private final ListenableFuture<Void> mCaptureFuture;
++    private final ListenableFuture<Void> mCompleteFuture;
++    private CallbackToFutureAdapter.Completer<Void> mCaptureCompleter;
++    private CallbackToFutureAdapter.Completer<Void> mCompleteCompleter;
++
++    private volatile boolean mIsAborted = false;
++    private boolean mIsStarted = false;
++    private ListenableFuture<Void> mCaptureRequestFuture;
++
++    RequestWithCallback(TakePictureRequest takePictureRequest,
++            TakePictureRequest.RetryControl retryControl) {
++        mTakePictureRequest = takePictureRequest;
++        mRetryControl = retryControl;
++        mCaptureFuture = CallbackToFutureAdapter.getFuture(
++                completer -> {
++                    mCaptureCompleter = completer;
++                    return "CaptureCompleteFuture";
++                });
++        mCompleteFuture = CallbackToFutureAdapter.getFuture(
++                completer -> {
++                    mCompleteCompleter = completer;
++                    return "RequestCompleteFuture";
++                });
++    }
++
++    public void setCaptureRequestFuture(ListenableFuture<Void> captureRequestFuture) {
++        checkMainThread();
++        checkState(mCaptureRequestFuture == null, "CaptureRequestFuture can only be set once.");
++        mCaptureRequestFuture = captureRequestFuture;
++    }
++
++    @Override
++    public void onCaptureStarted() {
++        checkMainThread();
++        if (mIsAborted || mIsStarted) {
++
++            return;
++        }
++        mIsStarted = true;
++
++        ImageCapture.OnImageCapturedCallback inMemoryCallback =
++                mTakePictureRequest.getInMemoryCallback();
++        if (inMemoryCallback != null) {
++            inMemoryCallback.onCaptureStarted();
++        }
++
++        ImageCapture.OnImageSavedCallback onDiskCallback = mTakePictureRequest.getOnDiskCallback();
++        if (onDiskCallback != null) {
++            onDiskCallback.onCaptureStarted();
++        }
++    }
++
++    @Override
++    public void onImageCaptured() {
++        checkMainThread();
++        if (mIsAborted) {
++
++            return;
++        }
++        if (!mIsStarted) {
++
++            onCaptureStarted();
++        }
++
++        mCaptureCompleter.set(null);
++
++    }
++
++    @Override
++    public void onFinalResult(ImageCapture.OutputFileResults outputFileResults) {
++        checkMainThread();
++        if (mIsAborted) {
++
++            return;
++        }
++        checkOnImageCaptured();
++        if (mTakePictureRequest.isSimultaneousCapture()) {
++            mTakePictureRequest.markFormatProcessStatusInSimultaneousCapture(
++                    outputFileResults.getImageFormat(), true);
++        }
++        markComplete(false);
++        mTakePictureRequest.onResult(outputFileResults);
++    }
++
++    @Override
++    public void onFinalResult(ImageProxy imageProxy) {
++        checkMainThread();
++        if (mIsAborted) {
++            imageProxy.close();
++
++            return;
++        }
++        checkOnImageCaptured();
++        if (mTakePictureRequest.isSimultaneousCapture()) {
++            mTakePictureRequest.markFormatProcessStatusInSimultaneousCapture(
++                    imageProxy.getFormat(), true);
++        }
++        markComplete(false);
++        mTakePictureRequest.onResult(imageProxy);
++    }
++
++    @Override
++    public void onCaptureProcessProgressed(int progress) {
++        checkMainThread();
++        if (mIsAborted) {
++            return;
++        }
++
++        mTakePictureRequest.onCaptureProcessProgressed(progress);
++    }
++
++    @Override
++    public void onPostviewBitmapAvailable(Bitmap bitmap) {
++        checkMainThread();
++        if (mIsAborted) {
++
++            return;
++        }
++
++        mTakePictureRequest.onPostviewBitmapAvailable(bitmap);
++    }
++
++    @Override
++    public void onProcessFailure(ImageCaptureException imageCaptureException) {
++        checkMainThread();
++        if (mIsAborted) {
++
++            return;
++        }
++        checkOnImageCaptured();
++        mIsAborted = true;
++        markComplete(true);
++        onFailure(imageCaptureException);
++    }
++
++    @Override
++    public boolean isAborted() {
++        return mIsAborted;
++    }
++
++    @Override
++    public void onCaptureFailure(ImageCaptureException imageCaptureException) {
++        checkMainThread();
++        if (mIsAborted) {
++
++            return;
++        }
++
++        mIsAborted = true;
++        boolean isRetryAllowed = mTakePictureRequest.decrementRetryCounter();
++        if (!isRetryAllowed) {
++            onFailure(imageCaptureException);
++        }
++        markComplete(true);
++        mCaptureCompleter.setException(imageCaptureException);
++
++        if (isRetryAllowed) {
++
++            mRetryControl.retryRequest(mTakePictureRequest);
++        }
++    }
++
++    void abortAndSendErrorToApp(ImageCaptureException imageCaptureException) {
++        checkMainThread();
++        if (mCompleteFuture.isDone()) {
++
++            return;
++        }
++        abort(imageCaptureException);
++        onFailure(imageCaptureException);
++    }
++
++    void abortSilentlyAndRetry() {
++        checkMainThread();
++        if (mCompleteFuture.isDone()) {
++
++            return;
++        }
++        abort(new ImageCaptureException(ImageCapture.ERROR_CAMERA_CLOSED,
++                "The request is aborted silently and retried.", null));
++        mRetryControl.retryRequest(mTakePictureRequest);
++    }
++
++    private void abort(ImageCaptureException imageCaptureException) {
++        checkMainThread();
++        mIsAborted = true;
++
++        requireNonNull(mCaptureRequestFuture).cancel(true);
++        mCaptureCompleter.setException(imageCaptureException);
++        mCompleteCompleter.set(null);
++    }
++
++    ListenableFuture<Void> getCaptureFuture() {
++        checkMainThread();
++        return mCaptureFuture;
++    }
++
++    ListenableFuture<Void> getCompleteFuture() {
++        checkMainThread();
++        return mCompleteFuture;
++    }
++
++    public TakePictureRequest getTakePictureRequest() {
++        return mTakePictureRequest;
++    }
++
++    private void checkOnImageCaptured() {
++        checkState(mCaptureFuture.isDone(),
++                "onImageCaptured() must be called before onFinalResult()");
++    }
++
++    private void markComplete(boolean force) {
++        if (!force && mTakePictureRequest.isSimultaneousCapture()
++                && !mTakePictureRequest.isFormatProcessedInSimultaneousCapture()) {
++            return;
++        }
++        if (!mTakePictureRequest.isSimultaneousCapture()) {
++            checkState(!mCompleteFuture.isDone(), "The callback can only complete once.");
++        }
++        mCompleteCompleter.set(null);
++    }
++
++    private void onFailure(ImageCaptureException imageCaptureException) {
++        checkMainThread();
++        mTakePictureRequest.onError(imageCaptureException);
++    }
++}

@@ -118,6 +118,8 @@ void Sensors::stopReaderLocked() {
     stopReader_.store(true);
     if (readerThread_.joinable()) readerThread_.join();
     stopWakeLockThreadLocked();
+    if (eventQueueFlag_)
+        EventFlag::deleteEventFlag(&eventQueueFlag_);
 }
 
 void Sensors::readerLoop() {
@@ -242,20 +244,30 @@ std::optional<Event> Sensors::translateEvent(const hf_manager_event& ke) {
 
 void Sensors::postEvents(const std::vector<Event>& events) {
     std::lock_guard<std::mutex> lock(writeLock_);
-    if (!eventQueue_) return;  // initialize() not called yet, drop
-    if (eventQueue_->write(events.data(), events.size())) {
-        if (eventQueueFlag_ == nullptr) {
-            // Cannot wake the receiver: do not take a wake lock we could never release.
+    if (!eventQueue_ || !eventQueueFlag_) return;
+    int32_t wakeUp = 0;
+    for (const auto& e : events) {
+        auto it = wakeUpByHandle_.find(e.sensorHandle);
+        if (it != wakeUpByHandle_.end() && it->second) ++wakeUp;
+    }
+    std::lock_guard<std::mutex> wakeLock(wakeLockLock_);
+    const int64_t previousDeadline = autoReleaseWakeLockTime_;
+    if (wakeUp > 0) {
+        updateWakeLockLocked(wakeUp, 0);
+        if (!hasWakeLock_) {
+            autoReleaseWakeLockTime_ = previousDeadline;
+            updateWakeLockLocked(0, wakeUp);
+            ALOGE("hf_manager->AIDL: could not acquire wake lock for %d events", wakeUp);
             return;
         }
+    }
+    if (eventQueue_->write(events.data(), events.size())) {
         eventQueueFlag_->wake(kEventQueueFlagBitsReadAndProcess);
-        int32_t wakeUp = 0;
-        for (const auto& e : events) {
-            auto it = wakeUpByHandle_.find(e.sensorHandle);
-            if (it != wakeUpByHandle_.end() && it->second) ++wakeUp;
-        }
-        if (wakeUp > 0) updateWakeLock(wakeUp, 0 /* eventsHandled */);
     } else {
+        if (wakeUp > 0) {
+            autoReleaseWakeLockTime_ = previousDeadline;
+            updateWakeLockLocked(0, wakeUp);
+        }
         ALOGE("hf_manager->AIDL: dropped %zu events, event FMQ full", events.size());
     }
 }
@@ -284,7 +296,11 @@ void Sensors::readWakeLockFMQ() {
     constexpr int64_t kIdleTimeoutNs = 5000LL * 1000 * 1000;  // 5 s when there is nothing to release
 
     while (readWakeLockQueueRun_.load()) {
-        const int64_t timeoutNs = hasWakeLock_ ? kHeldTimeoutNs : kIdleTimeoutNs;
+        int64_t timeoutNs;
+        {
+            std::lock_guard<std::mutex> lock(wakeLockLock_);
+            timeoutNs = hasWakeLock_ ? kHeldTimeoutNs : kIdleTimeoutNs;
+        }
         int32_t eventsHandled = 0;
         if (wakeLockQueue_) {
             wakeLockQueue_->readBlocking(
@@ -300,6 +316,10 @@ void Sensors::readWakeLockFMQ() {
 
 void Sensors::updateWakeLock(int32_t eventsWritten, int32_t eventsHandled) {
     std::lock_guard<std::mutex> lock(wakeLockLock_);
+    updateWakeLockLocked(eventsWritten, eventsHandled);
+}
+
+void Sensors::updateWakeLockLocked(int32_t eventsWritten, int32_t eventsHandled) {
     int32_t newVal = outstandingWakeUpEvents_ + eventsWritten - eventsHandled;
     outstandingWakeUpEvents_ = newVal < 0 ? 0 : newVal;
     if (eventsWritten > 0) {

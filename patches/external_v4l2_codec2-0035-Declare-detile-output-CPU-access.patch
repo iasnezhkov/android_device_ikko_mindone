@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Date: Tue, 13 Oct 2026 15:45:00 +0300
+Subject: [PATCH] Declare CPU access to nonsecure detile output buffers
+
+diff --git a/components/VideoFramePool.cpp b/components/VideoFramePool.cpp
+--- a/components/VideoFramePool.cpp
++++ b/components/VideoFramePool.cpp
+@@ -109,8 +109,7 @@
+     uint64_t usage = static_cast<uint64_t>(BufferUsage::VIDEO_DECODER);
+     if (isSecure) {
+         usage |= C2MemoryUsage::READ_PROTECTED;
+-    } else if (blockPool->getAllocatorId() == C2PlatformAllocatorStore::GRALLOC) {
+-        // CPU access to buffers is only required in byte buffer mode.
+-        usage |= C2MemoryUsage::CPU_READ;
++    } else {
++        usage |= C2MemoryUsage::CPU_READ | C2MemoryUsage::CPU_WRITE;
+     }
+     const C2MemoryUsage memoryUsage(usage);

@@ -1,0 +1,312 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Date: Tue, 13 Oct 2026 12:30:00 +0300
+Subject: [PATCH] Detile MM21 into mapped planar YUV output without staging
+
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -15,10 +15,69 @@
+
+ #include <C2AllocatorGralloc.h>
+ #include <log/log.h>
++#include <v4l2_codec2/common/LibyuvImageConverter.h>
+
+ namespace android {
+
+ namespace {
++
++bool isSupportedDetileLayout(const C2GraphicView& view, int width, int height) {
++    if (view.error() != C2_OK || width <= 0 || height <= 0 ||
++        width == std::numeric_limits<int>::max() ||
++        height == std::numeric_limits<int>::max() ||
++        view.width() < static_cast<uint32_t>(width) ||
++        view.height() < static_cast<uint32_t>(height) ||
++        view.crop().left != 0 || view.crop().top != 0 ||
++        view.crop().width < static_cast<uint32_t>(width) ||
++        view.crop().height < static_cast<uint32_t>(height)) {
++        return false;
++    }
++    const C2PlanarLayout& layout = view.layout();
++    if (layout.type != C2PlanarLayout::TYPE_YUV || layout.numPlanes != 3 ||
++        (layout.rootPlanes != 2 && layout.rootPlanes != 3)) {
++        return false;
++    }
++    uintptr_t starts[3];
++    uintptr_t ends[3];
++    const int chromaStep = layout.planes[C2PlanarLayout::PLANE_U].colInc;
++    if (chromaStep != 1 && chromaStep != 2) {
++        return false;
++    }
++    for (uint32_t i = 0; i < 3; ++i) {
++        const C2PlaneInfo& plane = layout.planes[i];
++        const uint32_t sampling = i == C2PlanarLayout::PLANE_Y ? 1 : 2;
++        const int step = sampling == 1 ? 1 : chromaStep;
++        const uint64_t columns = (static_cast<uint64_t>(width) + sampling - 1) / sampling;
++        const uint64_t rows = (static_cast<uint64_t>(height) + sampling - 1) / sampling;
++        const uint64_t rowBytes = (columns - 1) * step + 1;
++        if (!view.data()[i] || plane.allocatedDepth != 8 || plane.bitDepth != 8 ||
++            plane.rightShift != 0 || plane.colSampling != sampling ||
++            plane.rowSampling != sampling || plane.colInc != step ||
++            plane.rowInc <= 0 || plane.rowInc > std::numeric_limits<int>::max() ||
++            static_cast<uint64_t>(plane.rowInc) < columns * step) {
++            return false;
++        }
++        starts[i] = reinterpret_cast<uintptr_t>(view.data()[i]);
++        const uint64_t span = (rows - 1) * plane.rowInc + rowBytes;
++        if (span > std::numeric_limits<uintptr_t>::max() - starts[i]) {
++            return false;
++        }
++        ends[i] = starts[i] + static_cast<uintptr_t>(span);
++    }
++    const auto overlaps = [&](uint32_t a, uint32_t b) {
++        return starts[a] < ends[b] && starts[b] < ends[a];
++    };
++    if (overlaps(C2PlanarLayout::PLANE_Y, C2PlanarLayout::PLANE_U) ||
++        overlaps(C2PlanarLayout::PLANE_Y, C2PlanarLayout::PLANE_V)) {
++        return false;
++    }
++    if (chromaStep == 1) {
++        return !overlaps(C2PlanarLayout::PLANE_U, C2PlanarLayout::PLANE_V);
++    }
++    return starts[C2PlanarLayout::PLANE_U] + 1 == starts[C2PlanarLayout::PLANE_V] &&
++           layout.planes[C2PlanarLayout::PLANE_U].rowInc ==
++                   layout.planes[C2PlanarLayout::PLANE_V].rowInc;
++}
+
+ constexpr int kNV12PlaneGeometryCacheSlots = 32;
+
+@@ -230,12 +289,87 @@
+     }
+
+     const C2PlanarLayout layout = view.layout();
++    if (!isSupportedDetileLayout(view, width, height)) {
++        ALOGE("Unsupported graphic block layout for 8-bit detile");
++        return false;
++    }
++
++    uint8_t* const* data = view.data();
++    if (layout.planes[C2PlanarLayout::PLANE_U].colInc == 1) {
++        return LibyuvImageConverter::convertMM21ToI420(
++                src, data[C2PlanarLayout::PLANE_Y],
++                static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc),
++                data[C2PlanarLayout::PLANE_U],
++                static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc),
++                data[C2PlanarLayout::PLANE_V],
++                static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_V].rowInc),
++                width, height);
++    }
++    NV12WritableImage dst;
++    dst.y = data[C2PlanarLayout::PLANE_Y];
++    dst.uv = data[C2PlanarLayout::PLANE_U];
++    dst.strideY = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
++    dst.strideUV = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
++
++    return fallbackConverter->convertMM21ToNV12(src, dst, width, height);
++}
++
++bool VideoFrame::detileFrom10(ImageConverter* converter, const TiledMT10Image& src, int width,
++                              int height) {
++    if (!converter || !mGraphicBlock) {
++        return false;
++    }
++
++    C2Acquirable<C2GraphicView> writable = mGraphicBlock->map();
++    C2GraphicView view = writable.get();
++    if (view.error() != C2_OK) {
++        ALOGE("Failed to map graphic block for 10-bit detile, error=%d", view.error());
++        return false;
++    }
++
++    const C2PlanarLayout layout = view.layout();
+     if (layout.numPlanes < 2) {
+-        ALOGE("Graphic block has %u planes, cannot detile into it", layout.numPlanes);
++        ALOGE("Graphic block has %u planes, cannot detile 10-bit into it", layout.numPlanes);
++        return false;
++    }
++    if (layout.planes[C2PlanarLayout::PLANE_U].colInc != 4) {
++        ALOGE("Graphic block chroma colInc=%d is not interleaved 16-bit, cannot detile 10-bit "
++              "into it",
++              layout.planes[C2PlanarLayout::PLANE_U].colInc);
++        return false;
++    }
++
++    uint8_t* const* data = view.data();
++    P010WritableImage dst;
++    dst.y = data[C2PlanarLayout::PLANE_Y];
++    dst.uv = data[C2PlanarLayout::PLANE_U];
++    dst.strideY = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
++    dst.strideUV = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
++
++    return converter->convertMT10ToP010(src, dst, width, height);
++}
++
++bool VideoFrame::detileFrom10To8(ImageConverter* converter, const TiledMT10Image& src, int width,
++                                 int height) {
++    if (!converter || !mGraphicBlock) {
++        return false;
++    }
++
++    C2Acquirable<C2GraphicView> writable = mGraphicBlock->map();
++    C2GraphicView view = writable.get();
++    if (view.error() != C2_OK) {
++        ALOGE("Failed to map graphic block for 10-to-8-bit detile, error=%d", view.error());
++        return false;
++    }
++
++    const C2PlanarLayout layout = view.layout();
++    if (layout.numPlanes < 2) {
++        ALOGE("Graphic block has %u planes, cannot detile 10-to-8-bit into it", layout.numPlanes);
+         return false;
+     }
+     if (layout.planes[C2PlanarLayout::PLANE_U].colInc != 2) {
+-        ALOGE("Graphic block chroma colInc=%d is not interleaved, cannot detile into it",
++        ALOGE("Graphic block chroma colInc=%d is not interleaved 8-bit, cannot detile "
++              "10-to-8-bit into it",
+               layout.planes[C2PlanarLayout::PLANE_U].colInc);
+         return false;
+     }
+@@ -247,76 +381,6 @@
+     dst.strideY = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
+     dst.strideUV = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
+
+-    return fallbackConverter->convertMM21ToNV12(src, dst, width, height);
+-}
+-
+-bool VideoFrame::detileFrom10(ImageConverter* converter, const TiledMT10Image& src, int width,
+-                              int height) {
+-    if (!converter || !mGraphicBlock) {
+-        return false;
+-    }
+-
+-    C2Acquirable<C2GraphicView> writable = mGraphicBlock->map();
+-    C2GraphicView view = writable.get();
+-    if (view.error() != C2_OK) {
+-        ALOGE("Failed to map graphic block for 10-bit detile, error=%d", view.error());
+-        return false;
+-    }
+-
+-    const C2PlanarLayout layout = view.layout();
+-    if (layout.numPlanes < 2) {
+-        ALOGE("Graphic block has %u planes, cannot detile 10-bit into it", layout.numPlanes);
+-        return false;
+-    }
+-    if (layout.planes[C2PlanarLayout::PLANE_U].colInc != 4) {
+-        ALOGE("Graphic block chroma colInc=%d is not interleaved 16-bit, cannot detile 10-bit "
+-              "into it",
+-              layout.planes[C2PlanarLayout::PLANE_U].colInc);
+-        return false;
+-    }
+-
+-    uint8_t* const* data = view.data();
+-    P010WritableImage dst;
+-    dst.y = data[C2PlanarLayout::PLANE_Y];
+-    dst.uv = data[C2PlanarLayout::PLANE_U];
+-    dst.strideY = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
+-    dst.strideUV = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
+-
+-    return converter->convertMT10ToP010(src, dst, width, height);
+-}
+-
+-bool VideoFrame::detileFrom10To8(ImageConverter* converter, const TiledMT10Image& src, int width,
+-                                 int height) {
+-    if (!converter || !mGraphicBlock) {
+-        return false;
+-    }
+-
+-    C2Acquirable<C2GraphicView> writable = mGraphicBlock->map();
+-    C2GraphicView view = writable.get();
+-    if (view.error() != C2_OK) {
+-        ALOGE("Failed to map graphic block for 10-to-8-bit detile, error=%d", view.error());
+-        return false;
+-    }
+-
+-    const C2PlanarLayout layout = view.layout();
+-    if (layout.numPlanes < 2) {
+-        ALOGE("Graphic block has %u planes, cannot detile 10-to-8-bit into it", layout.numPlanes);
+-        return false;
+-    }
+-    if (layout.planes[C2PlanarLayout::PLANE_U].colInc != 2) {
+-        ALOGE("Graphic block chroma colInc=%d is not interleaved 8-bit, cannot detile "
+-              "10-to-8-bit into it",
+-              layout.planes[C2PlanarLayout::PLANE_U].colInc);
+-        return false;
+-    }
+-
+-    uint8_t* const* data = view.data();
+-    NV12WritableImage dst;
+-    dst.y = data[C2PlanarLayout::PLANE_Y];
+-    dst.uv = data[C2PlanarLayout::PLANE_U];
+-    dst.strideY = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_Y].rowInc);
+-    dst.strideUV = static_cast<size_t>(layout.planes[C2PlanarLayout::PLANE_U].rowInc);
+-
+     return converter->convertMT10ToNV12(src, dst, width, height);
+ }
+
+diff --git a/common/LibyuvImageConverter.cpp b/common/LibyuvImageConverter.cpp
+--- a/common/LibyuvImageConverter.cpp
++++ b/common/LibyuvImageConverter.cpp
+@@ -1,6 +1,8 @@
+ #define LOG_TAG "LibyuvImageConverter"
+
+ #include <v4l2_codec2/common/LibyuvImageConverter.h>
++
++#include <limits>
+
+ #include <libyuv/convert.h>
+ #include <log/log.h>
+@@ -110,6 +112,40 @@
+     return true;
+ }
+
++bool LibyuvImageConverter::convertMM21ToI420(const TiledMM21Image& src, uint8_t* y, size_t strideY,
++                                           uint8_t* u, size_t strideU, uint8_t* v, size_t strideV,
++                                           int width, int height) {
++    const size_t maxStride = std::numeric_limits<int>::max();
++    if (!src.y || !src.uv || !y || !u || !v || width <= 0 || height <= 0 ||
++        width == std::numeric_limits<int>::max() ||
++        height == std::numeric_limits<int>::max()) {
++        return false;
++    }
++    const size_t chromaWidth = (static_cast<size_t>(width) + 1) / 2;
++    if (src.strideY < static_cast<size_t>(width) || src.strideUV < chromaWidth * 2 ||
++        src.strideY > maxStride / 32 || src.strideUV > maxStride / 16 ||
++        src.strideY % 16 || src.strideUV % 16 ||
++        strideY < static_cast<size_t>(width) || strideU < chromaWidth ||
++        strideV < chromaWidth || strideY > maxStride || strideU > maxStride ||
++        strideV > maxStride) {
++        return false;
++    }
++    const uint64_t yRows = (static_cast<uint64_t>(height) + 31) / 32 * 32;
++    const uint64_t uvRows = ((static_cast<uint64_t>(height) + 1) / 2 + 15) / 16 * 16;
++    const uintptr_t sourceY = reinterpret_cast<uintptr_t>(src.y);
++    const uintptr_t sourceUV = reinterpret_cast<uintptr_t>(src.uv);
++    if (sourceUV < sourceY || sourceUV - sourceY > src.dmaBufSize ||
++        src.dmaBufSize > std::numeric_limits<uintptr_t>::max() - sourceY ||
++        src.strideY * yRows > sourceUV - sourceY ||
++        src.strideUV * uvRows > src.dmaBufSize - (sourceUV - sourceY)) {
++        return false;
++    }
++    return libyuv::MM21ToI420(src.y, static_cast<int>(src.strideY), src.uv,
++                             static_cast<int>(src.strideUV), y, static_cast<int>(strideY),
++                             u, static_cast<int>(strideU), v, static_cast<int>(strideV),
++                             width, height) == 0;
++}
++
+ bool LibyuvImageConverter::convertMM21ToNV12(const TiledMM21Image& src,
+                                              const NV12WritableImage& dst, int width,
+                                              int height) {
+diff --git a/common/include/v4l2_codec2/common/LibyuvImageConverter.h b/common/include/v4l2_codec2/common/LibyuvImageConverter.h
+--- a/common/include/v4l2_codec2/common/LibyuvImageConverter.h
++++ b/common/include/v4l2_codec2/common/LibyuvImageConverter.h
+@@ -9,6 +9,10 @@
+ public:
+     LibyuvImageConverter() = default;
+     ~LibyuvImageConverter() override = default;
++
++    static bool convertMM21ToI420(const TiledMM21Image& src, uint8_t* y, size_t strideY,
++                                  uint8_t* u, size_t strideU, uint8_t* v, size_t strideV,
++                                  int width, int height);
+
+     bool convertMM21ToNV12(const TiledMM21Image& src, const NV12WritableImage& dst, int width,
+                            int height) override;

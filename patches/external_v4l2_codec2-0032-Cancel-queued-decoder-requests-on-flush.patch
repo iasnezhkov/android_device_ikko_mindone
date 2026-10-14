@@ -1,0 +1,21 @@
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Subject: [PATCH] Cancel queued decoder inputs and drain requests on flush
+
+Discard requests waiting for a free V4L2 input slot before the component
+returns their works to the client. Otherwise the next decode submits stale
+input or starts an abandoned drain, and callbacks address removed works.
+
+diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -574,4 +574,10 @@
+     mPendingDecodeCbs.clear();
+     if (mDrainCb) {
+         std::move(mDrainCb).Run(VideoDecoder::DecodeStatus::kAborted);
++    }
++
++    while (!mDecodeRequests.empty()) {
++        auto request = std::move(mDecodeRequests.front());
++        mDecodeRequests.pop();
++        std::move(request.decodeCb).Run(VideoDecoder::DecodeStatus::kAborted);
+     }

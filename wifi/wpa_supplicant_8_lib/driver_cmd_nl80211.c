@@ -63,10 +63,16 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf, size_t buf_l
 
 	if (os_strcasecmp(cmd, "START") == 0) {
 		dl_list_for_each(driver, &drv->global->interfaces, struct wpa_driver_nl80211_data, list) {
-			linux_set_iface_flags(drv->global->ioctl_sock, driver->first_bss->ifname, 1);
-			wpa_msg(drv->ctx, MSG_INFO, WPA_EVENT_DRIVER_STATE "STARTED");
+			int iface_ret = linux_set_iface_flags(drv->global->ioctl_sock,
+						    driver->first_bss->ifname, 1);
+			if (iface_ret) {
+				if (!ret)
+					ret = iface_ret;
+				continue;
+			}
+			wpa_msg(driver->ctx, MSG_INFO, WPA_EVENT_DRIVER_STATE "STARTED");
 		}
-		return 0;
+		return ret;
 	}
 	if (os_strcasecmp(cmd, "MACADDR") == 0) {
 		u8 macaddr[ETH_ALEN] = {};
@@ -100,8 +106,14 @@ int wpa_driver_nl80211_driver_cmd(void *priv, char *cmd, char *buf, size_t buf_l
 		ret = os_strlen(buf);
 	else if (os_strcasecmp(cmd, "STOP") == 0) {
 		dl_list_for_each(driver, &drv->global->interfaces, struct wpa_driver_nl80211_data, list) {
-			linux_set_iface_flags(drv->global->ioctl_sock, driver->first_bss->ifname, 0);
-			wpa_msg(drv->ctx, MSG_INFO, WPA_EVENT_DRIVER_STATE "STOPPED");
+			int iface_ret = linux_set_iface_flags(drv->global->ioctl_sock,
+						    driver->first_bss->ifname, 0);
+			if (iface_ret) {
+				if (!ret)
+					ret = iface_ret;
+				continue;
+			}
+			wpa_msg(driver->ctx, MSG_INFO, WPA_EVENT_DRIVER_STATE "STOPPED");
 		}
 	} else
 		wpa_printf(MSG_DEBUG, "%s: '%s' → '%s'", __func__, cmd, buf);

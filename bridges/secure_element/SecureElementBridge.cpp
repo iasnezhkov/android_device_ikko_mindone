@@ -8,6 +8,7 @@
 
 #include <android-base/logging.h>
 #include <log/log.h>
+#include <chrono>
 
 namespace mindone::bridges::secure_element {
 
@@ -34,44 +35,238 @@ ndk::ScopedAStatus deadHal(const std::string& desc) {
 
 }  // namespace
 
+class SeDeathRecipient : public ::android::hardware::hidl_death_recipient {
+  public:
+    explicit SeDeathRecipient(std::shared_ptr<SeCallbackGate> gate) : mGate(std::move(gate)) {}
+    void serviceDied(uint64_t cookie,
+                     const ::android::wp<::android::hidl::base::V1_0::IBase>&) override {
+        std::lock_guard<std::mutex> l(mGate->lock);
+        if (mGate->owner) mGate->owner->onServiceDied(cookie);
+    }
+  private:
+    std::shared_ptr<SeCallbackGate> mGate;
+};
+
 Return<void> HidlSeCallback::onStateChange(bool connected) {
-    if (mCb) mCb->onStateChange(connected, "hidl-1.0");
-    return Void();
+    return onStateChange_1_1(connected, "hidl-1.0");
 }
 
 Return<void> HidlSeCallback::onStateChange_1_1(bool connected, const hidl_string& reason) {
-    if (mCb) mCb->onStateChange(connected, std::string(reason));
+    if (mActive.load(std::memory_order_acquire)) mCb(connected, std::string(reason));
     return Void();
 }
 
-bool SecureElementBridge::connect() {
-    mHal = hidl_se::V1_2::ISecureElement::getService(mInstance);
-    if (mHal == nullptr) {
-        LOG(ERROR) << "HIDL ISecureElement@1.2/" << mInstance << " not found";
+void HidlSeCallback::deactivate() {
+    mActive.store(false, std::memory_order_release);
+}
+
+SecureElementBridge::SecureElementBridge(std::string instance) : mInstance(std::move(instance)) {
+    mGate = std::make_shared<SeCallbackGate>();
+    mGate->owner = this;
+    mWorker = std::thread([this] { reconnectLoop(); });
+}
+
+SecureElementBridge::~SecureElementBridge() {
+    {
+        std::lock_guard<std::mutex> l(mGate->lock);
+        mGate->owner = nullptr;
+    }
+    {
+        std::lock_guard<std::mutex> l(mLock);
+        mStopping = true;
+        ++mGeneration;
+    }
+    mChanged.notify_all();
+    mWorker.join();
+    if (mHidlCb) mHidlCb->deactivate();
+    if (mHal && mDeath) {
+        auto ret = mHal->unlinkToDeath(mDeath);
+        (void)ret.isOk();
+    }
+}
+
+::android::sp<hidl_se::V1_2::ISecureElement> SecureElementBridge::getHal() {
+    std::lock_guard<std::mutex> l(mLock);
+    return mHal;
+}
+
+::android::sp<HidlSeCallback> SecureElementBridge::makeCallback(uint64_t generation, uint64_t client) {
+    auto gate = mGate;
+    return new HidlSeCallback([gate, generation, client](bool connected, const std::string& reason) {
+        std::lock_guard<std::mutex> gateLock(gate->lock);
+        if (auto self = gate->owner) {
+            {
+                std::lock_guard<std::mutex> l(self->mLock);
+                if (self->mStopping || generation != self->mGeneration ||
+                    client != self->mClientGeneration) return;
+                self->mEvents.push_back({generation, client, connected, reason});
+            }
+            self->mChanged.notify_all();
+        }
+    });
+}
+
+void SecureElementBridge::finishInitialization() {
+    {
+        std::lock_guard<std::mutex> l(mLock);
+        mInitializing = false;
+    }
+    mChanged.notify_all();
+}
+
+bool SecureElementBridge::connect(bool wait) {
+    std::lock_guard<std::mutex> initializing(mInitLock);
+    auto hal = wait ? hidl_se::V1_2::ISecureElement::getService(mInstance)
+                    : hidl_se::V1_2::ISecureElement::tryGetService(mInstance);
+    if (hal == nullptr) return false;
+    uint64_t generation, client;
+    bool initializedClient;
+    {
+        std::lock_guard<std::mutex> l(mLock);
+        if (mStopping) return false;
+        generation = ++mGeneration;
+        client = mClientGeneration;
+        initializedClient = mClient != nullptr;
+        mInitializing = true;
+    }
+    auto death = ::android::sp<SeDeathRecipient>(new SeDeathRecipient(mGate));
+    auto linked = hal->linkToDeath(death, generation);
+    if (!linked.isOk() || !static_cast<bool>(linked)) {
+        finishInitialization();
         return false;
     }
-    LOG(INFO) << "bound to HIDL ISecureElement@1.2/" << mInstance;
-    return true;
+    auto callback = initializedClient ? makeCallback(generation, client) : nullptr;
+    bool ready = true;
+    if (callback) {
+        auto ret = hal->init_1_1(callback);
+        ready = ret.isOk();
+    }
+    {
+        std::lock_guard<std::mutex> l(mLock);
+        ready = ready && generation == mGeneration && !mStopping;
+        if (ready) {
+            mHal = hal;
+            mDeath = death;
+            mHidlCb = callback;
+            mReconnect = false;
+        }
+    }
+    if (!ready) {
+        if (callback) callback->deactivate();
+        auto ret = hal->unlinkToDeath(death);
+        (void)ret.isOk();
+        onServiceDied(generation);
+    }
+    finishInitialization();
+    return ready;
+}
+
+void SecureElementBridge::onServiceDied(uint64_t generation) {
+    ::android::sp<HidlSeCallback> callback;
+    {
+        std::lock_guard<std::mutex> l(mLock);
+        if (generation != mGeneration || mStopping) return;
+        ++mGeneration;
+        mHal = nullptr;
+        callback = mHidlCb;
+        mHidlCb = nullptr;
+        mReconnect = true;
+        if (mClient) mEvents.push_back({mGeneration, mClientGeneration, false,
+                                       "HIDL backend unavailable"});
+    }
+    if (callback) callback->deactivate();
+    mChanged.notify_all();
+}
+
+void SecureElementBridge::reconnectLoop() {
+    std::unique_lock<std::mutex> l(mLock);
+    auto retryAt = std::chrono::steady_clock::now();
+    while (!mStopping) {
+        mChanged.wait(l, [this] {
+            return mStopping || (!mInitializing && (mReconnect || !mEvents.empty()));
+        });
+        if (mStopping) break;
+        if (!mEvents.empty()) {
+            auto event = std::move(mEvents.front());
+            mEvents.pop_front();
+            if (event.generation != mGeneration || event.client != mClientGeneration) continue;
+            auto client = mClient;
+            l.unlock();
+            if (client) client->onStateChange(event.connected, event.reason);
+            l.lock();
+            continue;
+        }
+        if (std::chrono::steady_clock::now() < retryAt) {
+            mChanged.wait_until(l, retryAt, [this] { return mStopping || !mEvents.empty(); });
+            continue;
+        }
+        l.unlock();
+        bool connected = connect(false);
+        l.lock();
+        retryAt = std::chrono::steady_clock::now();
+        if (!connected) retryAt += std::chrono::seconds(2);
+    }
 }
 
 ndk::ScopedAStatus SecureElementBridge::init(
         const std::shared_ptr<aidl::android::hardware::secure_element::ISecureElementCallback>& cb) {
-    std::lock_guard<std::mutex> l(mLock);
     if (cb == nullptr) return ndk::ScopedAStatus::fromServiceSpecificError(ISecureElement::FAILED);
-    mHidlCb = new HidlSeCallback(cb);
-    auto r = mHal->init_1_1(mHidlCb);
-    if (!r.isOk()) return deadHal(r.description());
+    std::lock_guard<std::mutex> initializing(mInitLock);
+    ::android::sp<hidl_se::V1_2::ISecureElement> hal;
+    ::android::sp<HidlSeCallback> old;
+    uint64_t generation, client;
+    {
+        std::lock_guard<std::mutex> l(mLock);
+        mClient = cb;
+        client = ++mClientGeneration;
+        hal = mHal;
+        mHal = nullptr;
+        generation = mGeneration;
+        old = mHidlCb;
+        mInitializing = true;
+    }
+    if (old) old->deactivate();
+    if (!hal) {
+        {
+            std::lock_guard<std::mutex> l(mLock);
+            mEvents.push_back({generation, client, false, "HIDL backend unavailable"});
+            mReconnect = true;
+        }
+        finishInitialization();
+        return deadHal("HIDL backend unavailable");
+    }
+    auto callback = makeCallback(generation, client);
+    auto r = hal->init_1_1(callback);
+    bool ready = r.isOk();
+    {
+        std::lock_guard<std::mutex> l(mLock);
+        ready = ready && generation == mGeneration;
+        if (ready) {
+            mHal = hal;
+            mHidlCb = callback;
+        }
+    }
+    if (!ready) {
+        callback->deactivate();
+        onServiceDied(generation);
+    }
+    finishInitialization();
+    if (!ready) return deadHal("HIDL backend changed during init");
     return ndk::ScopedAStatus::ok();
 }
 
 ndk::ScopedAStatus SecureElementBridge::getAtr(std::vector<uint8_t>* out) {
-    auto r = mHal->getAtr([&](const hidl_vec<uint8_t>& atr) { *out = atr; });
+    auto hal = getHal();
+    if (!hal) return deadHal("HIDL backend unavailable");
+    auto r = hal->getAtr([&](const hidl_vec<uint8_t>& atr) { *out = atr; });
     if (!r.isOk()) return deadHal(r.description());
     return ndk::ScopedAStatus::ok();
 }
 
 ndk::ScopedAStatus SecureElementBridge::isCardPresent(bool* out) {
-    auto r = mHal->isCardPresent();
+    auto hal = getHal();
+    if (!hal) return deadHal("HIDL backend unavailable");
+    auto r = hal->isCardPresent();
     if (!r.isOk()) return deadHal(r.description());
     *out = static_cast<bool>(r);
     return ndk::ScopedAStatus::ok();
@@ -80,7 +275,9 @@ ndk::ScopedAStatus SecureElementBridge::isCardPresent(bool* out) {
 ndk::ScopedAStatus SecureElementBridge::transmit(const std::vector<uint8_t>& data,
                                                  std::vector<uint8_t>* out) {
     std::vector<uint8_t> rsp;
-    auto r = mHal->transmit(data, [&](const hidl_vec<uint8_t>& v) { rsp = v; });
+    auto hal = getHal();
+    if (!hal) return deadHal("HIDL backend unavailable");
+    auto r = hal->transmit(data, [&](const hidl_vec<uint8_t>& v) { rsp = v; });
     if (!r.isOk()) return deadHal(r.description());
     // HIDL does not return a status: an empty response = a failed exchange (the stock Terminal.java treats it the same way).
     if (rsp.empty()) return ndk::ScopedAStatus::fromServiceSpecificError(ISecureElement::IOERROR);
@@ -91,7 +288,9 @@ ndk::ScopedAStatus SecureElementBridge::transmit(const std::vector<uint8_t>& dat
 ndk::ScopedAStatus SecureElementBridge::openLogicalChannel(const std::vector<uint8_t>& aid, int8_t p2,
                                                            LogicalChannelResponse* out) {
     HStatus st = HStatus::FAILED;
-    auto r = mHal->openLogicalChannel(
+    auto hal = getHal();
+    if (!hal) return deadHal("HIDL backend unavailable");
+    auto r = hal->openLogicalChannel(
             aid, static_cast<uint8_t>(p2),
             [&](const hidl_se::V1_0::LogicalChannelResponse& rsp, HStatus s) {
                 st = s;
@@ -105,7 +304,9 @@ ndk::ScopedAStatus SecureElementBridge::openLogicalChannel(const std::vector<uin
 ndk::ScopedAStatus SecureElementBridge::openBasicChannel(const std::vector<uint8_t>& aid, int8_t p2,
                                                          std::vector<uint8_t>* out) {
     HStatus st = HStatus::FAILED;
-    auto r = mHal->openBasicChannel(aid, static_cast<uint8_t>(p2),
+    auto hal = getHal();
+    if (!hal) return deadHal("HIDL backend unavailable");
+    auto r = hal->openBasicChannel(aid, static_cast<uint8_t>(p2),
                                     [&](const hidl_vec<uint8_t>& sel, HStatus s) {
                                         st = s;
                                         *out = sel;
@@ -115,13 +316,17 @@ ndk::ScopedAStatus SecureElementBridge::openBasicChannel(const std::vector<uint8
 }
 
 ndk::ScopedAStatus SecureElementBridge::closeChannel(int8_t channelNumber) {
-    auto r = mHal->closeChannel(static_cast<uint8_t>(channelNumber));
+    auto hal = getHal();
+    if (!hal) return deadHal("HIDL backend unavailable");
+    auto r = hal->closeChannel(static_cast<uint8_t>(channelNumber));
     if (!r.isOk()) return deadHal(r.description());
     return fromHidl(static_cast<HStatus>(r));
 }
 
 ndk::ScopedAStatus SecureElementBridge::reset() {
-    auto r = mHal->reset();
+    auto hal = getHal();
+    if (!hal) return deadHal("HIDL backend unavailable");
+    auto r = hal->reset();
     if (!r.isOk()) return deadHal(r.description());
     return fromHidl(static_cast<HStatus>(r));
 }

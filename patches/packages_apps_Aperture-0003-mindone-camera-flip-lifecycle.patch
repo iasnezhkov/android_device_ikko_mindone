@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Date: Tue, 13 Oct 2026 13:35:00 +0300
+Subject: [PATCH] Respect explicit camera facing and ignore premature hall events
+
+diff --git a/app/src/main/java/org/lineageos/aperture/CameraActivity.kt b/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
+--- a/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
++++ b/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
+@@ -152,7 +152,15 @@
+
+     // mindone: switches the active camera when the flip-camera module's hall
+     // switch fires while the app is running. See CAMERA-FLIP-PLAN-1309.
+-    private val cameraFlipReceiver = MindOneCameraFlip.Receiver { viewModel.setCameraFacing(it) }
++    private val cameraFlipReceiver = MindOneCameraFlip.Receiver {
++        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
++            && assistantIntent?.useFrontCamera == null
++            && intent.action != ShortcutsUtils.SHORTCUT_ID_SELFIE
++            && intent.action != ShortcutsUtils.SHORTCUT_ID_VIDEO
++        ) {
++            viewModel.setCameraFacing(it)
++        }
++    }
+
+     // Views
+     private val aspectRatioButton by lazy { findViewById<Button>(R.id.aspectRatioButton) }
+diff --git a/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt b/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
+--- a/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
++++ b/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
+@@ -1281,6 +1281,9 @@
+     fun setCameraFacing(
+         cameraFacing: CameraFacing,
+     ) = viewModelScope.launch {
++        if (_cameraConfiguration.value == null) {
++            return@launch
++        }
+         updateConfiguration<CameraConfiguration> { cameraConfiguration ->
+             if (cameraConfiguration.camera.cameraFacing == cameraFacing) {
+                 return@updateConfiguration cameraConfiguration

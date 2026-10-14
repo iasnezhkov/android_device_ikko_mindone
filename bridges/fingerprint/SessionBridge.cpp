@@ -91,6 +91,7 @@ Return<void> HidlCallback::onAuthenticated(uint64_t, uint32_t fingerId, uint32_t
 
 Return<void> HidlCallback::onError(uint64_t, hfp::FingerprintError error, int32_t vendorCode) {
     if (!active_.load(std::memory_order_relaxed)) return Void();
+    if (removal_.fail()) return Void();
     const int32_t raw = static_cast<int32_t>(error);
     if (raw == 7) {            // ERROR_LOCKOUT
         cb_->onLockoutTimed(kLockoutTimedMs);
@@ -104,13 +105,19 @@ Return<void> HidlCallback::onError(uint64_t, hfp::FingerprintError error, int32_
 
 Return<void> HidlCallback::onRemoved(uint64_t, uint32_t fingerId, uint32_t, uint32_t remaining) {
     if (!active_.load(std::memory_order_relaxed)) return Void();
-    std::lock_guard<std::mutex> g(lock_);
-    if (fingerId != 0) removed_.push_back(static_cast<int32_t>(fingerId));
-    if (remaining == 0) {
-        cb_->onEnrollmentsRemoved(removed_);
-        removed_.clear();
-    }
+    removal_.result(static_cast<int32_t>(fingerId), remaining);
     return Void();
+}
+
+bool HidlCallback::removeEnrollments(const std::vector<int32_t>& ids,
+                                    ::android::sp<hfp::IBiometricsFingerprint> hidl,
+                                    uint32_t userId) {
+    return removal_.start(ids, [hidl, userId](int32_t id) {
+        auto ret = hidl->remove(userId, static_cast<uint32_t>(id));
+        return ret.isOk() && static_cast<hfp::RequestStatus>(ret) == hfp::RequestStatus::SYS_OK;
+    }, [this](const std::vector<int32_t>& removed) {
+        if (active_.load(std::memory_order_relaxed)) cb_->onEnrollmentsRemoved(removed);
+    });
 }
 
 Return<void> HidlCallback::onEnumerate(uint64_t, uint32_t fingerId, uint32_t, uint32_t remaining) {
@@ -268,22 +275,8 @@ ndk::ScopedAStatus SessionBridge::removeEnrollments(const std::vector<int32_t>& 
         cb_->onEnrollmentsRemoved({});
         return ndk::ScopedAStatus::ok();
     }
-    bool anyAccepted = false;
-    for (int32_t id : ids) {
-        auto ret = hidl_->remove(static_cast<uint32_t>(userId_), static_cast<uint32_t>(id));
-        if (!ret.isOk() || static_cast<hfp::RequestStatus>(ret) != hfp::RequestStatus::SYS_OK) {
-            LOG(ERROR) << "remove(" << id << "): request rejected, HIDL status "
-                       << (ret.isOk() ? static_cast<int32_t>(static_cast<hfp::RequestStatus>(ret)) : -1);
-        } else {
-            anyAccepted = true;
-        }
-    }
-    if (!anyAccepted && !ids.empty()) {
-        // Same reasoning as enumerateEnrollments() above: if none of the individual remove()
-        // requests were accepted, onRemoved() will never fire for any of them, and
-        // removeEnrollments() has no onError alternative either.
-        cb_->onEnrollmentsRemoved({});
-    }
+    if (!hidlCb_->removeEnrollments(ids, hidl_, static_cast<uint32_t>(userId_)))
+        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_STATE);
     return ndk::ScopedAStatus::ok();
 }
 
@@ -337,13 +330,13 @@ ndk::ScopedAStatus SessionBridge::resetLockout(const HardwareAuthToken& hat) {
 }
 
 ndk::ScopedAStatus SessionBridge::close() {
+    hidlCb_->deactivate();
     if (!dead_.load(std::memory_order_relaxed)) {
         check(hidl_->cancel(), "cancel");
     }
     // Deactivate unconditionally (not just in the dead_ branch): once close() returns
     // onSessionClosed(), the framework considers this session gone and must not receive any
     // further callback from it, even a straggler from the stock HAL that was already in flight.
-    hidlCb_->deactivate();
     cb_->onSessionClosed();
     return ndk::ScopedAStatus::ok();
 }

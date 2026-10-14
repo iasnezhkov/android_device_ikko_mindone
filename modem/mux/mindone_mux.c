@@ -992,8 +992,18 @@ static void handle_frame(uint8_t dlci, uint8_t ctrl, const uint8_t *data, size_t
 			on_dm(c);
 		break;
 	case CTRL_SABM:
-		if (c)
-			c->open = true;
+		if (!c || (c != &ctl && c->fd < 0 && chan_open_pty(c))) {
+			tx_frame(dlci, CTRL_DM | CTRL_PF, NULL, 0);
+			break;
+		}
+		c->open = true;
+		c->disc_sent = false;
+		c->refused = false;
+		c->refused_logged = false;
+		if (c->sabm_sent) {
+			c->sabm_sent = false;
+			resolve();
+		}
 		tx_frame(dlci, CTRL_UA | CTRL_PF, NULL, 0);
 		break;
 	case CTRL_DISC:
@@ -1206,9 +1216,11 @@ static void run(void)
 				chan_drain(c);
 			if (c->fd != pfd[k].fd)
 				continue;
-			if (ev & POLLIN)
-				chan_read(c);
-			else if (ev & (POLLHUP | POLLERR | POLLNVAL))
+			if (ev & POLLIN) {
+				if (setup_done && (c->open || c->refused) &&
+				    !c->peer_fc && can_take_pty_data())
+					chan_read(c);
+			} else if (ev & (POLLHUP | POLLERR | POLLNVAL))
 				chan_reopen(c);
 		}
 		if (txq_len && tx_flush())

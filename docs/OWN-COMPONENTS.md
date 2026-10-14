@@ -62,7 +62,7 @@ default build leaves the binary untouched.
 
 ## Video decode/encode — `patches/external_v4l2_codec2-*`
 
-Not a directory in this tree but a 29-patch series against the open `external_v4l2_codec2`
+Not a directory in this tree but a 35-patch series against the open `external_v4l2_codec2`
 project, applied at build time (`MINDONE_OWN_CODEC2`, on by default) in place of the stock MediaTek
 OMX/C2 HAL chain. It adds what MediaTek's SoC needs and the open project does not provide on its
 own: detiling MediaTek's block (tiled) pixel format through the MDP hardware block, with a CPU

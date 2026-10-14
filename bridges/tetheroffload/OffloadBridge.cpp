@@ -81,7 +81,12 @@ hidl_handle handleFromFd(const ndk::ScopedFileDescriptor& fd) {
     hidl_handle h;
     if (fd.get() < 0) return h;
     native_handle_t* nh = native_handle_create(1, 0);
+    if (nh == nullptr) return h;
     nh->data[0] = dup(fd.get());
+    if (nh->data[0] < 0) {
+        native_handle_delete(nh);
+        return h;
+    }
     h.setTo(nh, true /*shouldOwn*/);
     return h;
 }
@@ -175,8 +180,14 @@ ndk::ScopedAStatus OffloadBridge::initOffload(const ndk::ScopedFileDescriptor& f
     if (config == nullptr || control == nullptr) return notConnected("initOffload");
 
     // Order matches OffloadHalHidlImpl.java: sockets first (config.setHandles), then control.initOffload.
+    auto handle1 = handleFromFd(fd1);
+    auto handle2 = handleFromFd(fd2);
+    if (handle1.getNativeHandle() == nullptr || handle2.getNativeHandle() == nullptr) {
+        return ndk::ScopedAStatus::fromServiceSpecificErrorWithMessage(
+                aidl_to::IOffload::ERROR_CODE_UNUSED, "Failed to duplicate offload sockets");
+    }
     BoolResult r;
-    auto t = config->setHandles(handleFromFd(fd1), handleFromFd(fd2), collect(r));
+    auto t = config->setHandles(handle1, handle2, collect(r));
     auto st = toAidl(t, r, "setHandles");
     if (!st.isOk()) return st;
     auto hidlCb = ::android::sp<HidlOffloadCallback>(new HidlOffloadCallback(cb));

@@ -1,0 +1,55 @@
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Subject: [PATCH] Validate resolution format and own fallback crop values
+
+Stop resolution changes when the capture format query fails instead of
+dereferencing an empty optional. Copy the selected crop rectangle so the
+legacy crop ioctl fallback does not leave a pointer to an expired local.
+
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -847,6 +847,10 @@
+     mVideoFramePool.reset();
+     // Use flexible pixel 420 format YCBCR_420_888 for 8-bit and P010 for 10-bit.
+     const std::optional<struct v4l2_format> format = getFormatInfo();
++    if (!format) {
++        ALOGE("Failed to query capture format during resolution change.");
++        return false;
++    }
+     const uint32_t capturePixfmt = format->fmt.pix_mp.pixelformat;
+     const bool captureIs10Bit = capturePixfmt == V4L2_PIX_FMT_P010 ||
+                                 capturePixfmt == kMt21S10TFourcc ||
+@@ -1047,7 +1051,7 @@
+     ALOGV("%s()", __func__);
+     ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
+ 
+-    struct v4l2_rect* visible_rect = nullptr;
++    struct v4l2_rect visible_rect = {};
+     struct v4l2_selection selection_arg;
+     memset(&selection_arg, 0, sizeof(selection_arg));
+     selection_arg.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+@@ -1055,7 +1059,7 @@
+ 
+     if (mDevice->ioctl(VIDIOC_G_SELECTION, &selection_arg) == 0) {
+         ALOGV("VIDIOC_G_SELECTION is supported");
+-        visible_rect = &selection_arg.r;
++        visible_rect = selection_arg.r;
+     } else {
+         ALOGV("Fallback to VIDIOC_G_CROP");
+         struct v4l2_crop crop_arg;
+@@ -1066,11 +1070,11 @@
+             ALOGW("ioctl() VIDIOC_G_CROP failed");
+             return Rect(codedSize.width, codedSize.height);
+         }
+-        visible_rect = &crop_arg.c;
+-    }
+-
+-    Rect rect(visible_rect->left, visible_rect->top, visible_rect->left + visible_rect->width,
+-              visible_rect->top + visible_rect->height);
++        visible_rect = crop_arg.c;
++    }
++
++    Rect rect(visible_rect.left, visible_rect.top, visible_rect.left + visible_rect.width,
++              visible_rect.top + visible_rect.height);
+     ALOGV("visible rectangle is %s", toString(rect).c_str());
+     if (!contains(Rect(codedSize.width, codedSize.height), rect)) {
+         ALOGW("visible rectangle %s is not inside coded size %s", toString(rect).c_str(),
