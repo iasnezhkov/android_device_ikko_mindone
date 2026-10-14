@@ -43,8 +43,8 @@ from their own device, as [docs/BLOBS.md](docs/BLOBS.md) describes.
 <tr><td><b>🌉 HIDL bridges</b><br><sub>2 800 lines</sub></td>
 <td>Five services keeping closed HIDL HALs reachable: four bridge to AIDL as VINTF rises toward
 Android 17, one proxies the camera provider (opt-in, not yet verified on hardware).</td></tr>
-<tr><td><b>🎬 Video (Codec2)</b><br><sub>35 patches</sub></td>
-<td>Hardware decode/encode through the open V4L2 Codec2 HAL — 35 patches to
+<tr><td><b>🎬 Video (Codec2)</b><br><sub>36 patches</sub></td>
+<td>Hardware decode/encode through the open V4L2 Codec2 HAL — 36 patches to
 <code>external_v4l2_codec2</code> adding MediaTek block-format support, on by default.</td></tr>
 <tr><td><b>📡 Modem stack</b><br><sub>11 000 lines</sub></td>
 <td>Open CCCI userspace. <b>Not shipped</b>, except one small status helper — see why below.</td></tr>

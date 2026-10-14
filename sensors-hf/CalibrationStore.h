@@ -7,9 +7,11 @@
 #define MINDONE_CALIBRATION_STORE_H_
 
 #include <array>
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -46,6 +48,7 @@ class CalibrationStore {
     };
 
     explicit CalibrationStore(std::string baseDir = "/mnt/vendor/nvcfg/sensor");
+    ~CalibrationStore();
 
     // Builds each calibratable sensor_type's CONFIG_CALI payload from the
     // nvcfg JSON files (missing file -> that region stays zero-filled,
@@ -84,21 +87,16 @@ class CalibrationStore {
     static const std::array<SensorLayout, 4>& allLayouts();
 
   private:
+    static constexpr int64_t kMinRewriteIntervalMs = 2000;
+
     struct CachedRegion {
         std::vector<int32_t> values;
-        int64_t lastWriteMs = 0;
+        std::vector<int32_t> persistedValues;
+        int64_t lastAttemptMs = -kMinRewriteIntervalMs;
         bool haveValue = false;
+        bool havePersistedValue = false;
+        bool pending = false;
     };
-
-    // Minimum time between two nvcfg writes for the SAME region (bias or
-    // cali) of the SAME sensor_type, when the incoming value keeps
-    // changing. Guards flash wear against a hypothetical runaway SCP-side
-    // auto-recalibration loop; a real factory/runtime calibration result is
-    // expected at most a handful of times per boot (task premise: "this is
-    // what the stock HAL does when the SCP finishes a runtime calibration",
-    // i.e. an occasional, explicit event, not a stream). An IDENTICAL value
-    // is always a no-op regardless of this timer (see persistRegion()).
-    static constexpr int64_t kMinRewriteIntervalMs = 2000;
 
     std::vector<uint8_t> buildPayload(const SensorLayout& layout);
     // Records the values read from disk so a later kernel report carrying the same
@@ -108,10 +106,16 @@ class CalibrationStore {
     void persistRegion(const SensorLayout& layout, bool isBias, const int32_t* words,
                         size_t count);
 
+    void writePending(const SensorLayout& layout, bool isBias, CachedRegion& cache);
+    void persistenceLoop();
+
     const std::string baseDir_;
     std::mutex mutex_;
     std::unordered_map<uint8_t, CachedRegion> biasCache_;
     std::unordered_map<uint8_t, CachedRegion> caliCache_;
+    std::condition_variable changed_;
+    bool stopping_ = false;
+    std::thread writer_;
 };
 
 }  // namespace hf

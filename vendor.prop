@@ -325,5 +325,16 @@ ro.vendor.wifi.sap.interface=ap0
 ro.vendor.mtk_widevine_drm_l3_support=1
 
 log.tag.C2MtkBufferManager=SILENT
+log.tag.AT=I
+log.tag.RILC=I
+log.tag.RfxCloneMgr=I
+log.tag.RfxHandlerMgr=I
+log.tag.RfxMainThread=I
+log.tag.RfxMclDisThread=I
+log.tag.RfxMclStatusMgr=I
+log.tag.RfxRilAdapter=I
+log.tag.RfxRoot=I
+log.tag.RfxStatusMgr=I
+log.tag.RmcNwHdlr=I
 
 debug.stagefright.c2inputsurface=-1

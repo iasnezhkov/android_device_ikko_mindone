@@ -9,6 +9,7 @@
       "HotHysteresis": [0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 0.0],
       "VrThreshold": "NAN",
       "Multiplier": 0.001,
+      "LogLevel": 1,
       "Monitor": true,
       "PollingDelay": 10000,
       "PassiveDelay": 2000
@@ -21,6 +22,7 @@
       "HotHysteresis": [0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 0.0],
       "VrThreshold": "NAN",
       "Multiplier": 0.001,
+      "LogLevel": 1,
       "Monitor": true,
       "PollingDelay": 10000,
       "PassiveDelay": 2000
@@ -33,6 +35,7 @@
       "HotHysteresis": [0.0, 2.0, 2.0, 2.0, 2.0, 2.0, 0.0],
       "VrThreshold": "NAN",
       "Multiplier": 0.001,
+      "LogLevel": 1,
       "Monitor": true,
       "PollingDelay": 10000,
       "PassiveDelay": 2000
@@ -45,6 +48,7 @@
       "HotHysteresis": [0.0, 0.0, 2.0, 2.0, 2.0, 1.0, 0.0],
       "VrThreshold": "NAN",
       "Multiplier": 0.001,
+      "LogLevel": 1,
       "Monitor": true,
       "PollingDelay": 30000,
       "PassiveDelay": 5000
@@ -57,6 +61,7 @@
       "HotHysteresis": [0.0, 2.0, 2.0, 2.0, 1.0, 1.0, 0.0],
       "VrThreshold": "NAN",
       "Multiplier": 0.001,
+      "LogLevel": 1,
       "Monitor": true,
       "PollingDelay": 60000,
       "PassiveDelay": 5000,
@@ -76,6 +81,7 @@
       "HotHysteresis": [0.0, 0.0, 2.0, 2.0, 2.0, 2.0, 0.0],
       "VrThreshold": "NAN",
       "Multiplier": 0.001,
+      "LogLevel": 1,
       "Monitor": true,
       "PollingDelay": 60000,
       "PassiveDelay": 5000
@@ -88,6 +94,7 @@
       "HotHysteresis": [0.0, 0.0, 2.0, 2.0, 2.0, 2.0, 0.0],
       "VrThreshold": "NAN",
       "Multiplier": 0.001,
+      "LogLevel": 1,
       "Monitor": true,
       "PollingDelay": 60000,
       "PassiveDelay": 5000,
@@ -107,6 +114,7 @@
       "HotHysteresis": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
       "VrThreshold": "NAN",
       "Multiplier": 0.001,
+      "LogLevel": 1,
       "Monitor": true,
       "PollingDelay": 60000,
       "PassiveDelay": 5000,

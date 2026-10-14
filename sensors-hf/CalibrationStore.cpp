@@ -7,8 +7,10 @@
 #include "CalibrationStore.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <ctime>
+#include <limits>
 
 #include <log/log.h>
 
@@ -114,13 +116,25 @@ const CalibrationStore::SensorLayout* CalibrationStore::layoutFor(uint8_t sensor
     return nullptr;
 }
 
-CalibrationStore::CalibrationStore(std::string baseDir) : baseDir_(std::move(baseDir)) {}
+CalibrationStore::CalibrationStore(std::string baseDir)
+    : baseDir_(std::move(baseDir)), writer_(&CalibrationStore::persistenceLoop, this) {}
+
+CalibrationStore::~CalibrationStore() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopping_ = true;
+        changed_.notify_one();
+    }
+    writer_.join();
+}
 
 void CalibrationStore::seedCache(CachedRegion* cache, const std::vector<int32_t>& values) {
-    // Called with mutex_ held (pushAll). lastWriteMs stays 0: a genuinely new value may be
-    // persisted right away; an SCP report that merely echoes the pushed values is a no-op.
+    if (cache->haveValue && (!cache->havePersistedValue ||
+                            cache->values != cache->persistedValues)) return;
     cache->values = values;
+    cache->persistedValues = values;
     cache->haveValue = true;
+    cache->havePersistedValue = true;
 }
 
 std::vector<uint8_t> CalibrationStore::buildPayload(const SensorLayout& layout) {
@@ -251,55 +265,39 @@ void CalibrationStore::persistRegion(const SensorLayout& layout, bool isBias,
                                       const int32_t* words, size_t count) {
     auto& cache = isBias ? biasCache_[layout.sensorType] : caliCache_[layout.sensorType];
     const std::vector<int32_t> newValues(words, words + count);
-    const char* what = isBias ? "bias" : "cali";
-
-    if (cache.haveValue && cache.values == newValues) {
-        return;  // unchanged - nothing to log, nothing to write
-    }
+    const bool unchanged = cache.haveValue && cache.values == newValues;
+    if (unchanged && (cache.pending || allZero(newValues) ||
+                      (cache.havePersistedValue && cache.persistedValues == newValues))) return;
+    const bool wasPending = cache.pending;
+    cache.values = newValues;
+    cache.haveValue = true;
     if (allZero(newValues)) {
-        // An all-zero report is the SCP's "no calibration" state, not a measured result
-        // (the factory files on this device are all non-zero). Persisting it would erase
-        // the factory data on disk, so keep it in RAM only and say so once per change.
-        ALOGW("sensor_type=%u (%s): %s reported all-zero - not persisted (factory data kept)",
-              layout.sensorType, layout.name, what);
-        cache.values = newValues;
-        cache.haveValue = true;
-        return;
+        if (!unchanged) {
+            ALOGW("sensor_type=%u (%s): %s reported all-zero - not persisted (factory data kept)",
+                  layout.sensorType, layout.name, isBias ? "bias" : "cali");
+        }
+        cache.pending = false;
+    } else {
+        cache.pending = !cache.havePersistedValue || cache.persistedValues != newValues;
     }
-
-    const int64_t now = nowMs();
-    if (cache.haveValue && (now - cache.lastWriteMs) < kMinRewriteIntervalMs) {
-        ALOGW("sensor_type=%u (%s): %s changed again within %lldms of the last nvcfg write - "
-              "updating memory only, throttling the write (flash-wear guard)",
-              layout.sensorType, layout.name, what,
-              static_cast<long long>(kMinRewriteIntervalMs));
-        cache.values = newValues;  // keep latest in RAM so a later diff is still correct
-        return;
+    if (cache.pending && nowMs() - cache.lastAttemptMs >= kMinRewriteIntervalMs) {
+        writePending(layout, isBias, cache);
     }
+    if (cache.pending != wasPending) changed_.notify_one();
+}
 
+void CalibrationStore::writePending(const SensorLayout& layout, bool isBias,
+                                    CachedRegion& cache) {
     const char* file = isBias ? layout.biasFile : layout.caliFile;
     const char* key = isBias ? layout.biasKey : layout.caliKey;
-    if (!file) {
-        // Currently unreachable (every region with length>0 in the table
-        // above has a filename), kept as a guard against a future table
-        // entry that adds a region without a filename.
-        ALOGW("sensor_type=%u (%s): %s updated but no nvcfg filename is known - not persisted",
-              layout.sensorType, layout.name, what);
-        return;
-    }
-
-    // Deliberately always writes the plain {biasKey:[...]}/{caliKey:[...]}
-    // shape, never attempts to reconstruct a combined file (see buildPayload
-    // ()'s auto-detected combined-file case). On a device that started with
-    // a combined acc_cali.json, the FIRST runtime bias update forks it into
-    // acc_bias.json + acc_cali.json - both shapes are read correctly by
-    // buildPayload() on the next boot, so this is a one-time format
-    // migration, not a bug.
+    const char* what = isBias ? "bias" : "cali";
+    cache.pending = false;
+    cache.lastAttemptMs = nowMs();
+    if (!file || !key) return;
     const std::string path = baseDir_ + "/" + file;
-    if (nvcfg_json::writeIntArray(path, key, newValues)) {
-        cache.values = newValues;
-        cache.haveValue = true;
-        cache.lastWriteMs = now;
+    if (nvcfg_json::writeIntArray(path, key, cache.values)) {
+        cache.persistedValues = cache.values;
+        cache.havePersistedValue = true;
         ALOGI("sensor_type=%u (%s): persisted runtime %s -> %s", layout.sensorType, layout.name,
               what, path.c_str());
     } else {
@@ -308,5 +306,37 @@ void CalibrationStore::persistRegion(const SensorLayout& layout, bool isBias,
     }
 }
 
-}  // namespace hf
-}  // namespace mindone
+void CalibrationStore::persistenceLoop() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (;;) {
+        int64_t next = std::numeric_limits<int64_t>::max();
+        for (const auto& layout : allLayouts()) {
+            for (bool isBias : {true, false}) {
+                auto& regions = isBias ? biasCache_ : caliCache_;
+                auto it = regions.find(layout.sensorType);
+                if (it == regions.end()) continue;
+                auto& cache = it->second;
+                if (stopping_) {
+                    cache.pending = cache.haveValue && !allZero(cache.values) &&
+                            (!cache.havePersistedValue || cache.values != cache.persistedValues);
+                }
+                if (!cache.pending) continue;
+                const int64_t due = cache.lastAttemptMs + kMinRewriteIntervalMs;
+                if (stopping_ || nowMs() >= due) {
+                    writePending(layout, isBias, cache);
+                } else {
+                    next = std::min(next, due);
+                }
+            }
+        }
+        if (stopping_) return;
+        if (next == std::numeric_limits<int64_t>::max()) {
+            changed_.wait(lock);
+        } else {
+            changed_.wait_for(lock, std::chrono::milliseconds(std::max<int64_t>(0, next - nowMs())));
+        }
+    }
+}
+
+}
+}

@@ -1364,8 +1364,7 @@ static int out_set_sample_rate(struct audio_stream *stream, uint32_t rate)
 static size_t out_get_buffer_size(const struct audio_stream *stream)
 {
     struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
-    return out->config.period_size * out->config.period_count *
-           audio_stream_out_frame_size(&out->stream);
+    return out->config.period_size * audio_stream_out_frame_size(&out->stream);
 }
 
 static audio_channel_mask_t out_get_channels(const struct audio_stream *stream)

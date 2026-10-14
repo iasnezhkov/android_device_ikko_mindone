@@ -1,0 +1,271 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Date: Wed, 14 Oct 2026 10:00:00 +0300
+Subject: [PATCH] Stage incompatible decoder input DMA allocations
+
+diff --git a/v4l2/TiledCaptureBuffer.cpp b/v4l2/TiledCaptureBuffer.cpp
+--- a/v4l2/TiledCaptureBuffer.cpp
++++ b/v4l2/TiledCaptureBuffer.cpp
+@@ -64,7 +64,8 @@
+ }
+
+ TiledCaptureBuffer::TiledCaptureBuffer(TiledCaptureBuffer&& other) noexcept
+-      : mFd(other.mFd), mMapping(other.mMapping), mSize(other.mSize) {
++      : mWritable(other.mWritable), mFd(other.mFd), mMapping(other.mMapping), mSize(other.mSize) {
++    other.mWritable = false;
+     other.mFd = -1;
+     other.mMapping = nullptr;
+     other.mSize = 0;
+@@ -73,9 +74,11 @@
+ TiledCaptureBuffer& TiledCaptureBuffer::operator=(TiledCaptureBuffer&& other) noexcept {
+     if (this != &other) {
+         release();
++        mWritable = other.mWritable;
+         mFd = other.mFd;
+         mMapping = other.mMapping;
+         mSize = other.mSize;
++        other.mWritable = false;
+         other.mFd = -1;
+         other.mMapping = nullptr;
+         other.mSize = 0;
+@@ -84,20 +87,28 @@
+ }
+
+ bool TiledCaptureBuffer::allocate(size_t size) {
++    return allocate(size, false);
++}
++
++bool TiledCaptureBuffer::allocate(size_t size, bool writable) {
+     release();
++    if (size == 0) {
++        return false;
++    }
+
+     const int fd = allocFromAnyHeap(size);
+     if (fd < 0) {
+         return false;
+     }
+
+-    void* addr = mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0);
++    void* addr = mmap(nullptr, size, PROT_READ | (writable ? PROT_WRITE : 0), MAP_SHARED, fd, 0);
+     if (addr == MAP_FAILED) {
+         ALOGE("mmap failed for tiled CAPTURE buffer of %zu bytes: %s", size, strerror(errno));
+         close(fd);
+         return false;
+     }
+
++    mWritable = writable;
+     mFd = fd;
+     mMapping = static_cast<uint8_t*>(addr);
+     mSize = size;
+@@ -114,6 +125,21 @@
+         mFd = -1;
+     }
+     mSize = 0;
++    mWritable = false;
++}
++
++bool TiledCaptureBuffer::copyFrom(const uint8_t* data, size_t size, size_t capacity) {
++    if (!data || size == 0 || size > capacity) {
++        return false;
++    }
++    if ((!isValid() || !mWritable || mSize != capacity) && !allocate(capacity, true)) {
++        return false;
++    }
++    if (!syncDmaBuf(mFd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE)) {
++        return false;
++    }
++    memcpy(mMapping, data, size);
++    return syncDmaBuf(mFd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE);
+ }
+
+ bool TiledCaptureBuffer::syncStartRead() const {
+diff --git a/v4l2/V4L2Decoder.cpp b/v4l2/V4L2Decoder.cpp
+--- a/v4l2/V4L2Decoder.cpp
++++ b/v4l2/V4L2Decoder.cpp
+@@ -9,8 +9,10 @@
+ #include <v4l2_codec2/v4l2/V4L2Decoder.h>
+
+ #include <stdint.h>
++#include <sys/stat.h>
+
+ #include <algorithm>
++#include <limits>
+ #include <vector>
+
+ #include <base/bind.h>
+@@ -221,6 +223,10 @@
+         return false;
+     }
+     ALOG_ASSERT(format->fmt.pix_mp.pixelformat == inputPixelFormat);
++    mInputBufferSize = format->fmt.pix_mp.plane_fmt[0].sizeimage;
++    if (mInputBufferSize == 0) {
++        return false;
++    }
+
+     if (mInputQueue->allocateBuffers(kNumInputBuffers, V4L2_MEMORY_DMABUF) == 0) {
+         ALOGE("Failed to allocate input buffer.");
+@@ -484,7 +490,18 @@
+             return;
+         }
+
+-        auto dma_buf_id = getDmabufId(mDecodeRequests.front().buffer->dmabuf.handle()->data[0]);
++        const auto& bitstream = *mDecodeRequests.front().buffer;
++        const auto* handle = bitstream.dmabuf.handle();
++        struct stat allocation = {};
++        if (!handle || handle->numFds < 1 || fstat(handle->data[0], &allocation) != 0 ||
++            allocation.st_size <= 0 ||
++            static_cast<uint64_t>(allocation.st_size) > std::numeric_limits<size_t>::max()) {
++            ALOGE("Invalid input allocation");
++            onError();
++            return;
++        }
++        const size_t allocationSize = static_cast<size_t>(allocation.st_size);
++        auto dma_buf_id = getDmabufId(handle->data[0]);
+         if (!dma_buf_id) {
+             ALOGE("Failed to get dmabuf id");
+             onError();
+@@ -493,6 +510,16 @@
+
+         std::optional<V4L2WritableBufferRef> inputBuffer;
+         size_t targetIndex = 0;
++        if (allocationSize < mInputBufferSize || bitstream.offset != 0) {
++            for (size_t index = 0; index < kNumInputBuffers; ++index) {
++                if (mInputStaging[index].isValid()) {
++                    inputBuffer = mInputQueue->getFreeBuffer(index);
++                    if (inputBuffer) {
++                        break;
++                    }
++                }
++            }
++        }
+
+         // If there's an existing input buffer for this dma buffer, use it.
+         for (; targetIndex < mNextInputBufferId; targetIndex++) {
+@@ -501,7 +528,7 @@
+             }
+         }
+
+-        if (targetIndex < kNumInputBuffers) {
++        if (!inputBuffer && targetIndex < kNumInputBuffers) {
+             // If we didn't find a buffer and there is an unused buffer, use that one.
+             if (targetIndex == mNextInputBufferId) {
+                 mNextInputBufferId++;
+@@ -523,34 +550,53 @@
+
+         mLastDmaBufferId[inputBuffer->bufferId()] = *dma_buf_id;
+
++        const int32_t bitstreamId = bitstream.id;
++        if (!queueInputBuffer(std::move(*inputBuffer), bitstream, allocationSize)) {
++            ALOGE("Failed to prepare or queue input buffer, bitstreamId=%d", bitstreamId);
++            onError();
++            return;
++        }
+         auto request = std::move(mDecodeRequests.front());
+         mDecodeRequests.pop();
+
+-        const int32_t bitstreamId = request.buffer->id;
+-        ALOGV("QBUF to input queue, bitstreadId=%d", bitstreamId);
+-        inputBuffer->setTimeStamp({.tv_sec = bitstreamId});
+-        size_t planeSize = inputBuffer->getPlaneSize(0);
+-        if (request.buffer->size > planeSize) {
+-            ALOGE("The input size (%zu) is not enough, we need %zu", planeSize,
+-                  request.buffer->size);
+-            onError();
+-            return;
+-        }
+-
+-        ALOGV("Set bytes_used=%zu, offset=%zu", request.buffer->offset + request.buffer->size,
+-              request.buffer->offset);
+-        inputBuffer->setPlaneDataOffset(0, request.buffer->offset);
+-        inputBuffer->setPlaneBytesUsed(0, request.buffer->offset + request.buffer->size);
+-        std::vector<int> fds;
+-        fds.push_back(std::move(request.buffer->dmabuf.handle()->data[0]));
+-        if (!std::move(*inputBuffer).queueDMABuf(fds)) {
+-            ALOGE("%s(): Failed to QBUF to input queue, bitstreamId=%d", __func__, bitstreamId);
+-            onError();
+-            return;
+-        }
+-
+         mPendingDecodeCbs.insert(std::make_pair(bitstreamId, std::move(request.decodeCb)));
+     }
++}
++
++bool V4L2Decoder::queueInputBuffer(V4L2WritableBufferRef inputBuffer,
++                                   const ConstBitstreamBuffer& buffer, size_t allocationSize) {
++    const size_t planeSize = inputBuffer.getPlaneSize(0);
++    const size_t blockOffset = buffer.dmabuf.offset();
++    const size_t blockSize = buffer.dmabuf.size();
++    if (buffer.size == 0 || buffer.size > planeSize ||
++        buffer.offset > allocationSize || buffer.size > allocationSize - buffer.offset ||
++        buffer.offset < blockOffset || buffer.offset - blockOffset > blockSize ||
++        buffer.size > blockSize - (buffer.offset - blockOffset)) {
++        return false;
++    }
++    size_t offset = buffer.offset;
++    int fd = buffer.dmabuf.handle()->data[0];
++    if (allocationSize < planeSize || offset != 0) {
++        if (mIsSecure || inputBuffer.bufferId() >= kNumInputBuffers) {
++            return false;
++        }
++        C2ReadView view = buffer.dmabuf.map().get();
++        const size_t viewOffset = offset - blockOffset;
++        if (view.error() != C2_OK || !view.data() || viewOffset > view.capacity() ||
++            buffer.size > view.capacity() - viewOffset) {
++            return false;
++        }
++        auto& staging = mInputStaging[inputBuffer.bufferId()];
++        if (!staging.copyFrom(view.data() + viewOffset, buffer.size, planeSize)) {
++            return false;
++        }
++        fd = staging.fd();
++        offset = 0;
++    }
++    inputBuffer.setTimeStamp({.tv_sec = buffer.id});
++    inputBuffer.setPlaneDataOffset(0, offset);
++    inputBuffer.setPlaneBytesUsed(0, offset + buffer.size);
++    return std::move(inputBuffer).queueDMABuf({fd});
+ }
+
+ void V4L2Decoder::flush() {
+diff --git a/v4l2/include/v4l2_codec2/v4l2/TiledCaptureBuffer.h b/v4l2/include/v4l2_codec2/v4l2/TiledCaptureBuffer.h
+--- a/v4l2/include/v4l2_codec2/v4l2/TiledCaptureBuffer.h
++++ b/v4l2/include/v4l2_codec2/v4l2/TiledCaptureBuffer.h
+@@ -19,6 +19,7 @@
+
+     bool allocate(size_t size);
+     void release();
++    bool copyFrom(const uint8_t* data, size_t size, size_t capacity);
+
+     int fd() const { return mFd; }
+     const uint8_t* data() const { return mMapping; }
+@@ -29,6 +30,8 @@
+     bool syncEndRead() const;
+
+ private:
++    bool allocate(size_t size, bool writable);
++    bool mWritable = false;
+     int mFd = -1;
+     uint8_t* mMapping = nullptr;
+     size_t mSize = 0;
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Decoder.h
+@@ -91,6 +91,8 @@
+     bool startOutputQueue(size_t minOutputBuffersCount, enum v4l2_memory memory);
+
+     void pumpDecodeRequest();
++    bool queueInputBuffer(V4L2WritableBufferRef inputBuffer,
++                          const ConstBitstreamBuffer& buffer, size_t allocationSize);
+
+     void serviceDeviceTask(bool event);
+     bool dequeueResolutionChangeEvent();
+@@ -137,6 +139,8 @@
+     // The next input buffer ID to allocate. Note that since we don't un-allocate
+     // ids, all entries less than this in mLastDmaBufferId are valid.
+     size_t mNextInputBufferId = 0;
++    size_t mInputBufferSize = 0;
++    TiledCaptureBuffer mInputStaging[kNumInputBuffers];
+
+     size_t mMinNumOutputBuffers = 0;
+     GetPoolCB mGetPoolCb;
