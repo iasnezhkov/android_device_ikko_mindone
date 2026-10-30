@@ -99,7 +99,7 @@ their absent RXFILTER support and the stock firmware patch. Do not substitute ar
 ### Stage the kernel set and build
 
 Build device modules and DTB/DTBO in the companion kernel repository on
-`android16-6.12`, using `docs/BUILD.md` in that repository.
+`android16-6.12`, following the build guide in that repository's documentation.
 Use the r10 core image, its exact GKI modules and metadata, and the device modules built
 against that base as one reviewed set. Do not mix outputs from different candidates.
 
