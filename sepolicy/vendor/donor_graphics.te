@@ -24,7 +24,6 @@ hal_client_domain(surfaceflinger, hal_mtk_mmagent)
 hal_client_domain(surfaceflinger, hal_mtk_composer_ext)
 
 binder_use(mtk_hal_mms)
-allow mtk_hal_mms sysfs_boot_mode:file r_file_perms;
 get_prop(mtk_hal_mms, vendor_mtk_mdp_debug_log_prop)
 get_prop(mtk_hal_mms, vendor_mtk_mdp_prop)
 get_prop({ mtk_hal_camera mediacodec mtk_hal_mms surfaceflinger system_app }, vendor_dp_prop)

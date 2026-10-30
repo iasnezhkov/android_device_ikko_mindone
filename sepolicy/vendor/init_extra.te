@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 
-allow init debugfs_bootreceiver_tracing:dir { write add_name };
-
 type mindone_bootlog_exec, file_type, vendor_file_type, exec_type;
 
 allow init mindone_bootlog_exec:file execute;

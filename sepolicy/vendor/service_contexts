@@ -1,4 +1,0 @@
-# SPDX-FileCopyrightText: 2026 The LineageOS Project
-# SPDX-License-Identifier: Apache-2.0
-
-vendor.mediatek.hardware.mtkradioex.ntn.IMtkRadioExNtn/slot1 u:object_r:hal_radio_service:s0
