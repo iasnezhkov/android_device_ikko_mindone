@@ -5,9 +5,9 @@
 
 # iKKO MindOne
 
-### Unofficial LineageOS 23.2 device tree — an independent research project
+### Unofficial LineageOS 24.0 device tree — an independent research project
 
-**Android 16 · MT6789 / MT8781 (Helio G99) · arm64 only · 96 Hz display**
+**Android 17 · MT6789 / MT8781 (Helio G99) · arm64 only · 96 Hz display**
 
 </div>
 
@@ -23,7 +23,7 @@ its device support to Google's **android16-6.12-2026-09_r10 GKI prebuilt**, CI *
 The core kernel is Google's prebuilt; device drivers are loadable vendor modules built
 through Kleaf, with device DTB/DTBO outputs. Device code is not added to the GKI core.
 
-This product builds **LineageOS 23.2 / Android 16**, uses **FCM 202504**, and inherits
+This branch targets **LineageOS 24.0 / Android 17**, uses **FCM 202504**, and inherits
 `core_64_bit_only.mk`. It does not provide a 32-bit application runtime. Android HAL
 interfaces use AIDL, including frontends over legacy backends where necessary.
 Vendor-specific HIDL interfaces and proprietary backend libraries still remain. IMS
@@ -49,12 +49,12 @@ receiver and firmware components. Only extraction lists, source and fixups belon
 ## 🚀 Build
 
 Use a Linux x86_64 host with the LineageOS build prerequisites and sufficient disk space
-for a complete Android checkout and outputs. Start with the `lineage-23.2` source branch:
+for a complete Android checkout and outputs. Start with the `lineage-24.0` source branch:
 
 ```sh
 mkdir lineage
 cd lineage
-repo init -u https://github.com/LineageOS/android.git -b lineage-23.2
+repo init -u https://github.com/LineageOS/android.git -b lineage-24.0
 repo sync -c -j8
 git clone <device-repository-url> device/ikko/mindone
 ```

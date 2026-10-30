@@ -1,4 +1,4 @@
-# ROM integration (LineageOS 23.2, Android 16)
+# ROM integration (LineageOS 24.0, Android 17)
 
 The launcher ships as a privileged system app. Launcher3QuickStep (TrebuchetQuickStep) stays
 in the image only to provide Recents and gesture animations; our app wins the HOME role.

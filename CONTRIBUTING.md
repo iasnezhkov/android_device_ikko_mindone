@@ -28,7 +28,7 @@ Then include:
 
 | | |
 |---|---|
-| Android/LineageOS version | what you are building, e.g. lineage-23.2 |
+| Android/LineageOS version | what you are building, e.g. lineage-24.0 |
 | What you ran | the exact commands, not a description of them |
 | What happened | the actual output, trimmed but not paraphrased |
 | Kernel | this tree does not build the kernel — say which kernel build you paired it with |

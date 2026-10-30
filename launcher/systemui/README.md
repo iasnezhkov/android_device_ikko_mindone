@@ -8,11 +8,11 @@ cannot draw (the "3 new · Telegram, Slack" line, the PIN hint, hiding the stock
 is a small Keyguard patch listed at the end.
 
 > 🔴 **The platform moved under this document.** It was written against `android15-release`
-> (LineageOS 22.x). The ROM is **LineageOS 23.2 / Android 16**, and the clock plugin moved with it:
+> (LineageOS 22.x). The ROM is **LineageOS 24.0 / Android 17**, and the clock plugin moved with it:
 > the ROM session finds `ClockProviderPlugin.kt` at
 > `packages/SystemUI/plugin/src/com/android/systemui/plugins/keyguard/ui/clocks/`, not at
 > `.../plugins/clocks/`. The plugin route still exists and is still the right one, but **every
-> interface name in §1 below must be re-read from the Android 16 tree before any of it is written.**
+> interface name in §1 below must be re-read from the Android 17 tree before any of it is written.**
 > Confirmed on 8 September 2026 with the ROM session; the keyguard side of the same question is in
 > `KEYGUARD.md`.
 
