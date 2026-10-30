@@ -1,6 +1,5 @@
 vendor/lib64/libmipc.so
 vendor/lib64/libtrm.so
-vendor/lib64/vendor.mediatek.hardware.netdagent@1.0.so
 vendor/lib64/libccci_util.so
 vendor/lib64/libforkexecwrap.so
 vendor/lib64/libgwsd-ril.so

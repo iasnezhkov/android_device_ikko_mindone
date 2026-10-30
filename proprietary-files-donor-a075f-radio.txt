@@ -46,4 +46,3 @@ vendor/lib64/vendor.mediatek.hardware.mtkradioex.sim-V2-ndk.so|e15aac32feafc5cd5
 vendor/lib64/vendor.mediatek.hardware.mtkradioex.smartratswitch-V1-ndk.so|3ef058c00714ec0838fa404216556508a35fb562
 vendor/lib64/vendor.mediatek.hardware.mtkradioex.voice-V1-ndk.so|034c50801578f72ed033fbc69caf181835c54457
 vendor/lib64/vendor.mediatek.hardware.netdagent-V1-ndk.so|49df645a2d08d0e105998237f6278017d0cfa155
-vendor/lib64/vendor.mediatek.hardware.netdagent@1.0.so|1e286b81993e12608557a456fd8f119be3b39562

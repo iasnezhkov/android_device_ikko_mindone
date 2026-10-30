@@ -161,8 +161,6 @@ vendor/lib64/libvow_ap_test_nn.so
 vendor/lib64/vendor.mediatek.hardware.atci@1.0.so
 vendor/lib64/vendor.mediatek.hardware.audio@6.1.so
 vendor/lib64/vendor.mediatek.hardware.audio@7.1.so
-vendor/lib64/vendor.mediatek.hardware.bluetooth.audio@2.1.so
-vendor/lib64/vendor.mediatek.hardware.bluetooth.audio@2.2.so
 vendor/lib64/libbluetooth_hw_test.so
 vendor/lib64/libbluetooth_mtk.so
 vendor/lib64/libbluetooth_mtk_pure.so
@@ -492,7 +490,6 @@ vendor/lib64/hw/gps.default.so
 vendor/lib64/mt6789/libmnl.so:vendor/lib64/libmnl_mtk.so
 vendor/lib64/lbs_hidl_service-impl.so
 vendor/lib64/libviagpsrpc.so
-vendor/lib64/vendor.mediatek.hardware.lbs@1.0.so
 vendor/bin/hw/mt6789/android.hardware.graphics.allocator@4.0-service-mediatek.mt6789:vendor/bin/hw/android.hardware.graphics.allocator@4.0-service-mediatek
 vendor/etc/init/android.hardware.graphics.allocator@4.0-service-mediatek.rc
 vendor/etc/vintf/manifest/manifest_hwcomposer.xml
@@ -631,7 +628,6 @@ vendor/lib64/libnvram.so
 vendor/lib64/libnvram_sec.so
 vendor/etc/nnapi_powerhal.json
 vendor/lib64/libneuroeara.so
-vendor/lib64/vendor.mediatek.hardware.netdagent@1.0.so
 vendor/bin/hw/mtkfusionrild
 vendor/bin/bip_ap
 vendor/bin/ccci_mdinit
@@ -741,8 +737,6 @@ vendor/lib64/libwo.so
 vendor/lib64/libwpfa.so
 vendor/lib64/vendor.mediatek.hardware.clientapi@1.0.so
 vendor/lib64/vendor.mediatek.hardware.mdmonitor@1.0.so
-vendor/lib64/vendor.mediatek.hardware.mtkradioex@2.0.so
-vendor/lib64/vendor.mediatek.hardware.mtkradioex@3.0.so
 system_ext/framework/mediatek-ims-base.jar:system/framework/mediatek-ims-base.jar
 system_ext/framework/mediatek-ims-common.jar
 system_ext/framework/mediatek-ims-extension-plugin.jar
