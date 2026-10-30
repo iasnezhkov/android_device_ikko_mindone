@@ -235,7 +235,6 @@ ro.vendor.num_md_protocol=2
 ro.vendor.radio.max.multisim=ss
 ro.vendor.sim_me_lock_mode=3
 telephony.active_modems.max_count=1
-telephony.lteOnCdmaDevice=1
 
 ro.vendor.mtk.sensor.support=yes
 
