@@ -1,3 +1,7 @@
+/*
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #include "rxfilter-config.h"
 
 static uint32_t load32(const uint8_t* bytes) {

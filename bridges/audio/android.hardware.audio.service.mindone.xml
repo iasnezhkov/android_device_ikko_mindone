@@ -1,0 +1,20 @@
+<!--
+    SPDX-FileCopyrightText: 2026 The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.audio.core</name>
+        <version>4</version>
+        <fqname>IConfig/default</fqname>
+        <fqname>IModule/default</fqname>
+        <fqname>IModule/r_submix</fqname>
+        <fqname>IModule/usb</fqname>
+        <fqname>IModule/bluetooth</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.audio.effect</name>
+        <version>3</version>
+        <fqname>IFactory/default</fqname>
+    </hal>
+</manifest>

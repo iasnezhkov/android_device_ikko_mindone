@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ */
+
 #ifndef MINDONE_CCCI_FS_WIRE_H
 #define MINDONE_CCCI_FS_WIRE_H
 

@@ -3,12 +3,6 @@
     SPDX-License-Identifier: Apache-2.0
 -->
 <mixer>
-    <!-- Real registers, safe to set once and leave alone.
-         "Sgen" is the internal sine-generator test mode - never select it here.
-         "ADDA_UL_Mux"="MTKAIF" selects the analog codec ADC as the AFE's UL source (as opposed to
-         "AP_DMIC", the AP-side digital mic path this board does not use) -
-         mt6789-dai-adda.c:694-718,765-766,876; confirmed in stock reset_device_setting,
-         audio_device.xml:988. -->
     <ctl name="DAC In Mux" value="Normal Path"/>
     <ctl name="ADDA_UL_Mux" value="MTKAIF"/>
 
@@ -38,9 +32,6 @@
     </path>
 
 
-    <!-- Downlink: network -> ADDA -> the normal RCV/LOL/HPL device selection.
-         The call is mono, so BOTH ADDA DL channels take the modem's capture CH1: that is what
-         makes the far end audible from either the earpiece (DACL) or the speaker (DACR). -->
     <path name="voice-downlink">
         <ctl name="ADDA_DL_CH1 PCM_2_CAP_CH1" value="1"/>
         <ctl name="ADDA_DL_CH2 PCM_2_CAP_CH1" value="1"/>
@@ -50,9 +41,6 @@
         <ctl name="ADDA_DL_CH2 PCM_2_CAP_CH1" value="0"/>
     </path>
 
-    <!-- Uplink: the ADC/PGA-selected mic straight into the modem PCM. From the AFE's point of
-         view "playback into the modem BE" IS the uplink. Note this needs the mic path (ADC/PGA
-         muxes) applied as well - adev_set_mode() applies both. -->
     <path name="voice-uplink">
         <ctl name="PCM_2_PB_CH1 ADDA_UL_CH1" value="1"/>
         <ctl name="PCM_2_PB_CH2 ADDA_UL_CH2" value="1"/>
@@ -62,21 +50,11 @@
         <ctl name="PCM_2_PB_CH2 ADDA_UL_CH2" value="0"/>
     </path>
 
-    <!-- Echo reference for the modem's AEC: the downlink we are playing is fed back into the
-         modem's echo-reference channels 4/5. Without it the far end hears itself through our
-         speaker. Separate path because it is only worth enabling for the speaker/speakerphone
-         case - on the earpiece the acoustic coupling is small and the extra memif costs power. -->
-    <path name="voice-echo-ref">
-        <ctl name="PCM_2_PB_CH4 DL1_CH1" value="1"/>
-        <ctl name="PCM_2_PB_CH5 DL1_CH2" value="1"/>
-    </path>
     <path name="voice-echo-ref-off">
         <ctl name="PCM_2_PB_CH4 DL1_CH1" value="0"/>
         <ctl name="PCM_2_PB_CH5 DL1_CH2" value="0"/>
     </path>
 
-    <!-- Uplink readback for in-call recording (Capture_Mono_1 FE). Not applied by default: it is
-         only needed when the framework actually opens an in-call capture stream. -->
     <path name="voice-uplink-capture">
         <ctl name="UL_MONO_1_CH1 PCM_2_CAP_CH1" value="1"/>
     </path>
@@ -84,7 +62,6 @@
         <ctl name="UL_MONO_1_CH1 PCM_2_CAP_CH1" value="0"/>
     </path>
 
-    <!-- ================= Playback endpoints (device selection) ================= -->
 
     <path name="speaker">
         <ctl name="LOL Mux" value="Playback"/>
@@ -113,41 +90,14 @@
         <ctl name="RCV Mux" value="Open"/>
     </path>
 
-    <!-- ================= Capture endpoints ================= -->
 
     <path name="mic">
-        <!-- Mic Type Mux is deliberately NOT set here. The board declares the
-             microphone type in the device tree (mt6789-pmic.dtsi, mt6358codec:
-             "mediatek,mic-type = <0x02>" = DMIC), the codec driver reads it into
-             priv->mux_select[MUX_MIC_TYPE] at probe, and that value decides which
-             enable sequence runs: mt6358_dmic_enable() vs mt6358_amic_enable()
-             (mt6358.c, the MUX_MIC_TYPE test in the ADC supply event). Writing
-             "ACC" from here overrode the board's own declaration and forced the
-             analog sequence onto a digital microphone - the built-in mic then
-             recorded nothing but the preamp's own noise. The stock audio_device.xml
-             sets no Mic Type Mux for the same reason. The headset mic still gets
-             the analog path automatically: the same test falls through to
-             mt6358_amic_enable() whenever a PGA mux selects AIN1. -->
         <ctl name="ADC L Mux" value="Left Preamplifier"/>
         <ctl name="ADC R Mux" value="Right Preamplifier"/>
         <ctl name="PGA L Mux" value="AIN0"/>
         <ctl name="PGA R Mux" value="AIN0"/>
-        <!-- Analog preamp gain. The codec resets these to 0 (0 dB) on every path
-             teardown, and nothing else in this file or in the driver restores them,
-             so without these two lines every recording starts at unity gain. Index 4
-             is 24 dB, the top of the preamp range (mt6358.c: RG_AUDPREAMPLGAIN,
-             6 dB per step); stock drives the equivalent gain programmatically from
-             its tuning tables rather than from a mixer path, which is why the stock
-             audio_device.xml has no counterpart to these lines. -->
         <ctl name="PGA1 Volume" value="4"/>
         <ctl name="PGA2 Volume" value="4"/>
-        <!-- The built-in mic is digital (device tree: mediatek,mic-type = DMIC), so the AFE
-             receiver must decimate a PDM bitstream off the MTKAIF data lines rather than accept
-             PCM. This is the AFE half of that decision - the codec half comes from the device
-             tree - and both halves are required: the working configuration captured from the
-             stock HAL on 14.09 shows "mt6789_adda_dmic_set(), MTKAIF_DMIC, dmic_on 1" together
-             with "mt6358_dmic_enable()". With this Off the AFE expects PCM and the decimator
-             produces a constant, which the uplink high-pass filter then removes to silence. -->
         <ctl name="MTKAIF_DMIC" value="On"/>
         <ctl name="UL1_CH1 ADDA_UL_CH1" value="1"/>
         <ctl name="UL1_CH2 ADDA_UL_CH2" value="1"/>
@@ -163,9 +113,6 @@
     </path>
 
     <path name="mic-back">
-        <!-- No Mic Type Mux here either: the board declares the type in the device tree
-             and the codec driver picks the enable sequence from it. See the comment on
-             the "mic" path above. -->
         <ctl name="ADC L Mux" value="Left Preamplifier"/>
         <ctl name="ADC R Mux" value="Right Preamplifier"/>
         <ctl name="PGA L Mux" value="AIN2"/>
@@ -183,12 +130,7 @@
     </path>
 
     <path name="headset-mic">
-        <!-- Analog pad, so the AFE receiver stays in PCM mode (the codec falls back to
-             mt6358_amic_enable() on its own whenever a PGA mux selects AIN1). -->
         <ctl name="MTKAIF_DMIC" value="Off"/>
-        <!-- No Mic Type Mux here either: the board declares the type in the device tree
-             and the codec driver picks the enable sequence from it. See the comment on
-             the "mic" path above. -->
         <ctl name="ADC L Mux" value="Left Preamplifier"/>
         <ctl name="ADC R Mux" value="Right Preamplifier"/>
         <ctl name="PGA L Mux" value="AIN1"/>

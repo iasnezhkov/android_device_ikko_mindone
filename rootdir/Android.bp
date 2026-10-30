@@ -1,23 +1,13 @@
 //
-// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
 // SPDX-License-Identifier: Apache-2.0
 //
-// etc/init.*.rc and etc/ueventd.mt6789.rc are the stock vendor's platform init files
-// (vendor/etc/init/hw/*, vendor/etc/ueventd.rc of the device's own firmware dump), shipped
-// verbatim; ro.hardware=mt8781 makes init pick init.mt8781.rc, which imports the rest.
 
 prebuilt_etc {
     name: "fstab.mt8781",
     src: "etc/fstab.mt8781",
     vendor: true,
     vendor_ramdisk_available: true,
-}
-
-prebuilt_etc {
-    name: "init.aee.rc",
-    src: "etc/init.aee.rc",
-    sub_dir: "init/hw",
-    vendor: true,
 }
 
 prebuilt_etc {
@@ -45,6 +35,13 @@ prebuilt_etc {
     name: "init_connectivity.rc",
     src: "etc/init_connectivity.rc",
     sub_dir: "init/hw",
+    vendor: true,
+}
+
+prebuilt_etc {
+    name: "init.bip_ap.rc",
+    src: "etc/init.bip_ap.rc",
+    sub_dir: "init",
     vendor: true,
 }
 
@@ -136,8 +133,3 @@ sh_binary {
     vendor: true,
 }
 
-prebuilt_etc {
-    name: "mindone-insmod.schedule",
-    src: "etc/mindone-insmod.schedule",
-    vendor: true,
-}

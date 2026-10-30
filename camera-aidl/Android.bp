@@ -1,0 +1,44 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_binary {
+    name: "android.hardware.camera.provider-service.mindone",
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["android.hardware.camera.provider-service.mindone.rc"],
+    vintf_fragments: ["android.hardware.camera.provider-service.mindone.xml"],
+    compile_multilib: "64",
+    srcs: ["main.cpp", "CameraProvider.cpp", "CameraDevice.cpp",
+           "CameraDeviceCallback.cpp", "CameraDeviceSession.cpp", "StreamConvert.cpp"],
+    shared_libs: [
+        "android.hardware.camera.provider@2.4",
+        "android.hardware.camera.provider@2.5",
+        "android.hardware.camera.provider@2.6",
+        "android.hardware.camera.device@3.2",
+        "android.hardware.camera.device@3.3",
+        "android.hardware.camera.device@3.4",
+        "android.hardware.camera.device@3.5",
+        "android.hardware.camera.device@3.6",
+        "android.hardware.camera.device@3.7",
+        "android.hardware.camera.common@1.0",
+        "android.hardware.camera.provider-V1-ndk",
+        "android.hardware.camera.device-V1-ndk",
+        "android.hardware.camera.common-V1-ndk",
+        "libhidlbase",
+        "libfmq",
+        "libbinder",
+        "libbinder_ndk",
+        "libdl",
+        "liblog",
+        "libutils",
+        "libcutils",
+        "libbase",
+        "libcamera_metadata",
+    ],
+    static_libs: ["libaidlcommonsupport"],
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+}

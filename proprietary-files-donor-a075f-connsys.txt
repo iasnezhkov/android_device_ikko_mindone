@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+vendor/firmware/WIFI_RAM_CODE_soc2_2_1d_1.bin|221fe26b93156569cccbd5a1f2e7e87e5c017bb1
+vendor/firmware/WIFI_RAM_CODE_soc2_2_1e_1.bin|f386b2afb490480ea504eed3c2ba2049d3d83852
+vendor/firmware/soc2_2_ram_bt_1d_1_hdr.bin|89d7aeef1cb5888eb28b4ab8c4a7c98b1aa076b7
+vendor/firmware/soc2_2_ram_bt_1e_1_hdr.bin|d6fc0b1853e90cbb159dfd75878e223d65a8b0de
+vendor/firmware/soc2_2_ram_mcu_1d_1_hdr.bin|8c1335bef0fd56246babf0e0fb0e0d2632edfa23
+vendor/firmware/soc2_2_ram_mcu_1e_1_hdr.bin|275c53f5480a9fd9d7f4a0c0b76e451a639905e9
+vendor/firmware/soc2_2_ram_wifi_1d_1_hdr.bin|ce08abbdc567822009f4bb8e5a7016b6411e1e0d
+vendor/firmware/soc2_2_ram_wifi_1e_1_hdr.bin|1527f9a5a4f6003f153aa8c43d0fb17a5925451c

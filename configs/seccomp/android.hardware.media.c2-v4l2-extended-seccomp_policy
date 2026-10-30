@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 clone3: 1
 close_range: 1
 epoll_pwait2: 1

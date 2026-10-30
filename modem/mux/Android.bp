@@ -1,10 +1,15 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ */
+
 package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
 cc_binary {
     name: "mindone_mux",
-    stem: "gsm0710muxd",
+    stem: "gsm0710muxd-c",
     vendor: true,
     compile_multilib: "64",
     srcs: ["mindone_mux.c"],
@@ -15,4 +20,274 @@ cc_binary {
         "-Werror",
         "-std=gnu11",
     ],
+}
+
+rust_library_rlib {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "libmindone_mux_core",
+    crate_name: "mindone_mux_core",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["lib.rs"],
+    no_stdlibs: true,
+    stdlibs: ["libcore.rust_sysroot", "libcompiler_builtins.rust_sysroot"],
+}
+
+rust_test {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "mindone_mux_core_test",
+    crate_name: "mindone_mux_core_test",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["tests/framing.rs"],
+    rustlibs: ["libmindone_mux_core"],
+    prefer_rlib: true,
+    test_suites: ["device-tests"],
+}
+
+rust_test {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "mindone_mux_session_test",
+    crate_name: "mindone_mux_session_test",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["tests/session.rs"],
+    rustlibs: ["libmindone_mux_core"],
+    prefer_rlib: true,
+    test_suites: ["device-tests"],
+}
+
+rust_test {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "mindone_mux_transport_test",
+    crate_name: "mindone_mux_transport_test",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["tests/transport.rs"],
+    rustlibs: ["libmindone_mux_core"],
+    prefer_rlib: true,
+    test_suites: ["device-tests"],
+}
+
+rust_library_rlib {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "libmindone_mux_runtime",
+    crate_name: "mindone_mux_runtime",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["runtime.rs"],
+    rustlibs: ["libmindone_mux_core"],
+    prefer_rlib: true,
+}
+
+cc_library_static {
+    name: "libmindone_mux_posix",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    srcs: ["posix.c"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-std=gnu11"],
+}
+
+rust_library_rlib {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "libmindone_mux_platform",
+    crate_name: "mindone_mux_platform",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["platform.rs"],
+    rustlibs: ["libmindone_mux_core", "libmindone_mux_runtime"],
+    static_libs: ["libmindone_mux_posix"],
+    prefer_rlib: true,
+}
+
+cc_library_static {
+    name: "libmindone_mux_platform_test_support",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    srcs: ["tests/platform_support.c"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-std=gnu11"],
+}
+
+rust_test {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "mindone_mux_platform_test",
+    crate_name: "mindone_mux_platform_test",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["tests/platform.rs"],
+    rustlibs: ["libmindone_mux_core", "libmindone_mux_runtime", "libmindone_mux_platform"],
+    static_libs: ["libmindone_mux_platform_test_support"],
+    prefer_rlib: true,
+    test_suites: ["device-tests"],
+}
+
+cc_library_static {
+    name: "libmindone_mux_properties",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    srcs: ["properties.c"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-std=gnu11"],
+}
+
+rust_library_rlib {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "libmindone_mux_service",
+    crate_name: "mindone_mux_service",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["service.rs"],
+    rustlibs: ["libmindone_mux_core", "libmindone_mux_runtime", "libmindone_mux_platform"],
+    prefer_rlib: true,
+}
+
+rust_library_rlib {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "libmindone_mux_android_properties",
+    crate_name: "mindone_mux_android_properties",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["android_properties.rs"],
+    rustlibs: ["libmindone_mux_service"],
+    static_libs: ["libmindone_mux_properties"],
+    prefer_rlib: true,
+}
+
+rust_test {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "mindone_mux_service_test",
+    crate_name: "mindone_mux_service_test",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["service.rs"],
+    rustlibs: ["libmindone_mux_core", "libmindone_mux_runtime", "libmindone_mux_platform"],
+    prefer_rlib: true,
+    test_suites: ["device-tests"],
+}
+
+cc_library_static {
+    name: "libmindone_mux_daemon",
+    vendor: true,
+    compile_multilib: "64",
+    srcs: ["daemon.c"],
+    cflags: ["-Wall", "-Wextra", "-Werror", "-std=gnu11"],
+    shared_libs: ["liblog"],
+}
+
+rust_binary {
+    lints: "vendor",
+    clippy_lints: "vendor",
+    name: "mindone_mux_rs",
+    stem: "gsm0710muxd",
+    vendor: true,
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["main.rs"],
+    rustlibs: [
+        "libmindone_mux_core",
+        "libmindone_mux_runtime",
+        "libmindone_mux_platform",
+        "libmindone_mux_service",
+        "libmindone_mux_android_properties",
+    ],
+    static_libs: ["libmindone_mux_daemon"],
+    shared_libs: ["liblog"],
+    prefer_rlib: true,
 }

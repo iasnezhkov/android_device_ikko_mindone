@@ -1,0 +1,57 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "android.hardware.audio.service.mindone",
+    vendor: true,
+    compile_multilib: "64",
+    relative_install_path: "hw",
+    init_rc: ["android.hardware.audio.service.mindone.rc"],
+    vintf_fragments: [
+        "android.hardware.audio.service.mindone.xml",
+        "android.hardware.soundtrigger3.mindone.xml",
+    ],
+    defaults: [
+        "latest_android_hardware_soundtrigger3_ndk_shared",
+        "latest_android_media_soundtrigger_types_ndk_shared",
+        "aidlaudioservice_defaults",
+        "latest_android_hardware_audio_core_sounddose_ndk_shared",
+        "latest_android_hardware_audio_core_ndk_shared",
+        "latest_android_hardware_bluetooth_audio_ndk_shared",
+        "latest_android_media_audio_common_types_ndk_shared",
+        "latest_android_hardware_audio_effect_ndk_shared",
+    ],
+    static_libs: [
+        "libaudioserviceexampleimpl",
+    ],
+    shared_libs: [
+        "android.hardware.bluetooth.audio-impl",
+        "libaudio_aidl_conversion_common_ndk",
+        "libbluetooth_audio_session_aidl",
+        "liblog",
+        "libmedia_helper",
+        "libstagefright_foundation",
+        "libhardware",
+        "libmindone_audio_backend",
+        "libeffectconfig",
+    ],
+    header_libs: [
+        "libsystem_headers",
+    ],
+    srcs: [
+        "Backend.cpp",
+        "EffectFactoryMindone.cpp",
+        "ModuleMindone.cpp",
+        "StreamMindone.cpp",
+        "SoundTriggerMindone.cpp",
+        "TelephonyMindone.cpp",
+        "service.cpp",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wthread-safety",
+        "-DBACKEND_NDK",
+    ],
+}

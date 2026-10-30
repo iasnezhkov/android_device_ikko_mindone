@@ -1,7 +1,6 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 
 allow system_server sysfs_vibrator:file r_file_perms;
 
-# mindone 13.09: MindOneKeyHandler (config_deviceKeyHandlerLibs, runs inside system_server)
-# reads the camera flip-module hall position our mtk_kpd driver exports once at boot.
-allow system_server sysfs_mindone_hall:file r_file_perms;
+allow system_server sysfs_mindone_hall:file { open read getattr };

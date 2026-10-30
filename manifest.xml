@@ -1,4 +1,8 @@
 <!--
+SPDX-FileCopyrightText: 2026 The LineageOS Project
+SPDX-License-Identifier: Apache-2.0
+-->
+<!--
     Input:
         manifest_sensor_hidl_v2.xml
         manifest_audio.xml
@@ -22,179 +26,14 @@
         manifest.xml
 -->
 <!-- 06.09 (K5/B12 audit, cross-checked against the stock rc files): removed HIDL entries with no service in the ROM: vendor.mediatek.hardware.atci, vendor.mediatek.hardware.keymaster_attestation, vendor.skyroam.hardware.file, vendor.skyroam.hardware.socket, vendor.mediatek.hardware.apmonitor, vendor.nxp.nxpese, vendor.nxp.nxpnfc -->
-<manifest version="4.0" type="device" target-level="6">
-    <hal format="hidl">
-        <name>android.hardware.audio</name>
-        <transport>hwbinder</transport>
-        <version>7.0</version>
-        <interface>
-            <name>IDevicesFactory</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@7.0::IDevicesFactory/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.audio.effect</name>
-        <transport>hwbinder</transport>
-        <version>7.0</version>
-        <interface>
-            <name>IEffectsFactory</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@7.0::IEffectsFactory/default</fqname>
-    </hal>
+<manifest version="4.0" type="device" target-level="202504">
     <!-- 06.09: HIDL bluetooth@1.1 removed - the BT-HAL in the ROM is AIDL (android.hardware.bluetooth-service.mediatek, hardware/mediatek), an entry with no service = the same class as NFC (par. 3.1 audit). -->
-    <hal format="hidl">
-        <name>android.hardware.bluetooth.audio</name>
-        <transport>hwbinder</transport>
-        <version>2.1</version>
-        <interface>
-            <name>IBluetoothAudioProvidersFactory</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@2.1::IBluetoothAudioProvidersFactory/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.boot</name>
-        <transport>hwbinder</transport>
-        <version>1.0</version>
-        <interface>
-            <name>IBootControl</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@1.0::IBootControl/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.gatekeeper</name>
-        <transport>hwbinder</transport>
-        <version>1.0</version>
-        <interface>
-            <name>IGatekeeper</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@1.0::IGatekeeper/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.graphics.allocator</name>
-        <transport>hwbinder</transport>
-        <version>4.0</version>
-        <interface>
-            <name>IAllocator</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@4.0::IAllocator/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.graphics.composer</name>
-        <transport>hwbinder</transport>
-        <version>2.3</version>
-        <interface>
-            <name>IComposer</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@2.3::IComposer/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.graphics.mapper</name>
-        <transport arch="32+64">passthrough</transport>
-        <version>4.0</version>
-        <interface>
-            <name>IMapper</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@4.0::IMapper/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.radio</name>
-        <transport>hwbinder</transport>
-        <version>1.2</version>
-        <interface>
-            <name>IRadio</name>
-            <instance>em1</instance>
-            <instance>imsAospSlot1</instance>
-            <instance>se1</instance>
-            <instance>slot1</instance>
-        </interface>
-        <interface>
-            <name>ISap</name>
-            <instance>slot1</instance>
-        </interface>
-        <fqname>@1.2::IRadio/em1</fqname>
-        <fqname>@1.2::IRadio/imsAospSlot1</fqname>
-        <fqname>@1.2::IRadio/se1</fqname>
-        <fqname>@1.2::IRadio/slot1</fqname>
-        <fqname>@1.2::ISap/slot1</fqname>
-        <fqname>@1.6::IRadio/em1</fqname>
-        <fqname>@1.6::IRadio/imsAospSlot1</fqname>
-        <fqname>@1.6::IRadio/se1</fqname>
-        <fqname>@1.6::IRadio/slot1</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.radio.config</name>
-        <transport>hwbinder</transport>
-        <version>1.3</version>
-        <interface>
-            <name>IRadioConfig</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@1.3::IRadioConfig/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.renderscript</name>
-        <transport arch="32+64">passthrough</transport>
-        <version>1.0</version>
-        <interface>
-            <name>IDevice</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@1.0::IDevice/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.secure_element</name>
-        <transport>hwbinder</transport>
-        <version>1.2</version>
-        <interface>
-            <name>ISecureElement</name>
-            <instance>SIM1</instance>
-        </interface>
-        <fqname>@1.2::ISecureElement/SIM1</fqname>
-    </hal>
 <!-- android.hardware.sensors: declared by the AIDL vintf_fragment of our own HAL
      (device/ikko/mindone/sensors-hf/mindone-sensors.xml, ISensors/default V3); the HIDL
      @2.0::ISensors/default entry of the stock multihal chain was removed 13.09. -->
-    <hal format="hidl">
-        <name>android.hardware.tetheroffload.config</name>
-        <transport>hwbinder</transport>
-        <version>1.0</version>
-        <interface>
-            <name>IOffloadConfig</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@1.0::IOffloadConfig/default</fqname>
-    </hal>
-    <hal format="hidl">
-        <name>android.hardware.tetheroffload.control</name>
-        <transport>hwbinder</transport>
-        <version>1.1</version>
-        <interface>
-            <name>IOffloadControl</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@1.1::IOffloadControl/default</fqname>
-    </hal>
 <!-- android.hardware.thermal: the stock HIDL @1.0/2.0 IThermal blob (thermal@2.0-service.mtk) was
      replaced 13.09 by the open LineageOS AIDL HAL android.hardware.thermal-service.mediatek, which
      installs its own vintf fragment (IThermal/default V3); config in configs/thermal/. -->
-    <hal format="hidl">
-        <name>vendor.mediatek.hardware.bluetooth.audio</name>
-        <transport>hwbinder</transport>
-        <version>2.2</version>
-        <interface>
-            <name>IBluetoothAudioProvidersFactory</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@2.2::IBluetoothAudioProvidersFactory/default</fqname>
-    </hal>
     <hal format="hidl">
         <name>vendor.mediatek.hardware.camera.atms</name>
         <transport>hwbinder</transport>
@@ -226,16 +65,6 @@
         <fqname>@1.1::IISPModule/internal/0</fqname>
     </hal>
     <hal format="hidl">
-        <name>vendor.mediatek.hardware.composer_ext</name>
-        <transport>hwbinder</transport>
-        <version>1.0</version>
-        <interface>
-            <name>IComposerExt</name>
-            <instance>default</instance>
-        </interface>
-        <fqname>@1.0::IComposerExt/default</fqname>
-    </hal>
-    <hal format="hidl">
         <name>vendor.mediatek.hardware.mtkpower</name>
         <transport>hwbinder</transport>
         <version>1.2</version>
@@ -250,35 +79,6 @@
         <fqname>@1.2::IMtkPerf/default</fqname>
         <fqname>@1.2::IMtkPower/default</fqname>
     </hal>
-<!-- vendor.mediatek.hardware.mmagent@1.1 and vendor.mediatek.hardware.mms@1.6: removed 13.09 together with their
-     service binaries (optional MTK multimedia agents; neither service was even running on our ROM, probe
-     a probe of the optional services, 13.09). -->
-    <hal format="hidl">
-        <name>vendor.mediatek.hardware.mtkradioex</name>
-        <transport>hwbinder</transport>
-        <version>3.0</version>
-        <interface>
-            <name>IMtkRadioEx</name>
-            <instance>imsSlot1</instance>
-            <instance>mtkAssist1</instance>
-            <instance>mtkCap1</instance>
-            <instance>mtkEm1</instance>
-            <instance>mtkRcs1</instance>
-            <instance>mtkRsu1</instance>
-            <instance>mtkSe1</instance>
-            <instance>mtkSlot1</instance>
-            <instance>mtkSmartRatSwitch1</instance>
-        </interface>
-        <fqname>@3.0::IMtkRadioEx/imsSlot1</fqname>
-        <fqname>@3.0::IMtkRadioEx/mtkAssist1</fqname>
-        <fqname>@3.0::IMtkRadioEx/mtkCap1</fqname>
-        <fqname>@3.0::IMtkRadioEx/mtkEm1</fqname>
-        <fqname>@3.0::IMtkRadioEx/mtkRcs1</fqname>
-        <fqname>@3.0::IMtkRadioEx/mtkRsu1</fqname>
-        <fqname>@3.0::IMtkRadioEx/mtkSe1</fqname>
-        <fqname>@3.0::IMtkRadioEx/mtkSlot1</fqname>
-        <fqname>@3.0::IMtkRadioEx/mtkSmartRatSwitch1</fqname>
-    </hal>
 <!-- vendor.mediatek.hardware.pq@2.15 (picture-quality service): removed 13.09 — the service never ran on our ROM
      (no pid, no init rc), display works without it; only the service binary + its -impl are dropped, the libpq
      client libraries stay in case hwcomposer/gralloc dlopen them. -->
@@ -292,14 +92,4 @@
          the Android 12 vendor manifest this file was derived from.
          NB: the build copies this repository into the LineageOS tree on every build, so the fix
          only survives here - editing the copy inside the VM is wiped at the next run. -->
-    <kernel target-level="8"/>
-    <hal format="hidl">
-        <name>android.hardware.biometrics.fingerprint</name>
-        <transport>hwbinder</transport>
-        <version>2.1</version>
-        <interface>
-            <name>IBiometricsFingerprint</name>
-            <instance>default</instance>
-        </interface>
-    </hal>
 </manifest>

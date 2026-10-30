@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <hidl/HidlTransportSupport.h>
@@ -21,13 +21,12 @@ using mindone::ril::MindoneRadio;
 
 namespace {
 constexpr int kOpenRetries = 20;
-constexpr int kOpenRetryDelayUs = 500 * 1000;  // 500ms; ~10s total, matches gsm0710muxd's own
-}  // namespace
+constexpr int kOpenRetryDelayUs = 500 * 1000;
+}
 
 int main() {
     char cmdDev[PROPERTY_VALUE_MAX];
     char notiDev[PROPERTY_VALUE_MAX];
-    // Overridable for bring-up/debugging without a rebuild -- see README-INTEGRATION.md.
     property_get("persist.vendor.mindone_ril.cmd_dev", cmdDev, "/dev/radio/pttycmd1");
     property_get("persist.vendor.mindone_ril.noti_dev", notiDev, "/dev/radio/pttynoti");
 
@@ -56,5 +55,5 @@ int main() {
     }
     ALOGI("android.hardware.radio@1.6::IRadio/slot1 registered, entering threadpool");
     joinRpcThreadpool();
-    return 1;  // joinRpcThreadpool() should never return
+    return 1;
 }

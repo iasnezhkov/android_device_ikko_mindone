@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
 package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
@@ -14,4 +16,37 @@ cc_binary {
         "-Werror",
         "-std=gnu11",
     ],
+}
+
+rust_binary {
+    name: "volte_md_status_rust",
+    crate_name: "volte_md_status_rust",
+    vendor: true,
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["main.rs"],
+    rustlibs: ["liblibc"],
+    shared_libs: ["liblog"],
+}
+
+rust_test {
+    name: "volte_md_status_rust_test",
+    crate_name: "volte_md_status_rust_test",
+    vendor: true,
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["tests/session.rs"],
+    test_suites: ["device-tests"],
+}
+
+rust_test {
+    name: "volte_md_status_rust_android_mock_test",
+    crate_name: "volte_md_status_rust_android_mock_test",
+    vendor: true,
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["tests/android_mock.rs"],
+    rustlibs: ["liblibc"],
+    prefer_rlib: true,
+    test_suites: ["device-tests"],
 }

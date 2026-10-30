@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "NvcfgJson.h"
@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <sstream>
 
 namespace mindone {
@@ -24,8 +25,6 @@ void skipWs(const std::string& s, size_t* i) {
     while (*i < s.size() && std::isspace(static_cast<unsigned char>(s[*i]))) ++*i;
 }
 
-// Directory part of a path, for the fsync-the-directory step in
-// writeIntArray(). "/a/b/c" -> "/a/b"; "c" -> ".".
 std::string dirnameOf(const std::string& path) {
     size_t slash = path.find_last_of('/');
     if (slash == std::string::npos) return ".";
@@ -33,7 +32,7 @@ std::string dirnameOf(const std::string& path) {
     return path.substr(0, slash);
 }
 
-}  // namespace
+}
 
 std::optional<std::vector<int32_t>> readIntArray(const std::string& path,
                                                    const std::string& expectedKey,
@@ -42,7 +41,7 @@ std::optional<std::vector<int32_t>> readIntArray(const std::string& path,
     if (outKeyMismatch) *outKeyMismatch = false;
 
     std::ifstream f(path, std::ios::binary);
-    if (!f.is_open()) return std::nullopt;  // ENOENT etc. - expected/common, not an error
+    if (!f.is_open()) return std::nullopt;
     std::ostringstream ss;
     ss << f.rdbuf();
     const std::string text = ss.str();
@@ -58,7 +57,7 @@ std::optional<std::vector<int32_t>> readIntArray(const std::string& path,
     while (i < text.size() && text[i] != '"') ++i;
     if (i >= text.size()) return std::nullopt;
     const std::string key = text.substr(keyStart, i - keyStart);
-    ++i;  // closing quote
+    ++i;
     skipWs(text, &i);
     if (i >= text.size() || text[i] != ':') return std::nullopt;
     ++i;
@@ -72,7 +71,7 @@ std::optional<std::vector<int32_t>> readIntArray(const std::string& path,
     std::vector<int32_t> values;
     skipWs(text, &i);
     if (i < text.size() && text[i] == ']') {
-        ++i;  // empty array
+        ++i;
     } else {
         for (;;) {
             skipWs(text, &i);
@@ -80,10 +79,13 @@ std::optional<std::vector<int32_t>> readIntArray(const std::string& path,
             if (i < text.size() && (text[i] == '-' || text[i] == '+')) ++i;
             size_t digitsStart = i;
             while (i < text.size() && std::isdigit(static_cast<unsigned char>(text[i]))) ++i;
-            if (i == digitsStart) return std::nullopt;  // no digits - malformed
+            if (i == digitsStart) return std::nullopt;
             errno = 0;
             long long v = std::strtoll(text.substr(numStart, i - numStart).c_str(), nullptr, 10);
-            if (errno == ERANGE) return std::nullopt;
+            if (errno == ERANGE || v < std::numeric_limits<int32_t>::min() ||
+                v > std::numeric_limits<int32_t>::max()) {
+                return std::nullopt;
+            }
             values.push_back(static_cast<int32_t>(v));
             skipWs(text, &i);
             if (i < text.size() && text[i] == ',') {
@@ -94,11 +96,14 @@ std::optional<std::vector<int32_t>> readIntArray(const std::string& path,
                 ++i;
                 break;
             }
-            return std::nullopt;  // neither ',' nor ']' - malformed
+            return std::nullopt;
         }
     }
     skipWs(text, &i);
     if (i >= text.size() || text[i] != '}') return std::nullopt;
+    ++i;
+    skipWs(text, &i);
+    if (i != text.size()) return std::nullopt;
 
     return values;
 }
@@ -145,11 +150,6 @@ bool commitAtomicWrite(const std::string& tmpPath, const std::string& path) {
         return false;
     }
 
-    // Best-effort: fsync the containing directory too, so the rename() is
-    // durable across a power loss and doesn't require an fsck to reappear.
-    // nvcfg is a small dedicated ext4 partition (24MB, F-series device dump
-    // showed ~76K used) mounted with commit=1 (see rootdir/etc/init.mt6789.rc
-    // fstab) - this matters more there than on a typical /data mount.
     int dfd = ::open(dirnameOf(path).c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (dfd >= 0) {
         ::fsync(dfd);
@@ -165,6 +165,6 @@ bool writeIntArray(const std::string& path, const std::string& key,
     return commitAtomicWrite(*tmpPath, path);
 }
 
-}  // namespace nvcfg_json
-}  // namespace hf
-}  // namespace mindone
+}
+}
+}

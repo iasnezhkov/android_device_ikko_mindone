@@ -1,0 +1,5 @@
+vendor/bin/mt6789/v3avpud-64b.mt6789;SYMLINK=vendor/bin/v3avpud-64b|83eeb6c2de27147fe01610e6786023a777971b5b
+vendor/etc/init/v3avpud-64b.rc|725a9be947d9def93b4f83ddae06503b16e9714c
+vendor/lib64/mt6789/libvpudv3a_vcodec.so;SYMLINK=vendor/lib64/libvpudv3a_vcodec.so|a79f37d29b49fd4b641a6bcb3585e8764ca5ea01
+vendor/lib64/mt6789/libvcodec_utility_v3a.so;SYMLINK=vendor/lib64/libvcodec_utility_v3a.so|24087b9e8ec5b4073abd6a0b4f90e309a9da45f2
+vendor/lib64/mt6789/libvcodecdrv_v3a.so;SYMLINK=vendor/lib64/libvcodecdrv_v3a.so|aa0ba1b93d124050f80d006dd1720da0586f2d8f

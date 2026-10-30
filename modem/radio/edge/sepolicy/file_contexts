@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+
+/vendor/bin/hw/mindone-radio    u:object_r:hal_radio_mindone_exec:s0

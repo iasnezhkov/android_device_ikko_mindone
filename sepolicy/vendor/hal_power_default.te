@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 typeattribute hal_power_default mlstrustedsubject;
 
 allow hal_power_default self:capability sys_nice;

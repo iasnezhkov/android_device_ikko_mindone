@@ -1,0 +1,146 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ */
+
+#include <errno.h>
+#include <setjmp.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+
+@DEFINES@
+@STATE@
+
+static enum mux_state state;
+static bool setup_done;
+static bool ril_started;
+static struct { bool refused; } chans[2];
+static int nchans = 2;
+static volatile sig_atomic_t term_signal;
+static bool stop_wait;
+static int fail_property;
+static int property_calls;
+static uint8_t txq[32];
+static char chat_buf[CHAT_CAP];
+static size_t chat_len;
+static int read_error;
+static size_t txq_len;
+static bool tx_blocked;
+static int serial_fd = 7;
+static const char *serial_path = "private-fixture";
+static int write_error;
+static jmp_buf terminal;
+
+static void ignored(const char *format, ...) { (void)format; }
+#define LOGE(...) ignored(__VA_ARGS__)
+#define LOGI(...) ignored(__VA_ARGS__)
+
+static int __system_property_set(const char *key, const char *value)
+{
+    ++property_calls;
+    printf("property %s=%s%s\n", key, value, property_calls == fail_property ? " rejected" : "");
+    return property_calls == fail_property ? -1 : 0;
+}
+
+static void close_all_ptys(void) { puts("close ptys"); }
+static void close_serial(void) { puts("close serial"); }
+static void drop_root(void) { puts("drop root boundary"); }
+static void wait_ms(int milliseconds)
+{
+    printf("wait %d\n", milliseconds);
+    if (stop_wait) term_signal = SIGTERM;
+}
+static int64_t now_ms(void) { return 0; }
+static void log_text(const char *direction, const char *data, size_t length)
+{
+    (void)direction;
+    (void)data;
+    (void)length;
+}
+static int fixture_poll(void *entries, unsigned count, int milliseconds)
+{
+    (void)entries;
+    (void)count;
+    (void)milliseconds;
+    abort();
+}
+static ssize_t fixture_read(int descriptor, void *data, size_t length)
+{
+    if (descriptor != 7 || !data || !length) abort();
+    errno = read_error;
+    return -1;
+}
+static ssize_t fixture_write(int descriptor, const void *data, size_t length)
+{
+    if (descriptor != 7 || !data || !length) abort();
+    errno = write_error;
+    return -1;
+}
+static _Noreturn void fixture_exit(int result)
+{
+    printf("exit %d\n", result);
+    longjmp(terminal, 1);
+}
+
+#define read fixture_read
+#define write fixture_write
+#define poll fixture_poll
+#define exit fixture_exit
+@FUNCTIONS@
+#undef exit
+#undef poll
+#undef write
+#undef read
+
+static void startup(void)
+{
+@STARTUP@
+}
+
+int main(int argc, char **argv)
+{
+    if (argc != 2) return 64;
+    if (setjmp(terminal)) return 0;
+    if (!strcmp(argv[1], "ready-twice")) {
+        startup();
+        chans[1].refused = true;
+        setup_complete();
+        setup_done = false;
+        state = ST_SETUP;
+        setup_complete();
+        setup_complete();
+        printf("ready state=%d setup=%d retained=%d\n", state, setup_done, ril_started);
+    } else if (!strcmp(argv[1], "report") || !strcmp(argv[1], "report-stop")) {
+        stop_wait = !strcmp(argv[1], "report-stop");
+        report_and_exit("controlled error");
+    } else if (!strcmp(argv[1], "chat-write-enodev") || !strcmp(argv[1], "chat-write-etxtbsy")) {
+        write_error = !strcmp(argv[1], "chat-write-enodev") ? ENODEV : ETXTBSY;
+        chat_write("AT");
+        return 65;
+    } else if (!strcmp(argv[1], "chat-read-enodev") || !strcmp(argv[1], "chat-read-etxtbsy")) {
+        read_error = !strcmp(argv[1], "chat-read-enodev") ? ENODEV : ETXTBSY;
+        if (chat_read()) report_and_exit("controlled startup read failure");
+        return 67;
+    } else if (!strcmp(argv[1], "mux-reset-enodev") || !strcmp(argv[1], "mux-reset-etxtbsy")) {
+        write_error = !strcmp(argv[1], "mux-reset-enodev") ? ENODEV : ETXTBSY;
+        txq_len = 4;
+        tx_blocked = true;
+        int result = tx_flush();
+        printf("tx result=%d pending=%zu blocked=%d\n", result, txq_len, tx_blocked);
+    } else if (!strcmp(argv[1], "stop")) {
+        on_signal(SIGTERM);
+        graceful_exit();
+    } else if (!strcmp(argv[1], "ready-first-property-rejected")) {
+        fail_property = 1;
+        setup_complete();
+        printf("ready retained=%d writes=%d\n", ril_started, property_calls);
+    } else {
+        return 66;
+    }
+    return 0;
+}

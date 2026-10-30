@@ -1,12 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * mind_one CCCI RPC (/dev/ccci_rpc) wire protocol shim -- for mindone_rpcd.
- *
- * Source: the kernel repository's mindone/modules/ccci_md_all/port/port_rpc.h (verbatim struct/enum copy,
- * cited by line) and port/port_rpc.c:1416-1480 (port_rpc_recv_match(),
- * read directly in this pass to get the *exact* userspace-vs-kernel op-id
- * split -- see comment on ccci_rpc_userspace_op() below).
+ * SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
+ * Copyright (c) 2016 MediaTek Inc.
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  */
+
 #ifndef MINDONE_CCCI_RPC_H
 #define MINDONE_CCCI_RPC_H
 
@@ -46,27 +43,6 @@ enum ccci_rpc_op_id {
 	IPC_RPC_IT_OP			= 0x4321,
 };
 
-/*
- * Which op-ids actually reach /dev/ccci_rpc for a *userspace* daemon to
- * answer, vs. being fully answered in-kernel on the parallel ccci_rpc_k
- * kthread-only channel (same wire format, no /dev node) -- PROVEN by
- * reading port_rpc_recv_match() (port/port_rpc.c:1416-1480) directly:
- * everything not in this switch is routed to the in-kernel path and NEVER
- * shows up as a read() on /dev/ccci_rpc at all, so mindone_rpcd does not
- * need to (and structurally cannot) handle it.
- */
-static inline int ccci_rpc_is_userspace_op(unsigned int op_id)
-{
-	switch (op_id) {
-	case IPC_RPC_QUERY_AP_SYS_PROPERTY:
-	case IPC_RPC_SAR_TABLE_IDX_QUERY_OP:
-	case IPC_RPC_AMMS_DRDI_CONTROL:
-	case IPC_RPC_SAVE_MD_CAPID:
-		return 1;
-	default:
-		return 0;
-	}
-}
 
 /* port_rpc.h:60-70 */
 struct rpc_pkt {

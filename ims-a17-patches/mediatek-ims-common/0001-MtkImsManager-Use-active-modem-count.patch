@@ -1,0 +1,24 @@
+diff --git a/smali/com/mediatek/ims/internal/MtkImsManager.smali b/smali/com/mediatek/ims/internal/MtkImsManager.smali
+--- a/smali/com/mediatek/ims/internal/MtkImsManager.smali
++++ b/smali/com/mediatek/ims/internal/MtkImsManager.smali
+@@ -2198,15 +2198,15 @@
+     invoke-static {}, Landroid/telephony/TelephonyManager;->getDefault()Landroid/telephony/TelephonyManager;
+
+     move-result-object v0
+
+-    invoke-virtual {v0}, Landroid/telephony/TelephonyManager;->getMultiSimConfiguration()Landroid/telephony/TelephonyManager$MultiSimVariants;
+-
+-    move-result-object v0
++    invoke-virtual {v0}, Landroid/telephony/TelephonyManager;->getActiveModemCount()I
++
++    move-result v0
+
+     .line 2111
+-    .local v0, "config":Landroid/telephony/TelephonyManager$MultiSimVariants;
+-    sget-object v1, Landroid/telephony/TelephonyManager$MultiSimVariants;->TSTS:Landroid/telephony/TelephonyManager$MultiSimVariants;
++    .local v0, "activeModemCount":I
++    const/4 v1, 0x3
+
+     const/4 v2, 0x1
+
+     if-eq v0, v1, :cond_0

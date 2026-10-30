@@ -1,0 +1,99 @@
+diff --git a/smali/com/mediatek/ims/internal/MtkImsManager.smali b/smali/com/mediatek/ims/internal/MtkImsManager.smali
+--- a/smali/com/mediatek/ims/internal/MtkImsManager.smali
++++ b/smali/com/mediatek/ims/internal/MtkImsManager.smali
+@@ -4786,46 +4786,12 @@
+ 
+     move-result v9
+ 
+-    if-eqz v9, :cond_8
+-
+-    .line 356
+-    invoke-static {}, Lcom/mediatek/telephony/MtkTelephonyManagerEx;->getDefault()Lcom/mediatek/telephony/MtkTelephonyManagerEx;
+-
+-    move-result-object v9
+-
+-    iget v10, p0, Lcom/mediatek/ims/internal/MtkImsManager;->mPhoneId:I
+-
+-    invoke-virtual {v9, v10}, Lcom/mediatek/telephony/MtkTelephonyManagerEx;->getCdmaCardType(I)Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;
+-
+-    move-result-object v9
+-
+-    .line 357
+-    .local v9, "cardType":Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;
+-    if-eqz v9, :cond_8
+-
+-    invoke-virtual {v9}, Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;->is4GCard()Z
+-
+-    move-result v10
+-
+-    if-nez v10, :cond_8
+-
+-    sget-object v10, Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;->SIM_CARD:Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;
+-
+-    if-eq v9, v10, :cond_8
+-
+-    .line 359
+-    const-string v10, "isEnhanced4gLteModeSettingEnabledByUser, CT 3G card case"
+-
+-    invoke-direct {p0, v10}, Lcom/mediatek/ims/internal/MtkImsManager;->log(Ljava/lang/String;)V
+-
+-    .line 360
+-    const/4 v2, 0x0
++    goto :cond_8
+ 
+     .line 364
+     .end local v3    # "subMgr":Landroid/telephony/SubscriptionManager;
+     .end local v5    # "subInfo":Landroid/telephony/SubscriptionInfo;
+     .end local v6    # "iccid":Ljava/lang/String;
+-    .end local v9    # "cardType":Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;
+     :cond_8
+     return v2
+ 
+@@ -5904,46 +5870,12 @@
+ 
+     move-result v8
+ 
+-    if-eqz v8, :cond_3
+-
+-    .line 2406
+-    invoke-static {}, Lcom/mediatek/telephony/MtkTelephonyManagerEx;->getDefault()Lcom/mediatek/telephony/MtkTelephonyManagerEx;
+-
+-    move-result-object v8
+-
+-    iget v9, p0, Lcom/mediatek/ims/internal/MtkImsManager;->mPhoneId:I
+-
+-    invoke-virtual {v8, v9}, Lcom/mediatek/telephony/MtkTelephonyManagerEx;->getCdmaCardType(I)Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;
+-
+-    move-result-object v8
+-
+-    .line 2407
+-    .local v8, "cardType":Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;
+-    if-eqz v8, :cond_3
+-
+-    invoke-virtual {v8}, Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;->is4GCard()Z
+-
+-    move-result v9
+-
+-    if-nez v9, :cond_3
+-
+-    sget-object v9, Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;->SIM_CARD:Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;
+-
+-    if-eq v8, v9, :cond_3
+-
+-    .line 2409
+-    const-string v9, "VoNR, isVonrEnabledByPlatform, CT 3G card case"
+-
+-    invoke-direct {p0, v9}, Lcom/mediatek/ims/internal/MtkImsManager;->log(Ljava/lang/String;)V
+-
+-    .line 2410
+-    const/4 v0, 0x0
++    goto :cond_3
+ 
+     .line 2415
+     .end local v5    # "subMgr":Landroid/telephony/SubscriptionManager;
+     .end local v6    # "subInfo":Landroid/telephony/SubscriptionInfo;
+     .end local v7    # "iccid":Ljava/lang/String;
+-    .end local v8    # "cardType":Lcom/mediatek/internal/telephony/MtkIccCardConstants$CardType;
+     :cond_3
+     new-instance v5, Ljava/lang/StringBuilder;
+ 

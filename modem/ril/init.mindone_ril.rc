@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 
 service vendor.mindone_ril /vendor/bin/hw/android.hardware.radio@1.6-service.mindone
     interface android.hardware.radio@1.0::IRadio slot1

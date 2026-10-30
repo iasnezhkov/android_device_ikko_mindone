@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: iasnezhkov <iasnezhkov@gmail.com>
+Date: Wed, 21 Oct 2026 12:00:00 +0900
+Subject: [PATCH] mindone: require enforced kernel metadata in OTA packaging
+
+Fail the build instead of warning when PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS
+is set but no kernel or boot image target exists, and make the target-files
+VINTF check require the kernel metadata it is told to enforce.
+---
+diff --git a/core/Makefile b/core/Makefile
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -5660,5 +5660,5 @@
+ $(call dist-for-goals, droid_targets, $(BUILT_KERNEL_VERSION_FILE))
+ else
+-$(warning Neither INSTALLED_KERNEL_TARGET nor INSTALLED_BOOTIMAGE_TARGET is defined when \
++$(error Neither INSTALLED_KERNEL_TARGET nor INSTALLED_BOOTIMAGE_TARGET is defined when \
+     PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS  is true. Information about the updated kernel \
+     cannot be built into OTA update package. You can fix this by: \
+@@ -6299,4 +6299,5 @@
+ endif # BOARD_AVB_ENABLE
+ endif # BOARD_USES_PVMFWIMAGE
++	$(hide) echo "vintf_kernel_enforce=$(if $(filter true,$(PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS)),true,false)" >> $@
+ 	$(call dump-dynamic-partitions-info,$@)
+ 	@# VINTF checks
+diff --git a/tools/releasetools/check_target_files_vintf.py b/tools/releasetools/check_target_files_vintf.py
+--- a/tools/releasetools/check_target_files_vintf.py
++++ b/tools/releasetools/check_target_files_vintf.py
+@@ -96,13 +96,21 @@
+ 
+ 
+-def GetArgsForKernel(input_tmp):
++def GetArgsForKernel(input_tmp, info_dict=None):
+   version_path = os.path.join(input_tmp, 'META/kernel_version.txt')
+   config_path = os.path.join(input_tmp, 'META/kernel_configs.txt')
++  required = (info_dict or {}).get('vintf_kernel_enforce', 'false')
++  if required not in ('true', 'false'):
++    raise RuntimeError('Invalid VINTF kernel enforcement metadata')
+ 
+   if not os.path.isfile(version_path) or not os.path.isfile(config_path):
++    if required == 'true':
++      raise RuntimeError('Required VINTF kernel metadata is missing')
+     logger.info('Skipping kernel config checks because '
+                 'PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS is not set')
+     return []
+ 
++  if not os.path.getsize(version_path) or not os.path.getsize(config_path):
++    raise RuntimeError('VINTF kernel metadata is empty')
++
+   return ['--kernel', '{}:{}'.format(version_path, config_path)]
+ 
+@@ -124,8 +132,14 @@
+     info_dict = common.LoadInfoDict(input_tmp)
+ 
++  if (info_dict.get('vintf_kernel_enforce') == 'true' and
++      info_dict.get('vintf_enforce') != 'true'):
++    raise RuntimeError('Required kernel checks need VINTF enforcement')
++
+   if info_dict.get('vintf_enforce') != 'true':
+     logger.warning('PRODUCT_ENFORCE_VINTF_MANIFEST is not set, skipping checks')
+     return True
+ 
++  kernel_args = GetArgsForKernel(input_tmp, info_dict)
++
+ 
+   dirmap = GetDirmap(input_tmp)
+@@ -137,5 +151,4 @@
+   args_for_skus = GetArgsForSkus(info_dict)
+   shipping_api_level_args = GetArgsForShippingApiLevel(info_dict)
+-  kernel_args = GetArgsForKernel(input_tmp)
+ 
+   common_command = [
+@@ -298,4 +311,6 @@
+   # compatibility will always fail on devices without qualified kernels.
+   if OPTIONS.skip_compatibility_check:
++    if target_info.get('vintf_kernel_enforce') == 'true':
++      raise RuntimeError('Required VINTF kernel checks cannot be skipped')
+     return
+ 

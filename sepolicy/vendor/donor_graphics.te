@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+allowxperm {
+    appdomain
+    bootanim
+    cameraserver
+    hal_graphics_allocator_default
+    hal_graphics_composer_default
+    mediacodec
+    mediaserver
+    mediaswcodec
+    mtk_hal_c2
+    mtk_hal_camera
+    mtk_hal_mms
+    surfaceflinger
+    system_server
+} proc_ged:file ioctl GED_BRIDGE_IO_HINT_FRAME_INFO;
+
+set_prop(hal_graphics_composer_default, vendor_mtk_hwc_boot_display_config_prop)
+set_prop(vendor_init, vendor_mtk_hwc_boot_display_config_prop)
+
+hal_client_domain(surfaceflinger, hal_mtk_mmagent)
+hal_client_domain(surfaceflinger, hal_mtk_composer_ext)
+
+binder_use(mtk_hal_mms)
+allow mtk_hal_mms sysfs_boot_mode:file r_file_perms;
+get_prop(mtk_hal_mms, vendor_mtk_mdp_debug_log_prop)
+get_prop(mtk_hal_mms, vendor_mtk_mdp_prop)
+get_prop({ mtk_hal_camera mediacodec mtk_hal_mms surfaceflinger system_app }, vendor_dp_prop)
+get_prop({ hal_graphics_composer_default mtk_hal_c2 }, vendor_dp_prop)

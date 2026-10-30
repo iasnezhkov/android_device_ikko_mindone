@@ -1,14 +1,15 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
-
-# mindone (06.09): AIDL fingerprint V4 -> HIDL fingerprint@2.1 bridge - the AIDL server and HIDL client share one domain
-hal_client_domain(hal_fingerprint_default, hal_fingerprint)
 
 type_transition hal_fingerprint_default vendor_data_file:dir fingerprint_vendor_data_file "silead";
 allow hal_fingerprint_default vendor_data_file:dir { search write add_name };
 allow hal_fingerprint_default fingerprint_vendor_data_file:dir create_dir_perms;
 allow hal_fingerprint_default fingerprint_vendor_data_file:file create_file_perms;
-# 3 denials: the HAL polls power supplies (checking whether the sensor is warming up)
 allow hal_fingerprint_default sysfs_batteryinfo:dir search;
 allow hal_fingerprint_default sysfs_batteryinfo:file r_file_perms;
 
 set_prop(hal_fingerprint_default, vendor_silead_fp_prop)
+
+type fingerprint_mindone_data_file, file_type, data_file_type;
+allow hal_fingerprint_default fingerprint_mindone_data_file:dir { search open read write add_name remove_name };
+allow hal_fingerprint_default fingerprint_mindone_data_file:file { create open read write rename unlink };

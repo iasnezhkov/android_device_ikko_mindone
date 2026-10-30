@@ -1,8 +1,5 @@
-//
-// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
 // SPDX-License-Identifier: Apache-2.0
-//
-
 package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
@@ -10,12 +7,14 @@ package {
 cc_binary {
     name: "android.hardware.biometrics.fingerprint-service.mindone",
     vendor: true,
+    compile_multilib: "64",
     relative_install_path: "hw",
     init_rc: ["android.hardware.biometrics.fingerprint-service.mindone.rc"],
     vintf_fragments: ["android.hardware.biometrics.fingerprint-service.mindone.xml"],
     srcs: [
         "FingerprintBridge.cpp",
         "FingerprintHidlConn.cpp",
+        "LegacyFingerprint.cpp",
         "SessionBridge.cpp",
         "service.cpp",
     ],
@@ -27,6 +26,7 @@ cc_binary {
         "libbase",
         "libbinder_ndk",
         "libhidlbase",
+        "libhardware",
         "liblog",
         "libutils",
     ],

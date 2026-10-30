@@ -1,8 +1,11 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 genfscon sysfs /devices/platform/soc/11f00000.i2c/i2c-7/7-0058/leds/vibrator u:object_r:sysfs_vibrator:s0
-# charger eta6965 power_supply nodes read by hal_health_default (ROM №9 avc, permissive)
 genfscon sysfs /devices/platform/eta6965_chg/power_supply u:object_r:sysfs_batteryinfo:s0
 
 genfscon sysfs /devices/platform/soc/10026000.pwrap/10026000.pwrap:mt6366/mtk-charger-detection/power_supply u:object_r:sysfs_batteryinfo:s0
+genfscon sysfs /devices/platform/soc/10026000.pwrap/10026000.pwrap:mt6366/mt6358-gauge/power_supply/battery/learned_aging_bp u:object_r:sysfs_mindone_gauge_learned:s0
+genfscon sysfs /devices/platform/soc/10026000.pwrap/10026000.pwrap:mt6366/mt6358-gauge/power_supply/battery/learned_cycles_x100 u:object_r:sysfs_mindone_gauge_learned:s0
 
 genfscon sysfs /devices/virtual/hf_manager/hf_manager/sar_cali u:object_r:sysfs_batteryinfo:s0
 genfscon sysfs /devices/platform/soc/10010000.kp/hall_position u:object_r:sysfs_mindone_hall:s0
@@ -18,3 +21,5 @@ genfscon sysfs /devices/platform/camisp-legacy-bus/1a000000.camisp_legacy/wakeup
 genfscon sysfs /devices/platform/soc/soc:imgsys-config-bus/15020000.imgsys_config/wakeup u:object_r:sysfs_wakeup:s0
 genfscon sysfs /devices/platform/soc/11015000.i2c/i2c-3/3-0028/wakeup u:object_r:sysfs_wakeup:s0
 genfscon sysfs /devices/platform/soc/10026000.pwrap/10026000.pwrap:mt6366/mt6358-rtc/rtc/rtc0/alarmtimer.0.auto/wakeup u:object_r:sysfs_wakeup:s0
+
+genfscon sysfs /devices/virtual/misc/mddp/mddp_method u:object_r:sysfs_mindone_mddp:s0

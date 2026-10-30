@@ -1,5 +1,12 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 
-# mindone (06.09): AIDL tetheroffload V1 -> HIDL config@1.0/control@1.1 bridge (stock tetheroffloadservice,
-# domain hal_tetheroffload_default in sepolicy_vndr). The bridge is an AIDL server and HIDL client in the same domain.
-hal_client_domain(hal_tetheroffload_default, hal_tetheroffload)
+allow hal_tetheroffload_default mddp_device:chr_file { getattr open read write ioctl };
+allowxperm hal_tetheroffload_default mddp_device:chr_file ioctl { 0x0000 };
+allow hal_tetheroffload_default self:netlink_route_socket { create bind read write setopt nlmsg_read nlmsg_getneigh };
+allow hal_tetheroffload_default self:udp_socket { create ioctl };
+
+allow hal_tetheroffload_default { system_server network_stack }:fd use;
+allow hal_tetheroffload_default { system_server network_stack }:netlink_netfilter_socket { getattr getopt read };
+type sysfs_mindone_mddp, fs_type, sysfs_type;
+allow hal_tetheroffload_default sysfs_mindone_mddp:file { open read getattr };

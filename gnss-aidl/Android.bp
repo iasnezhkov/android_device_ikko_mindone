@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "android.hardware.gnss-service.mindone",
+    vendor: true,
+    relative_install_path: "hw",
+    compile_multilib: "64",
+    cpp_std: "c++17",
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+    init_rc: ["gnss-mindone.rc"],
+    vintf_fragments: ["gnss-mindone.xml"],
+    srcs: [
+        "Backend.cpp",
+        "AGnss.cpp",
+        "AGnssRil.cpp",
+        "GnssCallback.cpp",
+        "Gnss.cpp",
+        "GnssConfiguration.cpp",
+        "GnssDebug.cpp",
+        "GnssMeasurement.cpp",
+        "GnssVisibilityControl.cpp",
+        "GnssAntennaInfo.cpp",
+        "main.cpp",
+    ],
+    shared_libs: [
+        "android.hardware.gnss@1.0",
+        "android.hardware.gnss@1.1",
+        "android.hardware.gnss@2.0",
+        "android.hardware.gnss@2.1",
+        "android.hardware.gnss.measurement_corrections@1.0",
+        "android.hardware.gnss.measurement_corrections@1.1",
+        "android.hardware.gnss.visibility_control@1.0",
+        "android.hardware.gnss-V2-ndk",
+        "libbinder_ndk",
+        "libhidlbase",
+        "libdl",
+        "liblog",
+        "libutils",
+        "libbase",
+        "libcutils",
+    ],
+}

@@ -1,6 +1,8 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 
 
 
 type sysfs_mindone_hall, fs_type, sysfs_type;
+type sysfs_mindone_gauge_learned, fs_type, sysfs_type;
 

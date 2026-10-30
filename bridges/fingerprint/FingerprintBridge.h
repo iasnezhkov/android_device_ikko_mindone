@@ -1,14 +1,16 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 #include <aidl/android/hardware/biometrics/fingerprint/BnFingerprint.h>
 
 #include "FingerprintHidlConn.h"
+#include "LockoutTracker.h"
 
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 
 namespace mindone {
 
@@ -27,7 +29,8 @@ class FingerprintBridge : public ::aidl::android::hardware::biometrics::fingerpr
 
     std::shared_ptr<FingerprintHidlConn> conn_;
     std::mutex lock_;
-    std::weak_ptr<SessionBridge> activeSession_;  // guarded by lock_
+    std::unordered_map<int32_t, std::shared_ptr<LockoutTracker>> lockouts_;
+    std::weak_ptr<SessionBridge> activeSession_;
 };
 
-}  // namespace mindone
+}

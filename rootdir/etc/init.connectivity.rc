@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 # MTK connectivity .rc configure
 
 import /vendor/etc/init/hw/init_connectivity.rc

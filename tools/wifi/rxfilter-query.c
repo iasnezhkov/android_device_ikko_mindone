@@ -1,3 +1,7 @@
+/*
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #include "rxfilter-query.h"
 
 uint8_t rxfilter_query_control_status(uint8_t awake, uint8_t asleep, uint8_t bss) {

@@ -1,23 +1,11 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
  * mindone_rpcd -- open replacement for the stock /vendor/bin/ccci_rpcd
  * blob (40 KB, ELF64 aarch64, stripped) answering the small set of
  * /dev/ccci_rpc operation IDs the KERNEL does not already answer itself.
- *
- * Scope, PROVEN by reading port_rpc_recv_match() directly
- * (the kernel repository's mindone/modules/ccci_md_all/port/port_rpc.c:1416-1480, see common/ccci_rpc.h's
- * ccci_rpc_is_userspace_op()): only four op-ids are ever routed to a
- * userspace reader of /dev/ccci_rpc on our board (CONFIG_MTK_TC1_FEATURE,
- * gating a further ~17 LGE/China-market ops, is NOT set in our kernel
- * config) --
- *   IPC_RPC_QUERY_AP_SYS_PROPERTY, IPC_RPC_SAR_TABLE_IDX_QUERY_OP,
- *   IPC_RPC_AMMS_DRDI_CONTROL, IPC_RPC_SAVE_MD_CAPID.
- * Everything else in enum ccci_rpc_op_id (GPIO/ADC/EINT/clkbuf/TRNG/DTSI/
- * queue-remap, ~15 more op-ids) is answered entirely in-kernel on the
- * parallel ccci_rpc_k channel and structurally never reaches this process.
  *
  * Per-op fidelity (all four implemented, none silently stubbed -- see each
  * handler for exactly what is faithful vs. best-effort vs. intentionally
@@ -50,6 +38,7 @@
 
 #include "ccci_ioctl.h"
 #include "ccci_rpc.h"
+#include "ccci_rpc_route.h"
 
 #define LOG_TAG "mindone_rpcd"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -122,8 +111,9 @@ static void handle_query_ap_sys_property(const struct rpc_buffer *req, size_t bu
 	rpc_send_response(req->op_id, 1, value, strlen(value) + 1);
 }
 
-static void handle_sar_table_idx_query(const struct rpc_buffer *req)
+static void handle_sar_table_idx_query(const struct rpc_buffer *req, size_t buflen)
 {
+	(void)buflen;
 	int value = 0;
 	int ret = mtk_sar_table_id_get(&value);
 
@@ -165,14 +155,43 @@ static void handle_save_md_capid(const struct rpc_buffer *req, size_t buflen)
 	rpc_send_response(req->op_id, 0, NULL, 0);
 }
 
-static void handle_amms_drdi_control(const struct rpc_buffer *req)
+static void handle_amms_drdi_control(const struct rpc_buffer *req, size_t buflen)
 {
+	(void)buflen;
 	static const char kDrdiImage[] = "/vendor/firmware/md1drdi";
 	int exists = (access(kDrdiImage, F_OK) == 0);
 
 	LOGW("IPC_RPC_AMMS_DRDI_CONTROL requested (image %s %s) -- not implemented in mindone_rpcd, answering FS_NO_FEATURE (AGPS delta-reference-data assist path, out of scope for core telephony)",
 	     kDrdiImage, exists ? "present" : "absent");
 	int32_t result = FS_NO_FEATURE;
+	rpc_send_response(req->op_id, 1, &result, sizeof(result));
+}
+
+static const struct {
+	uint32_t op_id;
+	void (*handle)(const struct rpc_buffer *, size_t);
+} rpc_handlers[] = {
+	{ IPC_RPC_QUERY_AP_SYS_PROPERTY, handle_query_ap_sys_property },
+	{ IPC_RPC_SAR_TABLE_IDX_QUERY_OP, handle_sar_table_idx_query },
+	{ IPC_RPC_AMMS_DRDI_CONTROL, handle_amms_drdi_control },
+	{ IPC_RPC_SAVE_MD_CAPID, handle_save_md_capid },
+};
+
+static void rpc_dispatch(const struct rpc_buffer *req, size_t buflen)
+{
+	if (!ccci_rpc_is_userspace_op(req->op_id))
+		goto unknown_op;
+
+	for (size_t i = 0; i < sizeof(rpc_handlers) / sizeof(rpc_handlers[0]); ++i) {
+		if (rpc_handlers[i].op_id == req->op_id) {
+			rpc_handlers[i].handle(req, buflen);
+			return;
+		}
+	}
+
+unknown_op:
+	LOGW("Main: Unknow RPC Operation ID (0x%x)", req->op_id);
+	int32_t result = FS_NO_OP;
 	rpc_send_response(req->op_id, 1, &result, sizeof(result));
 }
 
@@ -205,32 +224,7 @@ int main(void)
 		req = (struct rpc_buffer *)rxbuf;
 		buflen = (size_t)n - sizeof(*req);
 
-		if (!ccci_rpc_is_userspace_op(req->op_id)) {
-			/* Should not happen -- the kernel routes non-userspace
-			 * ops to the parallel ccci_rpc_k channel, not here --
-			 * but never silently swallow an unexpected packet.
-			 */
-			LOGW("Main: Unknow RPC Operation ID (0x%x)", req->op_id);
-			continue;
-		}
-
-		switch (req->op_id) {
-		case IPC_RPC_QUERY_AP_SYS_PROPERTY:
-			handle_query_ap_sys_property(req, buflen);
-			break;
-		case IPC_RPC_SAR_TABLE_IDX_QUERY_OP:
-			handle_sar_table_idx_query(req);
-			break;
-		case IPC_RPC_SAVE_MD_CAPID:
-			handle_save_md_capid(req, buflen);
-			break;
-		case IPC_RPC_AMMS_DRDI_CONTROL:
-			handle_amms_drdi_control(req);
-			break;
-		default:
-			LOGW("Main: Unknow RPC Operation ID (0x%x)", req->op_id);
-			break;
-		}
+		rpc_dispatch(req, buflen);
 	}
 
 	close(g_rpc_fd);

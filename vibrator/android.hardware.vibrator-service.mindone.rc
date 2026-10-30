@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+service vendor.vibrator-mindone /vendor/bin/hw/android.hardware.vibrator-service.mindone
+    class hal
+    user system
+    group system

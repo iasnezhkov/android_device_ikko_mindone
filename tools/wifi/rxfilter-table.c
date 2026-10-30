@@ -1,3 +1,7 @@
+/*
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #include "rxfilter-table.h"
 
 static uint8_t* table_state(void) {

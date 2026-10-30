@@ -1,0 +1,6 @@
+vendor/lib64/mt6789/libmtk_drvb.so:vendor/lib64/libmtk_drvb.so
+vendor/lib64/libbwc.so
+vendor/lib64/libion_mtk.so
+vendor/lib64/libion_ulit.so
+vendor/bin/v3avpud
+vendor/etc/init/v3avpud.rc

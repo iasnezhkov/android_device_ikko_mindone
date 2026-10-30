@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 import argparse
 import copy
 import hashlib

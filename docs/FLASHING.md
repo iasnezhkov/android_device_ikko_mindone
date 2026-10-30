@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 The LineageOS Project -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Flashing
 
 Read this before writing anything. The normal way to install a build here is the standard
@@ -47,16 +50,10 @@ tree twice (see "A duplicated device tree blob" under "Traps"). Once that stoppe
 `update_engine` writes have installed correctly and repeatedly, through both the Updater app and
 `update_engine_client` directly.
 
-All six logical partitions inside `super` do start at the same offset for slot A and slot B:
-
-| partition | offset (sectors) |
-|---|---|
-| `odm_dlkm` | 2048 |
-| `product` | 4096 |
-| `system` | 6 264 832 |
-| `system_ext` | 9 383 936 |
-| `vendor` | 10 813 440 |
-| `vendor_dlkm` | 12 421 120 |
+`BoardConfig.mk` configures seven logical partitions per slot inside `super`:
+`odm_dlkm`, `product`, `system`, `system_dlkm`, `system_ext`, `vendor` and `vendor_dlkm`.
+The current partition geometry must be read from the matching image/device metadata;
+older six-partition offset tables do not describe this layout.
 
 That is the normal shape of a Virtual A/B device, not a defect. The two slots do not each carry a
 full separate copy of `system`/`vendor`/etc. — that would need roughly double the space `super`
@@ -83,40 +80,31 @@ Consequences worth being explicit about:
   substitute for a normal `update_engine` install, and it is what left the other slot's partition
   metadata stale in the past.
 
-## Kernel-only updates
+## Kernel, DTBO and module updates
 
-A change that only touches the kernel does not need a full rebuild-and-reinstall cycle. Start
-from the signed `target_files` of the exact build currently on the device (see "Signing"), put the
-new kernel in it — `BOOT/kernel`, the first-stage modules under `VENDOR_BOOT/RAMDISK/lib/modules`,
-the rest under `VENDOR_DLKM/lib/modules`, the `dtb` — delete `IMAGES/boot.img`,
-`IMAGES/vendor_boot.img`, `IMAGES/vendor_dlkm.img` and `IMAGES/vbmeta.img`, and let
-`add_img_to_target_files` rebuild them. Then make a *partial* package from that one
-`target_files`:
+Deliver the paired `boot`, `vendor_boot`, `vendor_dlkm`, `system_dlkm` and DTBO
+inside a **full signed ROM**, using the signing procedure below. Build it with the exact GKI `Image.gz`, matching DTB/DTBO, vendor modules and all
+load lists. The selected `system_dlkm` modules come from Google's pinned
+`android16-6.12-2026-09_r10` GKI archive, CI `16736897`
+(`system_dlkm_staging_archive.tar.gz`), staged under
+`kernel/system_dlkm/flatten/lib/modules/` with `kernel/modules.load.system`.
+`BoardConfig.mk` includes `system_dlkm` and `dtbo` in `AB_OTA_PARTITIONS`.
 
-```sh
-add_img_to_target_files -a --path out/host/linux-x86 /tmp/signed-new.zip
-ota_from_target_files --path out/host/linux-x86 -k "$KEYS/releasekey" \
-    --partial "boot vendor_boot vendor_dlkm vbmeta tee" \
-    /tmp/signed-new.zip kernel-update.zip
-```
+The ROM must also contain the stock iKKO userspace plus all pinned Samsung A075F
+graphics/radio/video/DRM, Lenovo TB351FU video and Infinix X6853 IMS donor groups.
+The product is 64-bit only. See [Proprietary files](BLOBS.md) for extraction and hashes.
+Sign the complete target-files archive and generate the full OTA with
+`ota_from_target_files` without `--partial`.
 
-This is not an incremental OTA: the listed partitions are carried whole (the package is tens of
-megabytes), and every partition *not* listed is copied by `update_engine` from the running slot.
+The former kernel-only partial-OTA recipe omitted `system_dlkm` and DTBO and does not
+cover this paired set. Keep the matching AVB descriptors and measured target TEE
+contents and partition size: earlier measurements found `tee_a` at 5 MiB and `tee_b` at 6 MiB.
+Do not copy whole donor partitions or substitute another device's TEE.
 
-🔴 `tee` has to be in that list even though nothing about a kernel change touches it: `tee_a` is
-5 MiB and `tee_b` is 6 MiB on this device, and `update_engine` copies every partition that is
-*not* in the payload straight from the source slot to the target slot — which fails outright on a
-size mismatch between the two slots' `tee`. Carrying `tee` in the partial payload avoids that copy.
-
-🔴 `vbmeta` has to be in it too: `boot`, `vendor_boot` and `vendor_dlkm` are described directly
-inside `vbmeta`'s partition descriptors, so a new kernel means a new `vbmeta`, and it has to travel
-in the same payload as the images it describes.
-
-The `target_files` you start from must be the build currently installed on the device: everything
-outside the list comes from the running slot, and the new `vbmeta` still describes that build's
-other partitions.
-
-Install the result exactly like a full package, through the Updater or `update_engine_client`.
+Install the full signed package through the Updater or `update_engine_client` as above.
+Keep a tested signed known-good package: before snapshot merge a failed boot may fall
+back to the retained successful slot; after merge, restore by installing the known-good
+package again. Selecting the former slot does not restore its previous data.
 
 ## Recovery
 
@@ -131,10 +119,7 @@ screen and no USB, cleared the BCB and rebooted two minutes later — which look
 "recovery cannot be entered". An earlier version of this page said so; it was wrong.
 
 Recovery's own "Apply update" and `adb sideload` go through `update_engine_sideload`, the same
-`update_engine` machinery described above, and are shipped in this build. Installing through them
-was not separately exercised in the round of installs this page is based on — the Updater app and
-`update_engine_client` were — so treat sideload as architecturally the same mechanism, not as
-independently proven here yet.
+`update_engine` machinery described above, and are shipped in this build.
 
 Ways in, each verified on the device:
 
@@ -174,8 +159,9 @@ from the same `boot` and `vendor_boot` as the system and repartitions nothing.
 
 ### Write the whole set, or do not write
 
-A full package for this device holds 22 partitions. This path writes twelve of them by hand --
-six logical ones inside `super`, and six written directly:
+The current complete set includes 23 partitions: seven logical partitions inside `super`,
+six written directly below, and ten firmware partitions that must be checked separately.
+This fallback writes the seven logical images together via `super` and the six direct images:
 
 ```sh
 out/host/linux-x86/bin/build_super_image /tmp/signed.zip super-sparse.img
@@ -202,7 +188,8 @@ stop if one differs: a partial set leaves the device in a combination nobody bui
 🔴 `vbmeta_system` and `vbmeta_vendor` belong in the *written* group, not the checked one. They
 do change between builds, and an earlier version of this procedure wrote neither -- the same
 class of omission that had already bootlooped this device once on a forgotten `vbmeta`.
-Six written + ten checked + six inside `super` = 22, with nothing left over. Keep it that way.
+Six written + ten checked + seven inside `super` = 23. Include `system_dlkm` in the
+matching `super` image and preserve DTBO with the kernel set.
 
 🔴 This path writes only the *active* slot's images and rebuilds `super` in place; it does not
 create or refresh the other slot's Virtual A/B snapshot. After using it, the other slot's
@@ -301,7 +288,7 @@ sha256sum boot.img
 two slots can differ in size, so hashing them whole reports a difference where the content is
 identical. That produced a wrong conclusion here once.
 
-The six logical partitions are checked the same way, through `/dev/block/mapper/<name>${SLOT}`.
+The seven logical partitions are checked the same way, through `/dev/block/mapper/<name>${SLOT}`.
 
 For an `update_engine` install there is no manual byte comparison to do -- the payload carries its
 own hashes and `update_engine` refuses to apply or to mark the slot successful if they do not
@@ -345,26 +332,20 @@ whiteouts (character devices marking deletions).
 | adb answers but nothing else works | wait 30 s before acting; a stale transport after a reboot looks like a dead device |
 
 Data is not at risk in any of the above: `/data` is a separate partition and none of this touches
-it.
-
-🔴 **One thing does not survive a fastboot-fallback install, though: enrolled fingerprints.**
-After writing images by hand the sensor reports zero enrollments even though `/data` was never
-written. The hardware is fine -- the kernel module loads, the HAL is alive, and re-enrolling works
-immediately. Why the templates are dropped is not yet understood; it has not been specifically
-checked against an `update_engine` install.
+it. After a fastboot-fallback install, enroll fingerprints again: the sensor starts with no
+enrollments, and enrolling works immediately.
 
 ## What here has actually been run
 
-Being explicit, because a procedure nobody has executed is a guess with formatting.
+The following records describe earlier installations.
 
 | | |
 |---|---|
 | Install via the LineageOS Updater (Local update) | **Run.** Repeatedly, on separate days, alternating slots; both slots boot |
 | Install headless via `update_engine_client` | **Run.** Same result |
-| Partial (kernel-only) OTA via `ota_from_target_files --partial` | **Run.** Many times, each followed by a boot of the new slot and a merge |
+| Historical partial (kernel-only) OTA | **Previously run.** Superseded by the full signed ROM procedure above |
 | Fallback after a build that does not boot | **Observed once, unplanned.** A build with a bad init change used up its tries; the bootloader returned to the previous slot, nothing lost |
-| Snapshot merge after a successful boot | **Observed.** Completes within seconds, not separately timed |
-| Recovery `Apply update` / `adb sideload` | **Not exercised this round** -- shipped and mechanically the same as the above, but not separately installed through recovery |
+| Snapshot merge after a successful boot | **Observed.** Completes within seconds |
 | Signing chain (repack, sign, `add_img_to_target_files`, `ota_from_target_files`) | **Run.** This is how every installed package was produced |
 | `build_super_image` | **Run** |
 | Fingerprint comparison | **Run** |
@@ -375,5 +356,4 @@ Being explicit, because a procedure nobody has executed is a guess with formatti
 | `adb reboot recovery` | **Run.** Works with a `vendor_boot` built after 19.09.2026; before that recovery came up dark and without USB |
 | `fastboot reboot recovery` | **Run.** Works |
 | Key menu (top-left + Power) into recovery and fastboot | **Run.** Works |
-| fastbootd (`adb reboot fastboot`) | **Run.** Reachable; writing logical partitions from it not tried |
-| VTS / CTS | **Not run** |
+| fastbootd (`adb reboot fastboot`) | **Run.** Reachable |

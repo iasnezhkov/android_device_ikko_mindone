@@ -1,47 +1,35 @@
 #!/vendor/bin/sh
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 
+exec > /dev/kmsg 2>&1
 MODDIR=/vendor/lib/modules
 LOAD=$MODDIR/modules.load
-SCHEDULE=/vendor/etc/mindone-insmod.schedule
-
-legacy() {
-  modprobe -a -d "$MODDIR" $(cat "$LOAD")
-  setprop vendor.all.modules.ready 1
-}
+SYSTEM_MODDIR=/system/lib/modules
+SYSTEM_LOAD=$SYSTEM_MODDIR/modules.load
 
 if [ $# -ne 1 ]; then
   echo "usage: mindone-fast-insmod.sh <cfg>" >&2
   exit 2
 fi
 
-case " $(cat /proc/cmdline) " in
-  *" mindone_fast_insmod=1 "*) ;;
-  *) legacy; exit 0 ;;
-esac
-
-if [ ! -f "$SCHEDULE" ] || [ ! -f "$LOAD" ]; then
-  legacy
-  exit 0
+status=ok
+if [ -s "$SYSTEM_LOAD" ]; then
+  modprobe -a -d "$SYSTEM_MODDIR" $(cat "$SYSTEM_LOAD")
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "mindone-fast-insmod: modprobe -a of $SYSTEM_LOAD failed with status $rc" > /dev/kmsg
+    status="failed:system:$rc"
+  fi
+else
+  echo "mindone-fast-insmod: $SYSTEM_LOAD is missing or empty" > /dev/kmsg
+  status="failed:system:missing"
 fi
-
-sched_mods=$(cut -d' ' -f2- "$SCHEDULE" | tr ' ' '\n' | sort -u)
-load_mods=$(sort -u "$LOAD")
-if [ "$sched_mods" != "$load_mods" ]; then
-  legacy
-  exit 0
+modprobe -a -d "$MODDIR" $(cat "$LOAD")
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "mindone-fast-insmod: modprobe -a of $LOAD failed with status $rc" > /dev/kmsg
+  status="failed:$rc"
 fi
-
-ok=1
-while [ "$ok" -eq 1 ] && read -r tag rest; do
-  case "$tag" in
-    L) printf '%s\n' $rest | xargs -r -P8 -n1 modprobe -d "$MODDIR" || ok=0 ;;
-    T) modprobe -a -d "$MODDIR" $rest || ok=0 ;;
-  esac
-done < "$SCHEDULE"
-
-if [ "$ok" -ne 1 ]; then
-  legacy
-  exit 0
-fi
-
+setprop vendor.mindone.modules.status "$status"
 setprop vendor.all.modules.ready 1

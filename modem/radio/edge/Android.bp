@@ -1,0 +1,30 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ */
+
+cc_binary {
+    name: "mindone-radio",
+    vendor: true,
+    relative_install_path: "hw",
+    cpp_std: "c++20",
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+    local_include_dirs: [".", "generated"],
+    srcs: ["main.cpp", "Callbacks.cpp", "Edge.cpp", "Indications.cpp", "Routes.cpp", "Conversions.cpp", "generated/*.cpp"],
+    static_libs: ["libmindone_radio_ffi"],
+    shared_libs: [
+        "android.hardware.radio.config-V4-ndk",
+        "android.hardware.radio.data-V4-ndk",
+        "android.hardware.radio.messaging-V4-ndk",
+        "android.hardware.radio.modem-V4-ndk",
+        "android.hardware.radio.network-V4-ndk",
+        "android.hardware.radio.sim-V4-ndk",
+        "android.hardware.radio.voice-V4-ndk",
+        "android.hardware.radio.ims-V3-ndk",
+        "libbase",
+        "libbinder_ndk",
+        "liblog",
+    ],
+    init_rc: ["mindone-radio.rc"],
+    vintf_fragments: ["mindone-radio.xml"],
+}

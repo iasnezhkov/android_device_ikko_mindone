@@ -1,0 +1,18 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "rild-mindone",
+    vendor: true,
+    relative_install_path: "hw",
+    compile_multilib: "64",
+    srcs: ["rild.cpp"],
+    init_rc: ["vendor.mindone.rild.rc"],
+    vintf_fragments: ["vendor.mindone.radio.xml"],
+    shared_libs: [
+        "libdl",
+        "liblog",
+        "libcutils",
+    ],
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+}

@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
+ * Copyright (c) 2016 MediaTek Inc.
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ */
 /*
  * mind_one CCCI userspace ABI shim.
  *

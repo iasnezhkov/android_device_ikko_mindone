@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "android.hardware.secure_element-service.mindone.radio",
+    vendor: true,
+    compile_multilib: "64",
+    relative_install_path: "hw",
+    srcs: ["service.cpp"],
+    init_rc: ["secure-element.rc"],
+    vintf_fragments: ["secure-element.xml"],
+    shared_libs: [
+        "android.hardware.secure_element-V1-ndk",
+        "android.hardware.radio-V4-ndk",
+        "android.hardware.radio.sim-V4-ndk",
+        "android.hardware.radio.config-V4-ndk",
+        "libbinder_ndk",
+    ],
+    cflags: ["-Wall", "-Werror", "-Wno-unused-parameter", "-Wno-deprecated-declarations"],
+    cpp_std: "c++17",
+}

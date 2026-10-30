@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+vendor/bin/volte_imcb
+vendor/bin/volte_imsm_93
+vendor/bin/volte_stack
+vendor/bin/volte_ua
+vendor/lib64/libipsec_ims_shr.so
+vendor/lib64/libverno.so
+vendor/bin/rcs_volte_stack
+vendor/bin/volte_rcs_ua

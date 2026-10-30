@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 The LineageOS Project -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Contributing
 
 This is a small, independent device tree. Reports and patches are welcome; please make them easy
@@ -5,12 +8,13 @@ to act on.
 
 ## The one rule that matters most
 
-🔴 **Never commit proprietary files.** `proprietary-files.txt` lists ~960 vendor blobs this
-build needs. They are *not* in this repository and must never be: they belong to MediaTek and
-iKKO, and every user extracts them from their own device with `extract-files.py`. CI rejects any
-push that adds a file named in that list, and any ELF, archive, `.apk` or `.so`.
+🔴 **Never commit proprietary files.** The stock and donor extraction lists identify the
+required proprietary inputs. Obtain matching stock and donor firmware locally and extract
+with `extract-files.py`; see [Proprietary files](docs/BLOBS.md). CI rejects any push that
+adds a listed proprietary file, or any ELF, archive, `.apk` or `.so`.
 
-If a patch needs a new blob, add its path to `proprietary-files.txt` — not the file.
+If a patch needs a new blob, add its path and required hash pins to the appropriate
+stock or donor extraction list — not the file; update donor retirement lists as needed.
 
 ## Before reporting a problem
 
@@ -36,8 +40,8 @@ For a device that boots to a black screen with adb alive, `dmesg` and the output
 
 - One change per commit, with a message that says **why** — the diff already says what.
 - English only, in code and in commit messages.
-- Where a value is device-specific, say in a comment how it was obtained. A number in a
-  `BoardConfig.mk` that nobody can trace is a number nobody can fix.
+- Explain device-specific values in commit messages or documentation. Do not add explanatory
+  code comments; retain license headers and inherited upstream comments.
 - Do not add a value taken from another device's tree without checking it against this hardware.
   That mistake has already been made here twice, and both times it produced an image that built
   cleanly and did not boot.

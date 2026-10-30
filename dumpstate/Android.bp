@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_binary {
+    name: "android.hardware.dumpstate-service.mindone",
+    vendor: true,
+    compile_multilib: "64",
+    relative_install_path: "hw",
+    init_rc: ["dumpstate-mindone.rc"],
+    vintf_fragments: ["dumpstate-mindone.xml"],
+    srcs: [
+        "Dumpstate.cpp",
+        "main.cpp",
+    ],
+    shared_libs: [
+        "android.hardware.dumpstate-V1-ndk",
+        "libbase",
+        "libbinder_ndk",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+}

@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+on property:vendor.ril.md_status_from_ccci=ready
+    start vendor.bip_ap
+
+on property:vendor.ril.md_status_from_ccci=reset
+    stop vendor.bip_ap
+
+on property:vendor.ril.md_status_from_ccci=stop
+    stop vendor.bip_ap
+
+on property:vendor.ril.md_status_from_ccci=flightmode
+    stop vendor.bip_ap
+
+on property:vendor.ril.md_status_from_ccci=exception
+    stop vendor.bip_ap
+
+service vendor.bip_ap /vendor/bin/bip_ap
+    class core
+    user system
+    group system log inet radio net_admin
+    capabilities NET_RAW NET_ADMIN
+    oneshot
+    disabled

@@ -1,33 +1,17 @@
 //
-// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
 // SPDX-License-Identifier: Apache-2.0
 //
 
-// android.hardware.sensors ISensors/default replacement for iKKO MindOne
-// (MT6789). Replaces the stock HIDL 2.0 multihal + sensors.mt6789.so blob
-// chain (device.mk previously listed
-// android.hardware.sensors-service.multihal +
-// android.hardware.sensors@2.0-subhal-impl-1.0) with a single AIDL binary
-// talking straight to /dev/hf_manager.
-//
-// !! VERIFY BEFORE FIRST BUILD !! the android.hardware.sensors-V<N>-ndk
-// version below was pinned against hardware/interfaces/sensors/aidl's
-// "main" branch (V3) fetched 13.09.2026 - it is NOT necessarily what this
-// LineageOS 23 / Android 16 tree's BOARD_SHIPPING_API_LEVEL actually
-// freezes (MTK boards commonly pin vendor API level below platform level).
-// Check with:
-//   grep -r 'sensors-V' <aosp_root>/out/soong/build.ninja | head
-//   ls <aosp_root>/hardware/interfaces/sensors/aidl/aidl_api/android.hardware.sensors/
-// and adjust every "-V3-" below (and SensorInfo/Event field names in
-// Sensors.cpp/SensorTypeMap.cpp if the version differs) to match.
 
 package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
-cc_library_static {
-    name: "libsensors.mindone.impl",
+cc_defaults {
+    name: "mindone_sensors_impl_defaults",
     vendor: true,
+    compile_multilib: "64",
     srcs: [
         "Sensors.cpp",
         "HfManagerClient.cpp",
@@ -36,7 +20,6 @@ cc_library_static {
         "NvcfgJson.cpp",
     ],
     export_include_dirs: ["."],
-    // hardware_legacy/power.h (wake locks) is not exported by the vendor variant of libpower.
     header_libs: ["libhardware_legacy_headers"],
     shared_libs: [
         "libbase",
@@ -57,9 +40,22 @@ cc_library_static {
     ],
 }
 
+cc_library_static {
+    name: "libsensors.mindone.impl",
+    defaults: ["mindone_sensors_impl_defaults"],
+}
+
+cc_library_static {
+    name: "libsensors.mindone.rust.impl",
+    defaults: ["mindone_sensors_impl_defaults"],
+    cflags: ["-DMINDONE_HF_RUST_WIRE"],
+    static_libs: ["libmindone_sensors_wire_ffi"],
+}
+
 cc_binary {
     name: "android.hardware.sensors-service.mindone",
     vendor: true,
+    compile_multilib: "64",
     relative_install_path: "hw",
     init_rc: ["android.hardware.sensors-service.mindone.rc"],
     vintf_fragments: ["mindone-sensors.xml"],
@@ -67,7 +63,6 @@ cc_binary {
     static_libs: [
         "libsensors.mindone.impl",
     ],
-    // hardware_legacy/power.h (wake locks) is not exported by the vendor variant of libpower.
     header_libs: ["libhardware_legacy_headers"],
     shared_libs: [
         "libbase",
@@ -86,4 +81,57 @@ cc_binary {
         "-Wextra",
         "-Werror",
     ],
+}
+
+rust_library_rlib {
+    name: "libmindone_sensors_core",
+    crate_name: "mindone_sensors_core",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["rust/lib.rs"],
+    no_stdlibs: true,
+    stdlibs: ["libcore.rust_sysroot", "libcompiler_builtins.rust_sysroot"],
+}
+
+rust_ffi_static {
+    name: "libmindone_sensors_wire_ffi",
+    crate_name: "mindone_sensors_wire_ffi",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["rust/ffi.rs"],
+    rustlibs: ["libmindone_sensors_core"],
+    prefer_rlib: true,
+    export_include_dirs: ["."],
+}
+
+rust_test {
+    name: "mindone_sensors_core_test",
+    crate_name: "mindone_sensors_core_test",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["tests/core.rs"],
+    rustlibs: ["libmindone_sensors_core"],
+    prefer_rlib: true,
+    test_suites: ["device-tests"],
 }

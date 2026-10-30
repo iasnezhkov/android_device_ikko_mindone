@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
+#include <sound/asound.h>
 #include <malloc.h>
 #include <math.h>
 #include <pthread.h>
@@ -22,21 +24,26 @@
 #include <time.h>
 
 #include <log/log.h>
-#include <cutils/str_parms.h>
 #include <cutils/properties.h>
 
-#include <hardware/audio.h>
-#include <hardware/hardware.h>
+#include "AudioBackend.h"
 
-#include <tinyalsa/asoundlib.h>
+#include <tinyalsa/pcm.h>
+#include <tinyalsa/mixer.h>
+
+_Static_assert(sizeof(struct pcm_config) == 64, "tinyalsa v2 LP64 configuration ABI");
 #include <audio_route/audio_route.h>
+
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+#include "AudioRustRoutes.h"
+#endif
 
 #define PCM_CARD                0
 
-#define PCM_DEVICE_PRIMARY      0   /* Playback_1 / DL1  -- MT6789_PRIMARY_MEMIF */
-#define PCM_DEVICE_FAST         2   /* Playback_2 / DL2  -- MT6789_FAST_MEMIF    */
-#define PCM_DEVICE_DEEP_BUFFER  3   /* Playback_3 / DL3  -- MT6789_DEEP_MEMIF    */
-#define PCM_DEVICE_CAPTURE_MAIN 9   /* Capture_1  / UL1  -- MT6789_RECORD_MEMIF  */
+#define PCM_DEVICE_PRIMARY      0
+#define PCM_DEVICE_FAST         2
+#define PCM_DEVICE_DEEP_BUFFER  3
+#define PCM_DEVICE_CAPTURE_MAIN 9
 #define PCM_DEVICE_BTCVSD       46
 #define SCO_RATE_NB             8000
 #define SCO_RATE_WB             16000
@@ -50,25 +57,10 @@
 #define OUT_PERIOD_SIZE     960
 #define OUT_PERIOD_COUNT    4
 
-/* Per-path buffering. Until 15.09 all three output paths used OUT_PERIOD_SIZE/COUNT, which made
- * the "deep buffer" path - the one the framework picks for music and for playback with the screen
- * off - no deeper than the primary one, and left the fast path no quicker.
- *
- * The AFE raises one interrupt per period, and AudioFlinger's thread for that output wakes once
- * per period to refill it, so the period size is directly the wake-up rate. Measured on the
- * device via /proc/interrupts (Afe_ISR_Handle) while capturing: 960 frames at 48 kHz = 50
- * interrupts/s, 1920 frames = 25/s, exactly the 1:1 relation.
- *
- * Deep buffer therefore uses 40 ms periods (half the wake-ups) and eight of them, so a music
- * stream holds 320 ms in flight and the CPU can stay in a deeper idle state between refills -
- * which is what matters on a 1960 mAh battery. The fast path goes the other way: 5 ms periods for
- * UI feedback and games, where latency is the whole point and the stream is short-lived. The
- * primary path is unchanged, because it is what everything else falls back to and 80 ms of
- * buffering is a safe middle. */
-#define OUT_DEEP_PERIOD_SIZE    1920   /* 40 ms at 48 kHz */
-#define OUT_DEEP_PERIOD_COUNT   8      /* 320 ms in flight */
-#define OUT_FAST_PERIOD_SIZE    240    /* 5 ms at 48 kHz */
-#define OUT_FAST_PERIOD_COUNT   4      /* 20 ms in flight */
+#define OUT_DEEP_PERIOD_SIZE    1920
+#define OUT_DEEP_PERIOD_COUNT   8
+#define OUT_FAST_PERIOD_SIZE    240
+#define OUT_FAST_PERIOD_COUNT   4
 #define OUT_CHANNEL_COUNT   2
 
 #define IN_SAMPLING_RATE    48000
@@ -76,20 +68,6 @@
 #define IN_PERIOD_COUNT     4
 #define IN_CHANNEL_COUNT    2
 
-/* Digital capture gain, in Q8 (256 = unity).
- *
- * The built-in microphone is digital (device tree mediatek,mic-type = DMIC), so the codec's
- * analog preamp is not in this path and there is no hardware gain stage between the PDM
- * decimator and the capture memif - AFE_GAIN1/GAIN2 feed other memifs, not UL1. Measured on the
- * device 15.09 with speech at ~50 cm: RMS 93 of 32767, i.e. -51 dBFS, with peaks at -32 dBFS.
- * That is roughly 26 dB below a normal recording level, which is why recordings sounded empty
- * even once the routing was correct.
- *
- * x12 (+21.6 dB) puts that speech at about -29 dBFS with peaks near -11 dBFS, leaving real
- * headroom for loud sources rather than pushing them into the limiter. The noise floor rises
- * with the signal (it is the microphone's own, not something this gain adds), so this is a level
- * correction, not a quality one - the 8 dB available from the DMIC clock rate is the part worth
- * having in the kernel instead. */
 #define IN_DIGITAL_GAIN_Q8  3072
 
 #define MIXER_PATHS_XML     "/vendor/etc/mixer_paths.xml"
@@ -98,8 +76,8 @@ enum output_device {
     OUT_DEVICE_NONE = 0,
     OUT_DEVICE_SPEAKER,
     OUT_DEVICE_HEADPHONE,
-    OUT_DEVICE_EARPIECE,        /* voice calls (15.09): RCV Mux -> receiver, docs section 2.3 */
-    OUT_DEVICE_BT_SCO,          /* 15.09: kernel btcvsd codec, bypasses the AFE crossbar */
+    OUT_DEVICE_EARPIECE,
+    OUT_DEVICE_BT_SCO,
 };
 #define OUT_DEVICE_COUNT (OUT_DEVICE_BT_SCO + 1)
 
@@ -107,14 +85,12 @@ enum input_device {
     IN_DEVICE_NONE = 0,
     IN_DEVICE_MAIN_MIC,
     IN_DEVICE_HEADSET_MIC,
-    IN_DEVICE_BT_SCO,           /* 16.09: btcvsd capture on PCM 46, no codec path at all */
+    IN_DEVICE_BT_SCO,
 };
 #define IN_DEVICE_COUNT (IN_DEVICE_BT_SCO + 1)
 
 struct mindone_audio_device {
-    struct audio_hw_device hw_device;
-
-    pthread_mutex_t lock;               /* protects device + stream state below */
+    pthread_mutex_t lock;
     struct audio_route *route;
     struct mixer *mixer;
 
@@ -125,18 +101,13 @@ struct mindone_audio_device {
     long voice_gain_values[2];
     unsigned int voice_gain_count;
 
-    /* SCO band as told by the Bluetooth stack ("bt_wbs=on" once mSBC is negotiated, "bt_swb=on"
-     * for LC3 super-wideband, which btcvsd can only serve as WB). NB until told otherwise: that
-     * is what HFP starts every link on. Changing it while a SCO stream is open restarts that
-     * stream, because the PCM rate is fixed at open. */
     bool bt_wb;
 
-    /* Voice call state (15.09). in_call is what actually gates the modem crossbar: the framework
-     * can call set_voice_volume()/set_mic_mute() outside a call, and those must not touch it. */
     bool in_call;
     bool speech_on;
     int speech_fd;
     enum output_device voice_out_device;
+    enum input_device voice_in_device;
     struct pcm *speech_hostless_out;
     struct pcm *speech_hostless_in;
 
@@ -149,54 +120,44 @@ struct mindone_audio_device {
     int in_ep_users[IN_DEVICE_COUNT];
     enum input_device input_routed_device;
 
-    /* Every open output stream, so a device change (audio patch) can move all of them rather
-     * than only the last one started. */
-    struct mindone_stream_out *outs[8];
-    int n_outs;
+    struct mindone_stream_out *outs;
 };
 
 struct mindone_stream_out {
-    struct audio_stream_out stream;
+    size_t frame_size;
+    struct mindone_stream_out *next;
 
     pthread_mutex_t lock;
     struct mindone_audio_device *dev;
 
     struct pcm *pcm;
     struct pcm_config config;
-    int pcm_device;                     /* PCM_DEVICE_PRIMARY / _FAST / _DEEP_BUFFER */
+    int pcm_device;
     audio_output_flags_t flags;
-    audio_devices_t device;             /* AUDIO_DEVICE_OUT_* bitmask, last set_parameters() */
+    audio_devices_t device;
     enum output_device routed_device;
-    bool crossbar_on;                   /* whether this stream's dlN-adda path is applied */
-    audio_io_handle_t io_handle;        /* the framework's name for this output; patches use it */
+    bool crossbar_on;
+    audio_io_handle_t io_handle;
 
-    /* What pcm_open() was actually given: config for the AFE memifs, the SCO config for btcvsd.
-     * Everything the framework sees (buffer size, latency, rate) still comes from config. */
     struct pcm_config hw_config;
-    /* The device the stream is routed to needs a different PCM device or config (SCO <-> anything
-     * else). Set under adev->lock by whoever changed the device; out_write() restarts the stream. */
     bool reopen_pending;
 
     bool standby;
-    uint64_t written_frames;            /* in stream (48 kHz) frames, whatever the PCM runs at */
+    bool aidl_paused;
+    bool aidl_hw_paused;
+    uint64_t aidl_discarded;
+    uint64_t aidl_presented;
+    struct timespec aidl_timestamp;
+    uint64_t written_frames;
 
-    /* SCO conversion state, see sco_out_convert(). sco_buf holds decimated mono frames not yet
-     * written (btcvsd takes whole 60-byte packets only, so a write's remainder waits for the next
-     * one); sco_acc/sco_acc_n carry a partial decimation window across writes. */
     int16_t *sco_buf;
     size_t sco_buf_frames;
     size_t sco_staged;
     int32_t sco_acc;
     unsigned int sco_acc_n;
 
-    /* Speaker conditioning state (see speaker_dsp_process()). Only used while this stream is
-     * routed to OUT_DEVICE_SPEAKER; a headphone or SCO stream leaves it untouched. */
     int16_t *dsp_buf;
     size_t dsp_frames;
-    /* High-pass coefficients, computed once per stream rather than per buffer: they depend only
-     * on the stream rate, which does not change while a stream is open, and recomputing them
-     * meant two transcendental calls and six divisions on every write - up to 200 times a second
-     * on the fast path. */
     float hp_b0, hp_b1, hp_b2, hp_a1, hp_a2;
     uint32_t hp_rate;
     float hp_x1[OUT_CHANNEL_COUNT], hp_x2[OUT_CHANNEL_COUNT];
@@ -207,32 +168,26 @@ struct mindone_stream_out {
 };
 
 struct mindone_stream_in {
-    struct audio_stream_in stream;
+    size_t frame_size;
 
     pthread_mutex_t lock;
     struct mindone_audio_device *dev;
 
     struct pcm *pcm;
     struct pcm_config config;
-    struct pcm_config hw_config;        /* see the output side: the SCO config differs */
+    struct pcm_config hw_config;
     audio_devices_t device;
     enum input_device routed_device;
     audio_io_handle_t io_handle;
     bool reopen_pending;
 
     bool standby;
-    uint64_t read_frames;               /* in stream (48 kHz) frames */
+    uint64_t read_frames;
 
-    /* SCO capture: source samples at the band rate before interpolation, and the last sample of
-     * the previous read so the interpolation is continuous across reads. */
     int16_t *sco_in_buf;
     size_t sco_in_frames;
     int16_t sco_last;
 
-    /* Scratch for the stereo->mono downmix in in_read(). The capture hardware always runs two
-     * channels (left = main mic pad, right = the second pad), while the stream this HAL offers
-     * the framework is mono, so the two cannot be the same buffer. Grown on demand and freed in
-     * adev_close_input_stream(). */
     int16_t *downmix_buf;
     size_t downmix_frames;
 };
@@ -245,13 +200,11 @@ static enum output_device output_device_from_mask(audio_devices_t device)
     if (device & AUDIO_DEVICE_OUT_SPEAKER)
         return OUT_DEVICE_SPEAKER;
     if (device & AUDIO_DEVICE_OUT_EARPIECE)
-        return OUT_DEVICE_EARPIECE;     /* 15.09: reachable now that voice calls are served */
+        return OUT_DEVICE_EARPIECE;
     if (device & (AUDIO_DEVICE_OUT_BLUETOOTH_SCO |
                   AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET |
                   AUDIO_DEVICE_OUT_BLUETOOTH_SCO_CARKIT))
-        return OUT_DEVICE_BT_SCO;       /* 15.09 */
-    /* A2DP never reaches primary (audio.bluetooth.default serves it) and USB has its own HAL, so
-     * anything left really is the speaker rather than an unroutable stream. */
+        return OUT_DEVICE_BT_SCO;
     return OUT_DEVICE_SPEAKER;
 }
 
@@ -260,8 +213,6 @@ static const char *output_path_name(enum output_device d)
     switch (d) {
     case OUT_DEVICE_HEADPHONE: return "headphone";
     case OUT_DEVICE_EARPIECE:  return "earpiece";
-    /* BT SCO has no audio_route path on purpose: btcvsd exposes its own kcontrols
-     * ("BTCVSD Band"/"Tx Mute"), not AFE crossbar switches - see bt_sco_configure(). */
     case OUT_DEVICE_BT_SCO:    return NULL;
     case OUT_DEVICE_SPEAKER:
     default:                   return "speaker";
@@ -279,40 +230,98 @@ static const char *output_path_off_name(enum output_device d)
     }
 }
 
-/* ---- Output endpoints are shared and reference-counted ----------------------
- * The codec-side device path is one physical thing (LOL Mux, the aw87xxx amp, RCV Mux) used by
- * every output stream routed to that device. It goes up when the first stream arrives and down
- * when the last one leaves; a stream that stops while another is still playing must not touch
- * it. Caller must hold adev->lock for all four functions below. */
-static void endpoint_acquire(struct mindone_audio_device *adev, enum output_device d)
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+static int plan_endpoint_transition(const struct mindone_audio_route_state *current,
+                                    enum output_device old_device,
+                                    enum output_device new_device,
+                                    struct mindone_audio_route_plan *plan)
 {
+    _Static_assert(OUT_DEVICE_NONE == 0 && OUT_DEVICE_SPEAKER == 1 &&
+                   OUT_DEVICE_HEADPHONE == 2 && OUT_DEVICE_EARPIECE == 3 &&
+                   OUT_DEVICE_BT_SCO == 4 && OUT_DEVICE_COUNT == 5, "endpoint ABI");
+    int32_t status = mindone_audio_route_plan(current, (uint32_t)old_device,
+                                             (uint32_t)new_device, plan);
+    return status == 0 ? 0 : status == -5 ? -EOVERFLOW : -EINVAL;
+}
+
+static struct mindone_audio_route_state endpoint_snapshot(const struct mindone_audio_device *adev)
+{
+    _Static_assert(sizeof(adev->out_ep_users[0]) == sizeof(int32_t), "owner count ABI");
+    struct mindone_audio_route_state state;
+    for (unsigned int i = 0; i < OUT_DEVICE_COUNT; i++)
+        state.users[i] = adev->out_ep_users[i];
+    return state;
+}
+
+static int check_endpoint_transition(const struct mindone_audio_device *adev,
+                                     enum output_device old_device,
+                                     enum output_device new_device)
+{
+    struct mindone_audio_route_state current = endpoint_snapshot(adev);
+    struct mindone_audio_route_plan plan;
+    return plan_endpoint_transition(&current, old_device, new_device, &plan);
+}
+
+static int apply_endpoint_transition(struct mindone_audio_device *adev,
+                                     enum output_device old_device,
+                                     enum output_device new_device)
+{
+    struct mindone_audio_route_state current = endpoint_snapshot(adev);
+    struct mindone_audio_route_plan plan;
+    int status = plan_endpoint_transition(&current, old_device, new_device, &plan);
+    if (status != 0)
+        return status;
+    for (unsigned int i = 0; i < OUT_DEVICE_COUNT; i++)
+        adev->out_ep_users[i] = plan.next.users[i];
+    for (uint32_t i = 0; i < plan.action_count; i++) {
+        const struct mindone_audio_route_action *action = &plan.actions[i];
+        enum output_device endpoint = (enum output_device)action->endpoint;
+        if (action->kind == 1)
+            audio_route_apply_path(adev->route, output_path_name(endpoint));
+        else if (action->kind == 2)
+            audio_route_apply_path(adev->route, output_path_off_name(endpoint));
+        else if (action->kind == 3)
+            audio_route_update_mixer(adev->route);
+    }
+    return 0;
+}
+#endif
+
+static int endpoint_acquire(struct mindone_audio_device *adev, enum output_device d)
+{
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+    return apply_endpoint_transition(adev, OUT_DEVICE_NONE, d);
+#else
     const char *on_path;
 
     if (d == OUT_DEVICE_NONE)
-        return;
+        return 0;
     if (adev->out_ep_users[d]++ > 0)
-        return;                         /* already up for another stream */
-    /* NULL means "this endpoint is not an audio_route path" (BT SCO) - the count is still kept
-     * so acquire/release stay symmetric, but there is nothing to apply. */
+        return 0;
     on_path = output_path_name(d);
     if (on_path) {
         audio_route_apply_path(adev->route, on_path);
         audio_route_update_mixer(adev->route);
     }
+    return 0;
+#endif
 }
 
-static void endpoint_release(struct mindone_audio_device *adev, enum output_device d)
+static int endpoint_release(struct mindone_audio_device *adev, enum output_device d)
 {
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+    return apply_endpoint_transition(adev, d, OUT_DEVICE_NONE);
+#else
     const char *off_path;
 
     if (d == OUT_DEVICE_NONE)
-        return;
+        return 0;
     if (adev->out_ep_users[d] <= 0) {
         ALOGW("%s: endpoint %d released more often than acquired", __func__, d);
-        return;
+        return 0;
     }
     if (--adev->out_ep_users[d] > 0)
-        return;                         /* someone else is still playing here */
+        return 0;
     off_path = output_path_off_name(d);
     if (off_path) {
         audio_route_apply_path(adev->route, off_path);
@@ -322,26 +331,32 @@ static void endpoint_release(struct mindone_audio_device *adev, enum output_devi
             audio_route_apply_path(adev->route, output_path_name(OUT_DEVICE_SPEAKER));
         audio_route_update_mixer(adev->route);
     }
+    return 0;
+#endif
 }
 
-/* Moves ONE stream's endpoint from old_device to new_device. Releasing before acquiring keeps
- * the old behaviour for the single-stream case: switching speaker -> headphone drops
- * "Ext_Speaker_Amp Switch" so the aw87xxx is not left powered for nothing (battery). With
- * several streams, the speaker stays up as long as any of them is still routed there. */
-static void apply_output_route(struct mindone_audio_device *adev,
+static int apply_output_route(struct mindone_audio_device *adev,
                                 enum output_device old_device,
                                 enum output_device new_device)
 {
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+    if (old_device == OUT_DEVICE_NONE) {
+        return endpoint_acquire(adev, new_device);
+    }
+    return apply_endpoint_transition(adev, old_device, new_device);
+#else
     if (old_device == new_device)
-        return;
+        return 0;
     endpoint_release(adev, old_device);
     endpoint_acquire(adev, new_device);
+    return 0;
+#endif
 }
 
-static void teardown_output_route(struct mindone_audio_device *adev,
+static int teardown_output_route(struct mindone_audio_device *adev,
                                    enum output_device device)
 {
-    endpoint_release(adev, device);
+    return endpoint_release(adev, device);
 }
 
 static const char *dl_crossbar_path_name(int pcm_device)
@@ -387,16 +402,6 @@ static void teardown_dl_crossbar(struct mindone_audio_device *adev,
 
 static enum input_device input_device_from_mask(audio_devices_t device)
 {
-    /* 🔴 15.09: this test used to be a plain `device & AUDIO_DEVICE_IN_WIRED_HEADSET`, and it was
-     * ALWAYS true. Every AUDIO_DEVICE_IN_* constant carries the shared AUDIO_DEVICE_BIT_IN flag
-     * (0x80000000), so a bitwise AND between any two of them is non-zero on that bit alone:
-     *     AUDIO_DEVICE_IN_BUILTIN_MIC   0x80000004
-     *     AUDIO_DEVICE_IN_WIRED_HEADSET 0x80000010
-     *     AND                           0x80000000  -> "true"
-     * The result was that the built-in mic selected the headset path, so PGA L/R Mux sat on AIN1
-     * (the headset pad) instead of AIN0 and every recording came out silent. Caught on the device
-     * with tinymix during an actual recording, not by reading the code.
-     * Masking the flag off first makes the comparison mean what it reads as. */
     const audio_devices_t type = device & ~AUDIO_DEVICE_BIT_IN;
 
     if (type & (AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET & ~AUDIO_DEVICE_BIT_IN))
@@ -406,7 +411,6 @@ static enum input_device input_device_from_mask(audio_devices_t device)
     return IN_DEVICE_MAIN_MIC;
 }
 
-/* NULL for BT SCO: btcvsd is not on the codec, there is no mixer path to apply. */
 static const char *input_path_name(enum input_device d)
 {
     switch (d) {
@@ -445,7 +449,10 @@ static void apply_input_route(struct mindone_audio_device *adev,
     }
     if (new_device != IN_DEVICE_NONE)
         adev->in_ep_users[new_device]++;
-    if (adev->in_ep_users[IN_DEVICE_MAIN_MIC] > 0)
+    if (adev->voice_in_device != IN_DEVICE_NONE &&
+        adev->in_ep_users[adev->voice_in_device] > 0)
+        selected = adev->voice_in_device;
+    else if (adev->in_ep_users[IN_DEVICE_MAIN_MIC] > 0)
         selected = IN_DEVICE_MAIN_MIC;
     else if (adev->in_ep_users[IN_DEVICE_HEADSET_MIC] > 0)
         selected = IN_DEVICE_HEADSET_MIC;
@@ -523,15 +530,11 @@ static void voice_gain_release(struct mindone_audio_device *adev)
 static void set_hw_output_volume(struct mindone_audio_device *adev,
                                   enum output_device device, float vol)
 {
-    /* One gain control per endpoint. Handset Volume is MONO (1 value, range 0..18 on this
-     * codec) while Headset/Lineout are stereo - so the number of values is read from the control
-     * instead of assuming two, which would fail silently on the earpiece. */
     const char *ctl_name = output_volume_control_name(device);
     struct mixer_ctl *ctl;
     int min, max, value;
     unsigned int i, num_values;
 
-    /* Nothing of ours is in a SCO link's gain chain: the headset sets its own level. */
     if (!adev->mixer || !ctl_name)
         return;
 
@@ -553,20 +556,9 @@ static void set_hw_output_volume(struct mindone_audio_device *adev,
         mixer_ctl_set_value(ctl, (int)i, value);
 }
 
-/* ---- BT SCO -------------------------------------------------------------------
- * 15.09, corrected 16.09. btcvsd is a transport to the Bluetooth chip sitting beside the AFE,
- * not on its crossbar, so a SCO stream needs none of the routing above - just PCM 46 opened
- * with the band's own config, and the band told to the driver. The chip does the CVSD/mSBC
- * coding; what crosses PCM 46 is plain S16 mono at 8 kHz (NB) or 16 kHz (WB), in 60-byte
- * packets. The band is what the Bluetooth stack negotiated and announced through
- * set_parameters(bt_wbs=...), NOT anything this HAL can see on its streams: those are always
- * 48 kHz stereo, whatever the link.
- *
- * Caller must hold adev->lock.
- */
-#define SCO_PCM_PACKET_BYTES    60      /* BTCVSD_TX_PACKET_SIZE in mtk_btcvsd.c */
+#define SCO_PCM_PACKET_BYTES    60
 #define SCO_PCM_PACKET_FRAMES   (SCO_PCM_PACKET_BYTES / (int)sizeof(int16_t))
-#define SCO_PERIOD_FRAMES       240     /* 8 packets: 15 ms at 16 kHz, 30 ms at 8 kHz */
+#define SCO_PERIOD_FRAMES       240
 #define SCO_PERIOD_COUNT        4
 
 static uint32_t sco_rate(const struct mindone_audio_device *adev)
@@ -597,14 +589,11 @@ static void bt_sco_configure(struct mindone_audio_device *adev)
     else
         ALOGW("%s: 'BTCVSD Band' not found", __func__);
 
-    /* Mute follows the device-wide flag: a SCO call muted before the route came up must stay
-     * muted, and this control is the only mute btcvsd offers. */
     ctl = mixer_get_ctl_by_name(adev->mixer, "BTCVSD Tx Mute Switch");
     if (ctl)
         mixer_ctl_set_value(ctl, 0, adev->mic_mute ? 1 : 0);
 }
 
-/* Which PCM device a stream must open for the endpoint it is routed to. */
 static int output_pcm_device(const struct mindone_stream_out *out, enum output_device dev)
 {
     return (dev == OUT_DEVICE_BT_SCO) ? PCM_DEVICE_BTCVSD : out->pcm_device;
@@ -716,6 +705,12 @@ static void build_sph_info(unsigned char *out)
     out[SPH_INFO_OFF_PATH] = SPH_INFO_PATH_SHM_CCCI;
     out[SPH_INFO_OFF_PARAM_EMI_VALID] = SPH_INFO_EMI_EMPTY_VALID;
     out[SPH_INFO_OFF_SMARTPA_CONFIG] = SPH_INFO_SMARTPA_SINGLE;
+}
+
+static void speech_bt_info(unsigned char *info, bool wb)
+{
+    info[SPH_INFO_OFF_BT] = wb ? 4 : 3;
+    info[SPH_INFO_OFF_RATE_ENUM] = wb ? 1 : 0;
 }
 
 static void sph_put_u32_le(unsigned char *out, int off, uint32_t v)
@@ -1120,6 +1115,18 @@ static int speech_rx_pump(struct mindone_audio_device *adev, const char *value)
     return rc;
 }
 
+static int speech_modem_mute(struct mindone_audio_device *adev, uint16_t message, bool mute)
+{
+    if (adev->speech_fd < 0)
+        return -ENODEV;
+    int rc = ccci_receive(adev->speech_fd, 0, true);
+    if (rc)
+        return rc;
+    if (ccci_send_mailbox(adev->speech_fd, message, mute, 0))
+        return -EIO;
+    return ccci_receive(adev->speech_fd, message | 0x8000, false);
+}
+
 static int speech_ccci_off(struct mindone_audio_device *adev)
 {
     int rc = 0;
@@ -1147,6 +1154,8 @@ static int speech_ccci_set_mode(struct mindone_audio_device *adev, enum output_d
     if (adev->speech_fd < 0)
         return -ENODEV;
     build_sph_info(info);
+    if (out == OUT_DEVICE_BT_SCO)
+        speech_bt_info(info, adev->bt_wb);
     if (property_get_bool(PROP_SPH_PARAM_ENABLE, true)) {
         rc = sph_param_fetch_real(adev, out, info);
         if (rc)
@@ -1176,6 +1185,8 @@ static int speech_ccci_on(struct mindone_audio_device *adev, enum output_device 
         return -errno;
     for (size_t i = 0; i < sizeof(messages) / sizeof(messages[0]); ++i) {
         build_sph_info(info);
+        if (out == OUT_DEVICE_BT_SCO)
+            speech_bt_info(info, adev->bt_wb);
         if (property_get_bool(PROP_SPH_PARAM_ENABLE, true)) {
             rc = sph_param_fetch_real(adev, out, info);
             if (rc)
@@ -1194,6 +1205,8 @@ static int speech_ccci_on(struct mindone_audio_device *adev, enum output_device 
         if (rc)
             break;
     }
+    if (!rc && out == OUT_DEVICE_BT_SCO)
+        rc = speech_modem_mute(adev, 0x2f02, adev->mic_mute);
     if (rc) {
         ALOGE("%s: speech start failed (%d)", __func__, rc);
         if (on_sent)
@@ -1217,7 +1230,7 @@ static struct pcm *speech_hostless_pcm_open(bool capture)
     c.format = PCM_FORMAT_S16_LE;
     c.period_size = SPEECH_HOSTLESS_PERIOD_SIZE;
     c.period_count = SPEECH_HOSTLESS_PERIOD_COUNT;
-    c.stop_threshold = UINT32_MAX;
+    c.stop_threshold = ULONG_MAX;
     pcm = pcm_open(PCM_CARD, PCM_DEVICE_SPEECH_HOSTLESS, capture ? PCM_IN : PCM_OUT, &c);
     if (!pcm || !pcm_is_ready(pcm)) {
         ALOGE("%s: pcm_open(device=%d, capture=%d) failed: %s", __func__,
@@ -1272,13 +1285,22 @@ fail:
     return -EIO;
 }
 
-static void voice_route_disable(struct mindone_audio_device *adev, bool speech_off)
+static int voice_route_disable(struct mindone_audio_device *adev, bool speech_off)
 {
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
     if (adev->in_call) {
+        int rc = check_endpoint_transition(adev, adev->voice_out_device, OUT_DEVICE_NONE);
+        if (rc)
+            return rc;
+    }
+#endif
+    if (adev->in_call && adev->voice_out_device != OUT_DEVICE_BT_SCO) {
         audio_route_apply_path(adev->route, "voice-echo-ref-off");
         audio_route_apply_path(adev->route, "voice-uplink-off");
         audio_route_apply_path(adev->route, "voice-downlink-off");
-        teardown_input_route(adev, IN_DEVICE_MAIN_MIC);
+        enum input_device in = adev->voice_in_device;
+        adev->voice_in_device = IN_DEVICE_NONE;
+        teardown_input_route(adev, in);
         audio_route_update_mixer(adev->route);
     }
 
@@ -1291,11 +1313,12 @@ static void voice_route_disable(struct mindone_audio_device *adev, bool speech_o
 
     voice_gain_release(adev);
     if (!adev->in_call)
-        return;
+        return 0;
     endpoint_release(adev, adev->voice_out_device);
     adev->voice_out_device = OUT_DEVICE_NONE;
     adev->in_call = false;
     ALOGI("%s: voice route down", __func__);
+    return 0;
 }
 
 static int voice_route_enable(struct mindone_audio_device *adev, enum output_device out)
@@ -1304,26 +1327,24 @@ static int voice_route_enable(struct mindone_audio_device *adev, enum output_dev
 
     if (adev->in_call)
         return 0;
-    if (out == OUT_DEVICE_BT_SCO) {
-        ALOGW("%s: voice call over BT SCO is not implemented, keeping the call on the earpiece",
-              __func__);
-        out = OUT_DEVICE_EARPIECE;
-    }
-
-    apply_output_route(adev, adev->voice_out_device, out);
+    rc = apply_output_route(adev, adev->voice_out_device, out);
+    if (rc)
+        return rc;
     adev->voice_out_device = out;
-    apply_input_route(adev, IN_DEVICE_NONE, IN_DEVICE_MAIN_MIC);
-    audio_route_apply_path(adev->route, "voice-downlink");
-    if (!adev->mic_mute)
-        audio_route_apply_path(adev->route, "voice-uplink");
-    if (out == OUT_DEVICE_SPEAKER)
-        audio_route_apply_path(adev->route, "voice-echo-ref");
-    audio_route_update_mixer(adev->route);
+    adev->voice_in_device = out == OUT_DEVICE_BT_SCO ? IN_DEVICE_NONE :
+        out == OUT_DEVICE_HEADPHONE ? IN_DEVICE_HEADSET_MIC : IN_DEVICE_MAIN_MIC;
+    if (out != OUT_DEVICE_BT_SCO) {
+        apply_input_route(adev, IN_DEVICE_NONE, adev->voice_in_device);
+        audio_route_apply_path(adev->route, "voice-downlink");
+        if (!adev->mic_mute)
+            audio_route_apply_path(adev->route, "voice-uplink");
+        audio_route_update_mixer(adev->route);
+    }
     adev->in_call = true;
 
-    if (!adev->speech_on)
+    if (out != OUT_DEVICE_BT_SCO)
         rc = speech_hostless_open(adev);
-    if (!rc)
+    if (!rc && out != OUT_DEVICE_BT_SCO)
         rc = voice_gain_acquire(adev, out);
     if (!rc && !adev->speech_on)
         rc = speech_ccci_on(adev, out);
@@ -1337,9 +1358,34 @@ static int voice_route_enable(struct mindone_audio_device *adev, enum output_dev
     return 0;
 }
 
-/* Which endpoint a call should use. The framework tells us through set_parameters()/the output
- * stream device; with no media stream open (the usual case for a plain call) it has not told us
- * anything, and the sane default for a phone call is the earpiece, not the speaker. */
+static int voice_route_change_sco(struct mindone_audio_device *adev, enum output_device out)
+{
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+    int planning_rc = check_endpoint_transition(adev, adev->voice_out_device, out);
+    if (planning_rc)
+        return planning_rc;
+#endif
+    int rc = speech_modem_mute(adev, 0x2f03, true);
+    if (!rc)
+        rc = speech_modem_mute(adev, 0x2f02, true);
+    if (!rc)
+        rc = voice_route_disable(adev, false);
+    if (!rc) {
+        speech_hostless_close(adev);
+        rc = voice_route_enable(adev, out);
+    }
+    if (!rc)
+        rc = speech_ccci_set_mode(adev, out);
+    if (!rc)
+        rc = speech_modem_mute(adev, 0x2f02,
+                               out == OUT_DEVICE_BT_SCO && adev->mic_mute);
+    if (!rc)
+        rc = speech_modem_mute(adev, 0x2f03, false);
+    if (rc)
+        voice_route_disable(adev, true);
+    return rc;
+}
+
 static enum output_device voice_output_device(struct mindone_audio_device *adev)
 {
     if (adev->active_out && adev->active_out->device)
@@ -1347,42 +1393,15 @@ static enum output_device voice_output_device(struct mindone_audio_device *adev)
     return OUT_DEVICE_EARPIECE;
 }
 
-/* ---- audio_stream_out ------------------------------------------------------ */
 
-static uint32_t out_get_sample_rate(const struct audio_stream *stream)
+static uint32_t out_get_sample_rate(const struct mindone_stream_out *out)
 {
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
     return out->config.rate;
 }
 
-static int out_set_sample_rate(struct audio_stream *stream, uint32_t rate)
+static size_t out_get_buffer_size(const struct mindone_stream_out *out)
 {
-    (void)stream; (void)rate;
-    return -ENOSYS; /* fixed-rate output; AudioFlinger resamples */
-}
-
-static size_t out_get_buffer_size(const struct audio_stream *stream)
-{
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
-    return out->config.period_size * audio_stream_out_frame_size(&out->stream);
-}
-
-static audio_channel_mask_t out_get_channels(const struct audio_stream *stream)
-{
-    (void)stream;
-    return AUDIO_CHANNEL_OUT_STEREO;
-}
-
-static audio_format_t out_get_format(const struct audio_stream *stream)
-{
-    (void)stream;
-    return AUDIO_FORMAT_PCM_16_BIT;
-}
-
-static int out_set_format(struct audio_stream *stream, audio_format_t format)
-{
-    (void)stream;
-    return (format == AUDIO_FORMAT_PCM_16_BIT) ? 0 : -ENOSYS;
+    return out->config.period_size * out->frame_size;
 }
 
 static int do_out_standby(struct mindone_stream_out *out)
@@ -1392,24 +1411,29 @@ static int do_out_standby(struct mindone_stream_out *out)
     if (out->standby)
         return 0;
 
+    pthread_mutex_lock(&adev->lock);
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+    if (out->routed_device != OUT_DEVICE_BT_SCO) {
+        int rc = check_endpoint_transition(adev, out->routed_device, OUT_DEVICE_NONE);
+        if (rc) {
+            pthread_mutex_unlock(&adev->lock);
+            return rc;
+        }
+    }
+#endif
     if (out->pcm) {
         pcm_close(out->pcm);
         out->pcm = NULL;
     }
 
-    pthread_mutex_lock(&adev->lock);
     teardown_dl_crossbar(adev, out);
-    teardown_output_route(adev, out->routed_device);
+    if (out->routed_device != OUT_DEVICE_BT_SCO)
+        teardown_output_route(adev, out->routed_device);
     if (adev->active_out == out)
         adev->active_out = NULL;
-    /* routed_device and standby are read by adev_create_audio_patch() under adev->lock alone,
-     * so they change under it too -- otherwise a device change could catch this stream half
-     * way out. */
     out->routed_device = OUT_DEVICE_NONE;
     out->standby = true;
     pthread_mutex_unlock(&adev->lock);
-    /* Clear the conditioning state with the stream: stale filter history and a ducked limiter
-     * gain would otherwise show up as a click and a fade-in on the next start. */
     memset(out->hp_x1, 0, sizeof(out->hp_x1));
     memset(out->hp_x2, 0, sizeof(out->hp_x2));
     memset(out->hp_y1, 0, sizeof(out->hp_y1));
@@ -1421,9 +1445,8 @@ static int do_out_standby(struct mindone_stream_out *out)
     return 0;
 }
 
-static int out_standby(struct audio_stream *stream)
+static int out_standby(struct mindone_stream_out *out)
 {
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
     int ret;
 
     pthread_mutex_lock(&out->lock);
@@ -1432,70 +1455,50 @@ static int out_standby(struct audio_stream *stream)
     return ret;
 }
 
-static int out_dump(const struct audio_stream *stream, int fd)
-{
-    (void)stream; (void)fd;
-    return 0;
-}
+static int out_aidl_state(struct mindone_stream_out *out, enum mindone_audio_command command);
 
-static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
+static int out_set_route(struct mindone_stream_out *out, audio_devices_t new_mask)
 {
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
     struct mindone_audio_device *adev = out->dev;
-    struct str_parms *parms;
-    char value[32];
-    int ret;
+    int rc = 0;
+    bool restart = false;
 
-    parms = str_parms_create_str(kvpairs);
-    if (!parms)
-        return -ENOMEM;
+    pthread_mutex_lock(&out->lock);
+    pthread_mutex_lock(&adev->lock);
+    if (!out->standby) {
+        enum output_device new_dev = output_device_from_mask(new_mask);
 
-    ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_ROUTING,
-                             value, sizeof(value));
-    if (ret >= 0) {
-        audio_devices_t new_mask = (audio_devices_t)atoi(value);
-
-        bool restart = false;
-
-        pthread_mutex_lock(&out->lock);
-        pthread_mutex_lock(&adev->lock);
-        out->device = new_mask;
-        if (!out->standby) {
-            enum output_device new_dev = output_device_from_mask(new_mask);
-
-            restart = (new_dev == OUT_DEVICE_BT_SCO) !=
-                      (out->routed_device == OUT_DEVICE_BT_SCO);
-            if (!restart) {
-                apply_output_route(adev, out->routed_device, new_dev);
+        restart = (new_dev == OUT_DEVICE_BT_SCO) !=
+                  (out->routed_device == OUT_DEVICE_BT_SCO);
+        if (!restart) {
+            rc = apply_output_route(adev, out->routed_device, new_dev);
+            if (!rc)
                 out->routed_device = new_dev;
-            }
         }
-        pthread_mutex_unlock(&adev->lock);
-        if (restart)
-            do_out_standby(out);
-        pthread_mutex_unlock(&out->lock);
     }
-
-    str_parms_destroy(parms);
-    return 0;
+    if (!rc && !restart)
+        out->device = new_mask;
+    pthread_mutex_unlock(&adev->lock);
+    if (restart) {
+        rc = do_out_standby(out);
+        if (!rc) {
+            pthread_mutex_lock(&adev->lock);
+            out->device = new_mask;
+            pthread_mutex_unlock(&adev->lock);
+        }
+    }
+    pthread_mutex_unlock(&out->lock);
+    return rc;
 }
 
-static char *out_get_parameters(const struct audio_stream *stream, const char *keys)
+static uint32_t out_get_latency(const struct mindone_stream_out *out)
 {
-    (void)stream; (void)keys;
-    return strdup("");
-}
-
-static uint32_t out_get_latency(const struct audio_stream_out *stream)
-{
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
     return (out->config.period_size * out->config.period_count * 1000) /
            out->config.rate;
 }
 
-static int out_set_volume(struct audio_stream_out *stream, float left, float right)
+static int out_set_volume(struct mindone_stream_out *out, float left, float right)
 {
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
 
     if (!isfinite(left) || !isfinite(right) || left < 0.0f || left > 1.0f ||
         right < 0.0f || right > 1.0f)
@@ -1511,63 +1514,66 @@ static int start_output_stream(struct mindone_stream_out *out)
 {
     struct mindone_audio_device *adev = out->dev;
     enum output_device new_dev;
+    struct pcm_config hw_config;
     int pcm_dev;
 
-    /* out->device and the SCO band are written under adev->lock by the patch and parameter
-     * paths; read them the same way so a change is either fully seen or not at all. */
     pthread_mutex_lock(&adev->lock);
     new_dev = output_device_from_mask(out->device);
-    /* 15.09: BT SCO lives on its own PCM device (btcvsd), not on the DL memif this stream was
-     * opened against, and it must NOT get the dlN-adda crossbar - see bt_sco_configure(). */
     pcm_dev = output_pcm_device(out, new_dev);
     if (new_dev == OUT_DEVICE_BT_SCO)
-        sco_pcm_config(adev, &out->hw_config);
+        sco_pcm_config(adev, &hw_config);
     else
-        out->hw_config = out->config;
-    out->reopen_pending = false;
+        hw_config = out->config;
     pthread_mutex_unlock(&adev->lock);
 
-    /* MINDONE-AVSYNC: PCM_MONOTONIC makes pcm_get_htimestamp answer in
-     * CLOCK_MONOTONIC, which is the clock the framework compares against. Without it the
-     * driver timestamps in another base and out_get_presentation_position below would be
-     * precisely as useless as the written_frames guess it replaces. */
-    out->pcm = pcm_open(PCM_CARD, pcm_dev, PCM_OUT | PCM_MONOTONIC, &out->hw_config);
-    if (!out->pcm || !pcm_is_ready(out->pcm)) {
+    struct pcm *pcm = pcm_open(PCM_CARD, pcm_dev, PCM_OUT | PCM_MONOTONIC, &hw_config);
+    if (!pcm || !pcm_is_ready(pcm)) {
         ALOGE("%s: pcm_open(device=%d) failed: %s", __func__,
-              pcm_dev, out->pcm ? pcm_get_error(out->pcm) : "unknown");
-        if (out->pcm) {
-            pcm_close(out->pcm);
-            out->pcm = NULL;
-        }
+              pcm_dev, pcm ? pcm_get_error(pcm) : "unknown");
+        if (pcm)
+            pcm_close(pcm);
         return -ENODEV;
     }
 
+    hw_config = *pcm_get_config(pcm);
     pthread_mutex_lock(&adev->lock);
     if (new_dev != output_device_from_mask(out->device) ||
-        (new_dev == OUT_DEVICE_BT_SCO && out->hw_config.rate != sco_rate(adev))) {
+        (new_dev == OUT_DEVICE_BT_SCO && hw_config.rate != sco_rate(adev))) {
         pthread_mutex_unlock(&adev->lock);
-        pcm_close(out->pcm);
-        out->pcm = NULL;
+        pcm_close(pcm);
         return -EAGAIN;
     }
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+    if (new_dev != OUT_DEVICE_BT_SCO) {
+        int rc = check_endpoint_transition(adev, OUT_DEVICE_NONE, new_dev);
+        if (rc) {
+            pthread_mutex_unlock(&adev->lock);
+            pcm_close(pcm);
+            return rc;
+        }
+    }
+#endif
     if (new_dev == OUT_DEVICE_BT_SCO) {
         bt_sco_configure(adev);
     } else {
         apply_dl_crossbar(adev, out);
         apply_output_route(adev, OUT_DEVICE_NONE, new_dev);
     }
+    out->pcm = pcm;
+    out->hw_config = hw_config;
+    out->reopen_pending = false;
     adev->active_out = out;
     out->routed_device = new_dev;
-    out->standby = false;               /* see do_out_standby() for why this is under adev->lock */
+    out->standby = false;
     pthread_mutex_unlock(&adev->lock);
 
     return 0;
 }
 
 #define SPK_HPF_HZ          180.0f
-#define SPK_LIMIT_CEILING   0.89f    /* ~-1 dBFS, leaves room for the HPF's transient overshoot */
-#define SPK_LIM_ATTACK      0.002f   /* per-sample gain step down: full duck in ~10 ms at 48 kHz */
-#define SPK_LIM_RELEASE     0.00002f /* ~1 s back to unity: slow enough not to pump */
+#define SPK_LIMIT_CEILING   0.89f
+#define SPK_LIM_ATTACK      0.002f
+#define SPK_LIM_RELEASE     0.00002f
 
 static void speaker_dsp_process(struct mindone_stream_out *out, int16_t *data, size_t frames)
 {
@@ -1576,12 +1582,10 @@ static void speaker_dsp_process(struct mindone_stream_out *out, int16_t *data, s
     size_t i;
     int c;
 
-    /* Second-order Butterworth high-pass. Recomputed only when the rate changes, so a 44.1 kHz
-     * stream still gets the same corner as a 48 kHz one without paying for it every buffer. */
     if (out->hp_rate != out->config.rate) {
         const float w = 2.0f * (float)M_PI * SPK_HPF_HZ / (float)out->config.rate;
         const float cosw = cosf(w), sinw = sinf(w);
-        const float alpha = sinw / 1.41421356f;          /* Q = 1/sqrt(2) */
+        const float alpha = sinw / 1.41421356f;
         const float a0 = 1.0f + alpha;
 
         out->hp_b0 = ((1.0f + cosw) * 0.5f) / a0;
@@ -1613,15 +1617,13 @@ static void speaker_dsp_process(struct mindone_stream_out *out, int16_t *data, s
                 peak = fabsf(y);
         }
 
-        /* One gain for both channels: attenuating them independently would move the stereo image
-         * on every peak, which is far more audible than the level change itself. */
         {
             const float want = (peak * out->lim_gain > SPK_LIMIT_CEILING && peak > 0.0f)
                                ? SPK_LIMIT_CEILING / peak : 1.0f;
             if (want < out->lim_gain)
-                out->lim_gain -= SPK_LIM_ATTACK;         /* duck fast */
+                out->lim_gain -= SPK_LIM_ATTACK;
             else
-                out->lim_gain += SPK_LIM_RELEASE;        /* recover slowly */
+                out->lim_gain += SPK_LIM_RELEASE;
             if (out->lim_gain > 1.0f)
                 out->lim_gain = 1.0f;
             if (out->lim_gain < 0.05f)
@@ -1639,21 +1641,9 @@ static void speaker_dsp_process(struct mindone_stream_out *out, int16_t *data, s
     }
 }
 
-/* ---- SCO conversion ---------------------------------------------------------
- * 48 kHz stereo in, mono at the band rate out. Both ratios are whole numbers (48/16 = 3,
- * 48/8 = 6), so the decimation is a box average over the ratio: the two channels are summed,
- * `ratio` consecutive frames are averaged into one output sample. For speech that is an
- * adequate anti-alias filter (the first null of the box sits exactly at the output rate) and it
- * costs one add per input sample; anything better would be more code than the link can hear.
- * The partial window at the end of a buffer carries over to the next call in sco_acc/sco_acc_n,
- * so frame counts need not divide evenly.
- *
- * btcvsd refuses a write that is not a whole number of packets, so the converted samples are
- * staged in sco_buf and only whole packets are written; the remainder waits for the next write.
- * Returns the number of staged frames now ready, or a negative errno. Caller holds out->lock. */
 static int sco_out_convert(struct mindone_stream_out *out, const int16_t *in, size_t frames)
 {
-    const unsigned int ratio = out->config.rate / out->hw_config.rate;   /* 3 or 6 */
+    const unsigned int ratio = out->config.rate / out->hw_config.rate;
     const unsigned int ch = out->config.channels;
     const size_t need = out->sco_staged + frames / ratio + 1;
     size_t i;
@@ -1680,7 +1670,32 @@ static int sco_out_convert(struct mindone_stream_out *out, const int16_t *in, si
     return (int)out->sco_staged;
 }
 
-/* Writes the whole packets staged so far and keeps the rest. Caller holds out->lock. */
+static int pcm_transfer_frames(struct pcm *pcm, const void *buffer, size_t frames,
+                               size_t frame_size, bool input)
+{
+    if (!frame_size || frames > SIZE_MAX / frame_size || (!buffer && frames))
+        return -EINVAL;
+    unsigned char *data = (unsigned char *)buffer;
+    bool recovered = false;
+    while (frames) {
+        unsigned int count = frames > INT_MAX ? INT_MAX : (unsigned int)frames;
+        int rc = input ? pcm_readi(pcm, data, count) : pcm_writei(pcm, data, count);
+        if (rc < 0) {
+            if (!input && !recovered) {
+                recovered = true;
+                if (pcm_prepare(pcm) == 0)
+                    continue;
+            }
+            return rc;
+        }
+        if (!rc || (unsigned int)rc > count)
+            return -EIO;
+        data += (size_t)rc * frame_size;
+        frames -= (unsigned int)rc;
+    }
+    return 0;
+}
+
 static int sco_out_flush(struct mindone_stream_out *out)
 {
     const size_t whole = (out->sco_staged / SCO_PCM_PACKET_FRAMES) * SCO_PCM_PACKET_FRAMES;
@@ -1688,37 +1703,19 @@ static int sco_out_flush(struct mindone_stream_out *out)
 
     if (whole == 0)
         return 0;
-    ret = pcm_write(out->pcm, out->sco_buf, whole * sizeof(int16_t));
-    if (ret != 0) {
-        ALOGW("%s: pcm_write failed (%s), preparing and retrying once", __func__,
-              pcm_get_error(out->pcm));
-        if (pcm_prepare(out->pcm) == 0)
-            ret = pcm_write(out->pcm, out->sco_buf, whole * sizeof(int16_t));
-        if (ret != 0)
-            return ret;
-    }
+    ret = pcm_transfer_frames(out->pcm, out->sco_buf, whole, sizeof(int16_t), false);
+    if (ret)
+        return ret;
     out->sco_staged -= whole;
     if (out->sco_staged)
         memmove(out->sco_buf, out->sco_buf + whole, out->sco_staged * sizeof(int16_t));
     return 0;
 }
 
-/* pcm_write() with one recovery from an underrun. After an xrun the substream sits in the
- * XRUN state and every further write fails the same way until someone calls pcm_prepare();
- * AudioFlinger only does that indirectly, by putting the stream into standby after a timeout,
- * which is heard as a second of silence. Preparing and retrying once here turns that into a
- * short glitch. Anything else is returned to the caller as before. Caller holds out->lock. */
 static int pcm_write_recovering(struct mindone_stream_out *out, const void *buffer, size_t bytes)
 {
-    int ret = pcm_write(out->pcm, buffer, bytes);
-
-    if (ret == 0)
-        return 0;
-    ALOGW("%s: pcm_write failed (%s), preparing and retrying once", __func__,
-          pcm_get_error(out->pcm));
-    if (pcm_prepare(out->pcm) != 0)
-        return ret;
-    return pcm_write(out->pcm, buffer, bytes);
+    return pcm_transfer_frames(out->pcm, buffer, bytes / out->frame_size,
+                               out->frame_size, false);
 }
 
 static void output_volume_process(struct mindone_stream_out *out, int16_t *data,
@@ -1734,16 +1731,224 @@ static void output_volume_process(struct mindone_stream_out *out, int16_t *data,
     }
 }
 
-static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
+static int aidl_pcm_ioctl(struct pcm *pcm, int request, void *arg)
+{
+    errno = 0;
+    int rc = ioctl(pcm_get_file_descriptor(pcm), request, arg);
+    return rc < 0 && errno ? -errno : rc;
+}
+
+static int aidl_pcm_state(struct pcm *pcm)
+{
+    struct snd_pcm_status status = {0};
+    int rc = aidl_pcm_ioctl(pcm, SNDRV_PCM_IOCTL_STATUS, &status);
+    return rc ? rc : status.state;
+}
+
+static int out_aidl_position(struct mindone_stream_out *out, uint64_t *frames,
+                             struct timespec *timestamp)
+{
+    if (out->aidl_paused || out->standby) {
+        if (!out->aidl_timestamp.tv_sec && !out->aidl_timestamp.tv_nsec)
+            return -ENODATA;
+        *frames = out->aidl_presented;
+        *timestamp = out->aidl_timestamp;
+        return 0;
+    }
+    snd_pcm_sframes_t delay = 0;
+    int rc = aidl_pcm_ioctl(out->pcm, SNDRV_PCM_IOCTL_DELAY, &delay);
+    if (rc)
+        return rc;
+    if (clock_gettime(CLOCK_MONOTONIC, timestamp))
+        return -errno;
+    uint64_t queued = delay > 0 ? (uint64_t)delay : 0;
+    queued += out->sco_staged;
+    queued = queued * out->config.rate / out->hw_config.rate + out->sco_acc_n;
+    uint64_t submitted = out->written_frames - out->aidl_discarded;
+    uint64_t presented = submitted - (queued < submitted ? queued : submitted);
+    if (presented > out->aidl_presented)
+        out->aidl_presented = presented;
+    out->aidl_timestamp = *timestamp;
+    *frames = out->aidl_presented;
+    return 0;
+}
+
+static int out_aidl_run(struct mindone_stream_out *out)
+{
+    int rc = pcm_prepare(out->pcm);
+    if (rc)
+        return rc;
+    struct snd_pcm_sw_params sw = {0};
+    sw.tstamp_mode = SNDRV_PCM_TSTAMP_ENABLE;
+    sw.period_step = 1;
+    sw.avail_min = out->hw_config.period_size;
+    sw.start_threshold = 1;
+    sw.stop_threshold = ULONG_MAX;
+    sw.silence_size = ULONG_MAX;
+    sw.proto = SNDRV_PROTOCOL_VERSION(2, 0, 12);
+    sw.tstamp_type = SNDRV_PCM_TSTAMP_TYPE_MONOTONIC;
+    rc = aidl_pcm_ioctl(out->pcm, SNDRV_PCM_IOCTL_SW_PARAMS, &sw);
+    if (rc)
+        return rc;
+    return pcm_start(out->pcm);
+}
+
+static int out_aidl_align(struct mindone_stream_out *out)
+{
+    snd_pcm_sframes_t delay = 0;
+    int rc = aidl_pcm_ioctl(out->pcm, SNDRV_PCM_IOCTL_DELAY, &delay);
+    if (rc || delay >= 0)
+        return rc;
+    snd_pcm_uframes_t frames = (snd_pcm_uframes_t)(-(delay + 1)) + 1;
+    return aidl_pcm_ioctl(out->pcm, SNDRV_PCM_IOCTL_FORWARD, &frames);
+}
+
+static int out_aidl_tail(struct mindone_stream_out *out)
+{
+    if (out->routed_device != OUT_DEVICE_BT_SCO ||
+        (!out->sco_staged && !out->sco_acc_n))
+        return 0;
+    size_t count = out->sco_staged + (out->sco_acc_n != 0);
+    size_t padded = (count + SCO_PCM_PACKET_FRAMES - 1) /
+                    SCO_PCM_PACKET_FRAMES * SCO_PCM_PACKET_FRAMES;
+    if (out->sco_buf_frames < padded) {
+        int16_t *next = realloc(out->sco_buf, padded * sizeof(*next));
+        if (!next)
+            return -ENOMEM;
+        out->sco_buf = next;
+        out->sco_buf_frames = padded;
+    }
+    if (out->sco_acc_n)
+        out->sco_buf[out->sco_staged++] = out->sco_acc / (int32_t)out->sco_acc_n;
+    memset(out->sco_buf + out->sco_staged, 0,
+           (padded - out->sco_staged) * sizeof(*out->sco_buf));
+    out->sco_staged = padded;
+    out->sco_acc = 0;
+    out->sco_acc_n = 0;
+    return sco_out_flush(out);
+}
+
+static int out_aidl_get_position(struct mindone_stream_out *out, uint64_t *frames,
+                                 struct timespec *timestamp)
+{
+    if (!frames || !timestamp)
+        return -EINVAL;
+    pthread_mutex_lock(&out->lock);
+    int rc = out_aidl_position(out, frames, timestamp);
+    pthread_mutex_unlock(&out->lock);
+    return rc;
+}
+
+static int out_aidl_state(struct mindone_stream_out *out, enum mindone_audio_command command)
+{
+    if ((unsigned int)command > MINDONE_AUDIO_TRANSFER)
+        return -EINVAL;
+    pthread_mutex_lock(&out->lock);
+    int rc = 0;
+    if (command == MINDONE_AUDIO_STANDBY) {
+        if (!out->standby)
+            out_aidl_position(out, &out->aidl_presented, &out->aidl_timestamp);
+        rc = do_out_standby(out);
+        if (!rc) {
+            out->aidl_discarded = out->written_frames - out->aidl_presented;
+            out->aidl_paused = false;
+            out->aidl_hw_paused = false;
+        }
+    } else if (command == MINDONE_AUDIO_START || command == MINDONE_AUDIO_TRANSFER) {
+        pthread_mutex_lock(&out->dev->lock);
+        bool reopen = out->reopen_pending;
+        pthread_mutex_unlock(&out->dev->lock);
+        if (reopen && !out->standby) {
+            out_aidl_position(out, &out->aidl_presented, &out->aidl_timestamp);
+            rc = do_out_standby(out);
+        }
+        bool opening = out->standby;
+        if (!rc && opening) {
+            out->aidl_discarded = out->written_frames - out->aidl_presented;
+            out->aidl_paused = false;
+            out->aidl_hw_paused = false;
+            rc = start_output_stream(out);
+        }
+        if (!rc && out->aidl_hw_paused)
+            rc = aidl_pcm_ioctl(out->pcm, SNDRV_PCM_IOCTL_PAUSE, (void *)(uintptr_t)0);
+        else if (!rc && (opening || out->aidl_paused ||
+                         aidl_pcm_state(out->pcm) != PCM_STATE_RUNNING))
+            rc = out_aidl_run(out);
+        if (!rc && command == MINDONE_AUDIO_TRANSFER)
+            rc = out_aidl_align(out);
+        if (!rc) {
+            out->aidl_paused = false;
+            out->aidl_hw_paused = false;
+        } else {
+            do_out_standby(out);
+        }
+    } else if (out->standby || !out->pcm) {
+        rc = -ENODEV;
+    } else if (command == MINDONE_AUDIO_PAUSE || command == MINDONE_AUDIO_FLUSH) {
+        uint64_t frames;
+        struct timespec timestamp;
+        rc = out_aidl_position(out, &frames, &timestamp);
+        if (!rc && command == MINDONE_AUDIO_PAUSE) {
+            rc = aidl_pcm_ioctl(out->pcm, SNDRV_PCM_IOCTL_PAUSE, (void *)(uintptr_t)1);
+            if (!rc) {
+                out->aidl_hw_paused = true;
+            } else if (rc == -EINVAL || rc == -ENOTTY || rc == -ENOSYS ||
+                       rc == -EOPNOTSUPP) {
+                rc = pcm_stop(out->pcm);
+                if (!rc) {
+                    out->aidl_discarded = out->written_frames - out->aidl_presented;
+                    out->sco_staged = 0;
+                    out->sco_acc = 0;
+                    out->sco_acc_n = 0;
+                }
+            }
+            if (!rc)
+                out->aidl_paused = true;
+        } else if (!rc) {
+            rc = pcm_stop(out->pcm);
+            if (!rc) {
+                out->aidl_discarded = out->written_frames - out->aidl_presented;
+                out->sco_staged = 0;
+                out->sco_acc = 0;
+                out->sco_acc_n = 0;
+                out->aidl_paused = false;
+                out->aidl_hw_paused = false;
+                rc = out_aidl_run(out);
+            }
+        }
+    } else {
+        rc = out_aidl_align(out);
+        if (!rc)
+            rc = out_aidl_tail(out);
+        struct timespec begin;
+        if (!rc && clock_gettime(CLOCK_MONOTONIC, &begin))
+            rc = -errno;
+        while (!rc) {
+            uint64_t frames;
+            struct timespec timestamp;
+            rc = out_aidl_position(out, &frames, &timestamp);
+            if (rc || frames >= out->written_frames - out->aidl_discarded)
+                break;
+            if (timestamp.tv_sec - begin.tv_sec >= 2) {
+                rc = -ETIMEDOUT;
+                break;
+            }
+            usleep(5000);
+        }
+    }
+    pthread_mutex_unlock(&out->lock);
+    return rc;
+}
+
+static ssize_t out_write(struct mindone_stream_out *out, const void *buffer,
                           size_t bytes)
 {
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
     size_t frames, frame_size;
     int ret;
     enum output_device routed_device;
 
     pthread_mutex_lock(&out->lock);
-    frame_size = audio_stream_out_frame_size(stream);
+    frame_size = out->frame_size;
     if (!frame_size || bytes % frame_size || (!buffer && bytes) ||
         !out->config.channels || out->config.channels > OUT_CHANNEL_COUNT) {
         ret = -EINVAL;
@@ -1757,16 +1962,16 @@ static ssize_t out_write(struct audio_stream_out *stream, const void *buffer,
     pthread_mutex_lock(&out->dev->lock);
     ret = out->reopen_pending && !out->standby;
     pthread_mutex_unlock(&out->dev->lock);
-    if (ret)
-        do_out_standby(out);
+    if (ret) {
+        ret = do_out_standby(out);
+        if (ret)
+            goto written;
+    }
 
     if (out->standby) {
         ret = start_output_stream(out);
-        if (ret != 0) {
-            pthread_mutex_unlock(&out->lock);
-            usleep((uint64_t)bytes * 1000000 / frame_size / out->config.rate);
-            return bytes;
-        }
+        if (ret != 0)
+            goto written;
     }
 
     pthread_mutex_lock(&out->dev->lock);
@@ -1806,141 +2011,16 @@ written:
     return (ret == 0) ? (ssize_t)bytes : ret;
 }
 
-/* Defined below; out_get_render_position derives from it. */
-static int out_get_presentation_position(const struct audio_stream_out *stream,
-                                         uint64_t *frames, struct timespec *timestamp);
 
-/* The older, coarser form of the same question. It answered written_frames for the same
- * reason and with the same consequence, so it now derives from the corrected position and
- * only falls back to written_frames when the stream is in standby and there is nothing to
- * ask the hardware about. */
-static int out_get_render_position(const struct audio_stream_out *stream,
-                                    uint32_t *dsp_frames)
+static uint32_t in_get_sample_rate(const struct mindone_stream_in *in)
 {
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
-    uint64_t frames = 0;
-    struct timespec ts;
-
-    if (!dsp_frames)
-        return -EINVAL;
-
-    if (out_get_presentation_position(stream, &frames, &ts) == 0)
-        *dsp_frames = (uint32_t)frames;
-    else
-        *dsp_frames = (uint32_t)out->written_frames;
-    return 0;
-}
-
-/* 15.09: accept and ignore, rather than -ENOSYS. Effects on this device are software effects
- * owned by the effects HAL (android.hardware.audio.effect) and applied by AudioFlinger before the
- * buffer ever reaches us; there is no hardware effect block on mt6789 we could attach one to.
- * Returning an error here makes AudioFlinger log a failure for a perfectly normal attach, so the
- * honest answer is "accepted, nothing for me to do". */
-static int out_add_audio_effect(const struct audio_stream *stream, effect_handle_t effect)
-{
-    (void)stream; (void)effect;
-    return 0; /* v1/v2: no effects chain, see plan section 3 */
-}
-
-static int out_remove_audio_effect(const struct audio_stream *stream, effect_handle_t effect)
-{
-    (void)stream; (void)effect;
-    return 0;
-}
-
-static int out_get_next_write_timestamp(const struct audio_stream_out *stream,
-                                         int64_t *timestamp)
-{
-    (void)stream; (void)timestamp;
-    return -ENOSYS; /* optional */
-}
-
-/* Frames the speaker has actually produced, and when.
- *
- * MINDONE-AVSYNC: this used to answer written_frames plus "now", i.e. it claimed
- * everything handed to the buffer had already been heard. The position then ran ahead of
- * reality by the whole buffer depth -- period_size * period_count, hundreds of milliseconds
- * here. A ringtone never notices, because nothing compares it to anything. A video player
- * does: it drives audio/video sync off this clock, sees audio apparently far ahead of the
- * picture, and stops feeding audio to let the picture catch up. That is the "video plays
- * silently while ringtones work" symptom, and it is why the trail led to pcm_get_htimestamp --
- * the call that answers this question honestly.
- *
- * The kernel tells us how much room is free in the ring (avail) at a given timestamp;
- * buffer_size - avail is therefore what is still queued and not yet heard, so what HAS been
- * heard is written_frames minus that. -ENODATA while in standby is what the framework
- * expects: there is no stream to ask. */
-static int out_get_presentation_position(const struct audio_stream_out *stream,
-                                          uint64_t *frames, struct timespec *timestamp)
-{
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
-    int ret = -ENODATA;
-
-    if (!frames || !timestamp)
-        return -EINVAL;
-
-    pthread_mutex_lock(&out->lock);
-    if (out->pcm && !out->standby) {
-        unsigned int avail = 0;
-        if (pcm_get_htimestamp(out->pcm, &avail, timestamp) == 0) {
-            /* The ring runs at the PCM's own rate (the SCO band rate on btcvsd); the answer is
-             * in stream frames, so what is queued -- in the ring and staged for it -- is scaled
-             * back up before it is subtracted. */
-            const int64_t buffer_frames =
-                (int64_t)out->hw_config.period_size * (int64_t)out->hw_config.period_count;
-            int64_t queued = buffer_frames - (int64_t)avail;
-            if (queued < 0)
-                queued = 0;          /* avail can briefly exceed the ring on xrun */
-            queued += (int64_t)out->sco_staged;
-            queued = queued * (int64_t)out->config.rate / (int64_t)out->hw_config.rate;
-            int64_t presented = (int64_t)out->written_frames - queued;
-            if (presented < 0)
-                presented = 0;       /* right after start nothing has been heard yet */
-            *frames = (uint64_t)presented;
-            ret = 0;
-        }
-    }
-    pthread_mutex_unlock(&out->lock);
-    return ret;
-}
-
-/* ---- audio_stream_in -------------------------------------------------------- */
-
-static uint32_t in_get_sample_rate(const struct audio_stream *stream)
-{
-    struct mindone_stream_in *in = (struct mindone_stream_in *)stream;
     return in->config.rate;
 }
 
-static int in_set_sample_rate(struct audio_stream *stream, uint32_t rate)
+static size_t in_get_buffer_size(const struct mindone_stream_in *in)
 {
-    (void)stream; (void)rate;
-    return -ENOSYS;
-}
-
-static size_t in_get_buffer_size(const struct audio_stream *stream)
-{
-    struct mindone_stream_in *in = (struct mindone_stream_in *)stream;
     return in->config.period_size * in->config.period_count *
-           audio_stream_in_frame_size(&in->stream);
-}
-
-static audio_channel_mask_t in_get_channels(const struct audio_stream *stream)
-{
-    (void)stream;
-    return AUDIO_CHANNEL_IN_MONO;
-}
-
-static audio_format_t in_get_format(const struct audio_stream *stream)
-{
-    (void)stream;
-    return AUDIO_FORMAT_PCM_16_BIT;
-}
-
-static int in_set_format(struct audio_stream *stream, audio_format_t format)
-{
-    (void)stream;
-    return (format == AUDIO_FORMAT_PCM_16_BIT) ? 0 : -ENOSYS;
+           in->frame_size;
 }
 
 static int do_in_standby(struct mindone_stream_in *in)
@@ -1965,9 +2045,8 @@ static int do_in_standby(struct mindone_stream_in *in)
     return 0;
 }
 
-static int in_standby(struct audio_stream *stream)
+static int in_standby(struct mindone_stream_in *in)
 {
-    struct mindone_stream_in *in = (struct mindone_stream_in *)stream;
     int ret;
 
     pthread_mutex_lock(&in->lock);
@@ -1976,67 +2055,35 @@ static int in_standby(struct audio_stream *stream)
     return ret;
 }
 
-static int in_dump(const struct audio_stream *stream, int fd)
-{
-    (void)stream; (void)fd;
-    return 0;
-}
+static int in_aidl_start(struct mindone_stream_in *in);
 
-/* v2: now actually re-routes a running capture stream on a device change, mirroring
- * out_set_parameters() -- v1 only stored in->device and never called apply_input_route(), so a
- * capture stream already open would never switch from "mic" to "headset-mic" (or back) even if
- * AudioFlinger asked it to. */
-static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
+static int in_set_route(struct mindone_stream_in *in, audio_devices_t new_mask)
 {
-    struct mindone_stream_in *in = (struct mindone_stream_in *)stream;
     struct mindone_audio_device *adev = in->dev;
-    struct str_parms *parms;
-    char value[32];
-    int ret;
+    bool restart = false;
 
-    parms = str_parms_create_str(kvpairs);
-    if (!parms)
-        return -ENOMEM;
+    pthread_mutex_lock(&in->lock);
+    pthread_mutex_lock(&adev->lock);
+    in->device = new_mask;
+    if (!in->standby) {
+        enum input_device new_dev = input_device_from_mask(new_mask);
 
-    ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_ROUTING,
-                             value, sizeof(value));
-    if (ret >= 0) {
-        audio_devices_t new_mask = (audio_devices_t)atoi(value);
-
-        bool restart = false;
-
-        pthread_mutex_lock(&in->lock);
-        pthread_mutex_lock(&adev->lock);
-        in->device = new_mask;
-        if (!in->standby) {
-            enum input_device new_dev = input_device_from_mask(new_mask);
-
-            restart = (new_dev == IN_DEVICE_BT_SCO) !=
-                      (in->routed_device == IN_DEVICE_BT_SCO);
-            if (!restart) {
-                apply_input_route(adev, in->routed_device, new_dev);
-                in->routed_device = new_dev;
-            }
+        restart = (new_dev == IN_DEVICE_BT_SCO) !=
+                  (in->routed_device == IN_DEVICE_BT_SCO);
+        if (!restart) {
+            apply_input_route(adev, in->routed_device, new_dev);
+            in->routed_device = new_dev;
         }
-        pthread_mutex_unlock(&adev->lock);
-        if (restart)
-            do_in_standby(in);
-        pthread_mutex_unlock(&in->lock);
     }
-
-    str_parms_destroy(parms);
+    pthread_mutex_unlock(&adev->lock);
+    if (restart)
+        do_in_standby(in);
+    pthread_mutex_unlock(&in->lock);
     return 0;
 }
 
-static char *in_get_parameters(const struct audio_stream *stream, const char *keys)
+static int in_set_gain(struct mindone_stream_in *in, float gain)
 {
-    (void)stream; (void)keys;
-    return strdup("");
-}
-
-static int in_set_gain(struct audio_stream_in *stream, float gain)
-{
-    struct mindone_stream_in *in = (struct mindone_stream_in *)stream;
     struct mindone_audio_device *adev = in->dev;
     struct mixer_ctl *ctl_l, *ctl_r;
     int min, max, value;
@@ -2044,8 +2091,6 @@ static int in_set_gain(struct audio_stream_in *stream, float gain)
     if (!adev->mixer)
         return 0;
 
-    /* "PGA1 Volume" / "PGA2 Volume": single controls, one per ADC channel
-     * (mt6358.c:740-745), not a stereo pair -- set both to the same gain. */
     ctl_l = mixer_get_ctl_by_name(adev->mixer, "PGA1 Volume");
     ctl_r = mixer_get_ctl_by_name(adev->mixer, "PGA2 Volume");
     if (!ctl_l || !ctl_r)
@@ -2063,9 +2108,6 @@ static int in_set_gain(struct audio_stream_in *stream, float gain)
     return 0;
 }
 
-/* v2: picks the mixer path from the stream's requested device mask (set at
- * adev_open_input_stream() time and by in_set_parameters()) rather than hardcoding
- * IN_DEVICE_MAIN_MIC -- see input_device_from_mask(). */
 static int start_input_stream(struct mindone_stream_in *in)
 {
     struct mindone_audio_device *adev = in->dev;
@@ -2095,6 +2137,7 @@ static int start_input_stream(struct mindone_stream_in *in)
         return -ENODEV;
     }
 
+    in->hw_config = *pcm_get_config(in->pcm);
     pthread_mutex_lock(&adev->lock);
     if (new_dev != input_device_from_mask(in->device) ||
         (new_dev == IN_DEVICE_BT_SCO && in->hw_config.rate != sco_rate(adev))) {
@@ -2107,35 +2150,58 @@ static int start_input_stream(struct mindone_stream_in *in)
         bt_sco_configure(adev);
     apply_input_route(adev, IN_DEVICE_NONE, new_dev);
     adev->active_in = in;
-    /* Read by adev_create_audio_patch() under adev->lock alone, so written under it too. */
     in->routed_device = new_dev;
     in->standby = false;
     pthread_mutex_unlock(&adev->lock);
     return 0;
 }
 
-static ssize_t in_read(struct audio_stream_in *stream, void *buffer, size_t bytes)
+static int in_aidl_start(struct mindone_stream_in *in)
 {
-    struct mindone_stream_in *in = (struct mindone_stream_in *)stream;
+    pthread_mutex_lock(&in->lock);
+    int rc = 0;
+    if (in->standby)
+        rc = start_input_stream(in);
+    if (!rc && aidl_pcm_state(in->pcm) != PCM_STATE_RUNNING)
+        rc = pcm_prepare(in->pcm);
+    if (!rc && aidl_pcm_state(in->pcm) != PCM_STATE_RUNNING)
+        rc = pcm_start(in->pcm);
+    if (rc)
+        do_in_standby(in);
+    pthread_mutex_unlock(&in->lock);
+    return rc;
+}
+
+static ssize_t in_read(struct mindone_stream_in *in, void *buffer, size_t bytes)
+{
     ssize_t result = (ssize_t)bytes;
     int ret;
     enum input_device routed_device;
 
     pthread_mutex_lock(&in->lock);
+    const size_t frame_size = in->frame_size;
+    if (!frame_size || bytes % frame_size || (!buffer && bytes)) {
+        result = -EINVAL;
+        goto done;
+    }
+    if (!bytes)
+        goto done;
     pthread_mutex_lock(&in->dev->lock);
     ret = in->reopen_pending && !in->standby;
     pthread_mutex_unlock(&in->dev->lock);
-    if (ret)
-        do_in_standby(in);
+    if (ret) {
+        ret = do_in_standby(in);
+        if (ret) {
+            result = ret < 0 ? ret : -EIO;
+            goto done;
+        }
+    }
 
     if (in->standby) {
         ret = start_input_stream(in);
         if (ret != 0) {
-            pthread_mutex_unlock(&in->lock);
-            memset(buffer, 0, bytes);
-            usleep((uint64_t)bytes * 1000000 /
-                   audio_stream_in_frame_size(stream) / in->config.rate);
-            return bytes;
+            result = ret < 0 ? ret : -EIO;
+            goto done;
         }
     }
 
@@ -2144,28 +2210,33 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer, size_t byte
     pthread_mutex_unlock(&in->dev->lock);
 
     if (routed_device == IN_DEVICE_BT_SCO) {
-        /* Mono at the band rate from btcvsd, linearly interpolated up to the stream rate. The
-         * ratio is whole (3 or 6) and the framework's reads are period-sized, so the source
-         * count is exact; a read that does not divide loses at most ratio-1 frames of silence
-         * at its end, which no caller here produces. */
+        if (!in->hw_config.rate || in->config.rate < in->hw_config.rate ||
+            in->config.rate % in->hw_config.rate) {
+            result = -EINVAL;
+            goto done;
+        }
         const unsigned int ratio = in->config.rate / in->hw_config.rate;
-        const size_t frames = bytes / sizeof(int16_t);          /* mono S16 out */
+        const size_t frames = bytes / sizeof(int16_t);
         const size_t src_frames = frames / ratio;
         int16_t *dst = (int16_t *)buffer;
         size_t i;
 
+        if (frames % ratio) {
+            result = -EINVAL;
+            goto done;
+        }
         if (in->sco_in_frames < src_frames) {
             int16_t *nb = (int16_t *)realloc(in->sco_in_buf, src_frames * sizeof(int16_t));
             if (!nb) {
-                memset(buffer, 0, bytes);
+                result = -ENOMEM;
                 goto done;
             }
             in->sco_in_buf = nb;
             in->sco_in_frames = src_frames;
         }
-        ret = pcm_read(in->pcm, in->sco_in_buf, src_frames * sizeof(int16_t));
+        ret = pcm_transfer_frames(in->pcm, in->sco_in_buf, src_frames, sizeof(int16_t), true);
         if (ret != 0) {
-            result = ret;
+            result = ret < 0 ? ret : -EIO;
             goto done;
         }
         for (i = 0; i < src_frames * ratio; i++) {
@@ -2175,35 +2246,25 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer, size_t byte
             const int32_t step = (int32_t)(i % ratio) + 1;
             dst[i] = (int16_t)(prev + (cur - prev) * step / (int32_t)ratio);
         }
-        for (; i < frames; i++)
-            dst[i] = 0;
         if (src_frames)
             in->sco_last = in->sco_in_buf[src_frames - 1];
         in->read_frames += frames;
         goto done;
     }
 
-    /* The lock stays held across pcm_read(), as out_write() holds it across pcm_write(): standby()
-     * from another thread closes in->pcm, and a read still in flight on it would use freed
-     * memory. The cost is one buffer of waiting (~20 ms) for standby()/set_parameters(). */
 
-    /* The framework asked for MONO (in_get_channels / adev_open_input_stream), but the PCM is
-     * opened with IN_CHANNEL_COUNT channels because that is what the capture memif delivers.
-     * Handing the interleaved stereo frames straight to the caller made every right-channel
-     * sample look like a second mono sample: twice as many frames as real time, so a recording
-     * played back at half speed and an octave down (measured 15.09 - a 1 kHz reference tone came
-     * back as 500 Hz in a 2x too long file). Downmix here instead. */
     if (in->config.channels == 1) {
-        ret = pcm_read(in->pcm, buffer, bytes);
+        ret = pcm_transfer_frames(in->pcm, buffer, bytes / in->frame_size,
+                                  in->frame_size, true);
         if (ret == 0)
-            in->read_frames += bytes / audio_stream_in_frame_size(stream);
+            in->read_frames += bytes / in->frame_size;
         else
-            result = ret;
+            result = ret < 0 ? ret : -EIO;
         goto done;
     }
 
     {
-        const size_t frames = bytes / sizeof(int16_t);  /* mono, S16 */
+        const size_t frames = bytes / sizeof(int16_t);
         const size_t need = frames * in->config.channels;
         int16_t *dst = (int16_t *)buffer;
         size_t i;
@@ -2211,29 +2272,25 @@ static ssize_t in_read(struct audio_stream_in *stream, void *buffer, size_t byte
         if (in->downmix_frames < frames) {
             int16_t *nb = (int16_t *)realloc(in->downmix_buf, need * sizeof(int16_t));
             if (!nb) {
-                memset(buffer, 0, bytes);
+                result = -ENOMEM;
                 goto done;
             }
             in->downmix_buf = nb;
             in->downmix_frames = frames;
         }
 
-        ret = pcm_read(in->pcm, in->downmix_buf, need * sizeof(int16_t));
+        ret = pcm_transfer_frames(in->pcm, in->downmix_buf, frames,
+                                  in->config.channels * sizeof(int16_t), true);
         if (ret != 0) {
-            result = ret;
+            result = ret < 0 ? ret : -EIO;
             goto done;
         }
 
-        /* Average the pads rather than dropping one: both carry the same acoustic scene, so the
-         * sum is 3 dB quieter in uncorrelated noise and keeps a pad failure from muting capture. */
         for (i = 0; i < frames; i++) {
             const int32_t l = in->downmix_buf[i * in->config.channels];
             const int32_t r = in->downmix_buf[i * in->config.channels + 1];
             int32_t v = ((l + r) / 2) * IN_DIGITAL_GAIN_Q8 >> 8;
 
-            /* Clamp rather than let the int16 store wrap: an overflow inverts the sample and
-             * turns a loud passage into a burst of noise, which is far worse than the flat top
-             * of a clipped peak. */
             if (v > 32767)
                 v = 32767;
             else if (v < -32768)
@@ -2248,53 +2305,31 @@ done:
     return result;
 }
 
-static uint32_t in_get_input_frames_lost(struct audio_stream_in *stream)
-{
-    (void)stream;
-    return 0;
-}
-
-static int in_get_capture_position(const struct audio_stream_in *stream,
+static int in_get_capture_position(const struct mindone_stream_in *stream,
                                     int64_t *frames, int64_t *time)
 {
-    struct mindone_stream_in *in = (struct mindone_stream_in *)stream;
-    struct timespec ts;
-
-    if (!frames || !time)
+    if (!stream || !frames || !time)
         return -EINVAL;
-    pthread_mutex_lock(&in->lock);
-    *frames = (int64_t)in->read_frames;
-    pthread_mutex_unlock(&in->lock);
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    *time = ts.tv_sec * 1000000000LL + ts.tv_nsec;
-    return 0;
+    return -ENOSYS;
 }
 
-static int in_add_audio_effect(const struct audio_stream *stream, effect_handle_t effect)
-{
-    (void)stream; (void)effect;
-    return 0;
-}
-
-static int in_remove_audio_effect(const struct audio_stream *stream, effect_handle_t effect)
-{
-    (void)stream; (void)effect;
-    return 0;
-}
-
-/* ---- audio_hw_device -------------------------------------------------------- */
-
-static int adev_open_output_stream(struct audio_hw_device *dev,
+static int open_output_stream(struct mindone_audio_device *adev,
                                     audio_io_handle_t handle,
                                     audio_devices_t devices,
                                     audio_output_flags_t flags,
                                     struct audio_config *config,
-                                    struct audio_stream_out **stream_out,
-                                    const char *address)
+                                    struct mindone_stream_out **stream_out)
 {
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
     struct mindone_stream_out *out;
-    (void)address;
+    int rc;
+
+    if (!stream_out)
+        return -EINVAL;
+    *stream_out = NULL;
+    if (!adev || !config)
+        return -EINVAL;
+    if (flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ)
+        return -ENOSYS;
 
     out = (struct mindone_stream_out *)calloc(1, sizeof(*out));
     if (!out)
@@ -2327,25 +2362,7 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
         break;
     }
 
-    out->stream.common.get_sample_rate = out_get_sample_rate;
-    out->stream.common.set_sample_rate = out_set_sample_rate;
-    out->stream.common.get_buffer_size = out_get_buffer_size;
-    out->stream.common.get_channels = out_get_channels;
-    out->stream.common.get_format = out_get_format;
-    out->stream.common.set_format = out_set_format;
-    out->stream.common.standby = out_standby;
-    out->stream.common.dump = out_dump;
-    out->stream.common.set_parameters = out_set_parameters;
-    out->stream.common.get_parameters = out_get_parameters;
-    out->stream.common.add_audio_effect = out_add_audio_effect;
-    out->stream.common.remove_audio_effect = out_remove_audio_effect;
-
-    out->stream.get_latency = out_get_latency;
-    out->stream.set_volume = out_set_volume;
-    out->stream.write = out_write;
-    out->stream.get_render_position = out_get_render_position;
-    out->stream.get_next_write_timestamp = out_get_next_write_timestamp;
-    out->stream.get_presentation_position = out_get_presentation_position;
+    out->frame_size = OUT_CHANNEL_COUNT * sizeof(int16_t);
 
     out->dev = adev;
     out->flags = flags;
@@ -2354,47 +2371,68 @@ static int adev_open_output_stream(struct audio_hw_device *dev,
     out->routed_device = OUT_DEVICE_NONE;
     out->crossbar_on = false;
     out->hw_config = out->config;
-    /* Unity until the limiter has seen audio; calloc would otherwise leave it at 0 and the first
-     * second of every stream would fade in from silence. */
     out->lim_gain = 1.0f;
     out->volume_left = 1.0f;
     out->volume_right = 1.0f;
-    pthread_mutex_init(&out->lock, NULL);
+    rc = pthread_mutex_init(&out->lock, NULL);
+    if (rc) {
+        free(out);
+        return -rc;
+    }
 
     config->format = AUDIO_FORMAT_PCM_16_BIT;
     config->channel_mask = AUDIO_CHANNEL_OUT_STEREO;
     config->sample_rate = OUT_SAMPLING_RATE;
 
-    /* Register the stream so a device change can move it along with the others. The table is
-     * sized for far more outputs than the policy ever opens on this device (three); if it does
-     * fill up the stream still works, it just will not follow later audio patches. */
     pthread_mutex_lock(&adev->lock);
-    if (adev->n_outs < (int)(sizeof(adev->outs) / sizeof(adev->outs[0])))
-        adev->outs[adev->n_outs++] = out;
-    else
-        ALOGW("%s: more than %zu output streams open, this one is not tracked for patches",
-              __func__, sizeof(adev->outs) / sizeof(adev->outs[0]));
+    struct mindone_stream_out **link = &adev->outs;
+    while (*link)
+        link = &(*link)->next;
+    *link = out;
     pthread_mutex_unlock(&adev->lock);
 
-    *stream_out = &out->stream;
+    *stream_out = out;
     return 0;
 }
 
-static void adev_close_output_stream(struct audio_hw_device *dev,
-                                      struct audio_stream_out *stream)
+static void close_output_stream(struct mindone_stream_out *out)
 {
-    struct mindone_stream_out *out = (struct mindone_stream_out *)stream;
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
-    int i;
+    struct mindone_audio_device *adev = out->dev;
 
-    out_standby(&stream->common);       /* gives the endpoint back if it still held one */
+    int rc = out_standby(out);
+    if (rc) {
+        ALOGE("%s: standby failed: %d", __func__, rc);
+        pthread_mutex_lock(&out->lock);
+        if (out->pcm) {
+            pcm_close(out->pcm);
+            out->pcm = NULL;
+        }
+        pthread_mutex_lock(&adev->lock);
+        bool shared_crossbar = false;
+        for (const struct mindone_stream_out *other = adev->outs; other; other = other->next) {
+            if (other != out && other->crossbar_on && other->pcm_device == out->pcm_device)
+                shared_crossbar = true;
+        }
+        if (shared_crossbar)
+            out->crossbar_on = false;
+        else
+            teardown_dl_crossbar(adev, out);
+        if (adev->active_out == out)
+            adev->active_out = NULL;
+        out->standby = true;
+        out->routed_device = OUT_DEVICE_NONE;
+        out->reopen_pending = false;
+        pthread_mutex_unlock(&adev->lock);
+        pthread_mutex_unlock(&out->lock);
+    }
 
     pthread_mutex_lock(&adev->lock);
-    for (i = 0; i < adev->n_outs; i++) {
-        if (adev->outs[i] == out) {
-            adev->outs[i] = adev->outs[--adev->n_outs];
-            break;
-        }
+    struct mindone_stream_out **link = &adev->outs;
+    while (*link && *link != out)
+        link = &(*link)->next;
+    if (*link == out) {
+        *link = out->next;
+        out->next = NULL;
     }
     pthread_mutex_unlock(&adev->lock);
 
@@ -2404,18 +2442,19 @@ static void adev_close_output_stream(struct audio_hw_device *dev,
     free(out);
 }
 
-static int adev_open_input_stream(struct audio_hw_device *dev,
-                                   audio_io_handle_t handle,
-                                   audio_devices_t devices,
-                                   struct audio_config *config,
-                                   struct audio_stream_in **stream_in,
-                                   audio_input_flags_t flags,
-                                   const char *address,
-                                   audio_source_t source)
+static int open_input_stream(struct mindone_audio_device *adev, audio_io_handle_t handle,
+                             audio_devices_t devices, audio_input_flags_t flags,
+                             struct audio_config *config, struct mindone_stream_in **stream_in)
 {
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
     struct mindone_stream_in *in;
-    (void)flags; (void)address; (void)source;
+
+    if (!stream_in)
+        return -EINVAL;
+    *stream_in = NULL;
+    if (!adev || !config)
+        return -EINVAL;
+    if (flags & AUDIO_INPUT_FLAG_MMAP_NOIRQ)
+        return -ENOSYS;
 
     in = (struct mindone_stream_in *)calloc(1, sizeof(*in));
     if (!in)
@@ -2429,23 +2468,7 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
     in->config.format = PCM_FORMAT_S16_LE;
     in->hw_config = in->config;
 
-    in->stream.common.get_sample_rate = in_get_sample_rate;
-    in->stream.common.set_sample_rate = in_set_sample_rate;
-    in->stream.common.get_buffer_size = in_get_buffer_size;
-    in->stream.common.get_channels = in_get_channels;
-    in->stream.common.get_format = in_get_format;
-    in->stream.common.set_format = in_set_format;
-    in->stream.common.standby = in_standby;
-    in->stream.common.dump = in_dump;
-    in->stream.common.set_parameters = in_set_parameters;
-    in->stream.common.get_parameters = in_get_parameters;
-    in->stream.common.add_audio_effect = in_add_audio_effect;
-    in->stream.common.remove_audio_effect = in_remove_audio_effect;
-
-    in->stream.set_gain = in_set_gain;
-    in->stream.read = in_read;
-    in->stream.get_input_frames_lost = in_get_input_frames_lost;
-    in->stream.get_capture_position = in_get_capture_position;
+    in->frame_size = sizeof(int16_t);
 
     in->dev = adev;
     in->device = devices;
@@ -2467,17 +2490,15 @@ static int adev_open_input_stream(struct audio_hw_device *dev,
     config->channel_mask = AUDIO_CHANNEL_IN_MONO;
     config->sample_rate = IN_SAMPLING_RATE;
 
-    *stream_in = &in->stream;
+    *stream_in = in;
     return 0;
 }
 
-static void adev_close_input_stream(struct audio_hw_device *dev,
-                                     struct audio_stream_in *stream)
+static void close_input_stream(struct mindone_stream_in *in)
 {
-    struct mindone_stream_in *in = (struct mindone_stream_in *)stream;
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
+    struct mindone_audio_device *adev = in->dev;
 
-    in_standby(&stream->common);
+    in_standby(in);
     pthread_mutex_lock(&adev->lock);
     for (int i = 0; i < adev->n_ins; ++i) {
         if (adev->ins[i] == in) {
@@ -2492,97 +2513,8 @@ static void adev_close_input_stream(struct audio_hw_device *dev,
     free(in);
 }
 
-/* 16.09: the SCO band. The Bluetooth stack announces the codec it negotiated with the headset
- * as "bt_wbs=on|off" (mSBC) and, on newer stacks, "bt_swb=on|off" (LC3); btcvsd knows only NB
- * and WB, so super-wideband is served as WB. A SCO stream already open runs at the old rate and
- * is restarted by its next write/read. Everything else is accepted and ignored, as before. */
-static int speech_set_dl_gain(struct mindone_audio_device *adev, const char *value)
+static int set_voice_volume(struct mindone_audio_device *adev, float volume)
 {
-    const char *digits = value;
-    char *end;
-    long gain;
-    int rc;
-
-    if (*digits == '-')
-        ++digits;
-    if (!*digits)
-        return -EINVAL;
-    for (const char *p = digits; *p; ++p)
-        if (*p < '0' || *p > '9')
-            return -EINVAL;
-    errno = 0;
-    gain = strtol(value, &end, 10);
-    if (errno || *end || gain < -255 || gain > 0)
-        return -EINVAL;
-    if (!adev->in_call || !adev->speech_on || adev->speech_fd < 0)
-        return -ENOTCONN;
-    rc = ccci_send_mailbox(adev->speech_fd, 0x2f00, (uint16_t)(int16_t)gain, 0);
-    ALOGI("%s: gain=%ld write_rc=%d", __func__, gain, rc);
-    return rc ? -EIO : 0;
-}
-
-static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
-{
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
-    struct str_parms *parms;
-    char value[32];
-    bool wb, changed = false;
-    int i, rc = 0;
-
-    parms = str_parms_create_str(kvpairs);
-    if (!parms)
-        return -ENOMEM;
-
-    pthread_mutex_lock(&adev->lock);
-    wb = adev->bt_wb;
-    if (str_parms_get_str(parms, "bt_wbs", value, sizeof(value)) >= 0) {
-        wb = (strcmp(value, "on") == 0);
-        changed = true;
-    }
-    if (str_parms_get_str(parms, "bt_swb", value, sizeof(value)) >= 0 && strcmp(value, "on") == 0) {
-        wb = true;
-        changed = true;
-    }
-    if (changed && wb != adev->bt_wb) {
-        adev->bt_wb = wb;
-        ALOGI("%s: BT SCO band -> %s", __func__, wb ? "WB" : "NB");
-        for (i = 0; i < adev->n_outs; i++)
-            if (adev->outs[i]->routed_device == OUT_DEVICE_BT_SCO)
-                adev->outs[i]->reopen_pending = true;
-        if (adev->active_in && adev->active_in->routed_device == IN_DEVICE_BT_SCO)
-            adev->active_in->reopen_pending = true;
-    }
-    int len = str_parms_get_str(parms, "mindone_speech_dl_gain", value, sizeof(value));
-    if (len >= 0)
-        rc = len >= (int)sizeof(value) ? -EINVAL : speech_set_dl_gain(adev, value);
-    len = str_parms_get_str(parms, "mindone_speech_rx_pump", value, sizeof(value));
-    if (len >= 0 && !rc)
-        rc = len >= (int)sizeof(value) ? -EINVAL : speech_rx_pump(adev, value);
-    pthread_mutex_unlock(&adev->lock);
-
-    str_parms_destroy(parms);
-    return rc;
-}
-
-static char *adev_get_parameters(const struct audio_hw_device *dev, const char *keys)
-{
-    (void)dev; (void)keys;
-    return strdup("");
-}
-
-static int adev_init_check(const struct audio_hw_device *dev)
-{
-    (void)dev;
-    return 0;
-}
-
-/* 15.09: applied for real now. Outside a call we only remember the value - the endpoint gain is
- * owned by the media stream then, and stamping the call volume over it would quietly change
- * music loudness when the framework pre-sets the call level. */
-static int adev_set_voice_volume(struct audio_hw_device *dev, float volume)
-{
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
-
     if (!isfinite(volume) || volume < 0.0f || volume > 1.0f)
         return -EINVAL;
     pthread_mutex_lock(&adev->lock);
@@ -2593,42 +2525,8 @@ static int adev_set_voice_volume(struct audio_hw_device *dev, float volume)
     return 0;
 }
 
-static int adev_set_master_volume(struct audio_hw_device *dev, float volume)
+static int set_mode(struct mindone_audio_device *adev, audio_mode_t mode)
 {
-    (void)dev; (void)volume;
-    return -ENOSYS; /* per-stream set_volume() is what v1/v2 actually wire up */
-}
-
-static int adev_get_master_volume(struct audio_hw_device *dev, float *volume)
-{
-    (void)dev;
-    if (!volume)
-        return -EINVAL;
-    *volume = 1.0f;
-    return -ENOSYS;
-}
-
-static int adev_set_master_mute(struct audio_hw_device *dev, bool muted)
-{
-    (void)dev; (void)muted;
-    return -ENOSYS;
-}
-
-static int adev_get_master_mute(struct audio_hw_device *dev, bool *muted)
-{
-    (void)dev;
-    if (!muted)
-        return -EINVAL;
-    *muted = false;
-    return -ENOSYS;
-}
-
-/* 15.09: this is the single entry point for voice calls. AudioFlinger switches the mode before
- * the call audio starts and back to NORMAL after it ends, so bringing the modem crossbar up and
- * down here is both sufficient and race-free - no other path touches in_call. */
-static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
-{
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
     bool want_call;
 
     pthread_mutex_lock(&adev->lock);
@@ -2638,14 +2536,12 @@ static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
     }
     int rc = 0;
 
-    /* IN_COMMUNICATION (VoIP) does NOT go through the modem - its audio is ordinary playback and
-     * capture from the app. Only IN_CALL means a circuit call on the "PCM 2" backend. */
     want_call = (mode == AUDIO_MODE_IN_CALL);
 
     if (want_call)
         rc = voice_route_enable(adev, voice_output_device(adev));
     else
-        voice_route_disable(adev, true);
+        rc = voice_route_disable(adev, true);
     if (!rc)
         adev->mode = mode;
 
@@ -2653,83 +2549,97 @@ static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
     return rc;
 }
 
-/* 15.09: a real mute during a call, by cutting the uplink crossbar rather than guessing at gain
- * semantics. The v2 note here asked whether zeroing "PGA1/2 Volume" was the intended mechanism -
- * it is not needed: breaking ADDA_UL -> PCM_2_PB guarantees the modem receives nothing, which is
- * exactly what mute has to promise, and it is directly observable with tinymix.
- *
- * Outside a call this stays a stored flag: capture streams are muted by the framework, and
- * tearing down mic routing under a running recorder would be wrong. */
-static int adev_set_mic_mute(struct audio_hw_device *dev, bool state)
+static int set_mic_mute(struct mindone_audio_device *adev, bool state)
 {
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
+    struct mixer_ctl *controls[3];
+    int previous[3];
+    size_t count = 0;
+    int ret = 0;
 
     pthread_mutex_lock(&adev->lock);
-    if (adev->mic_mute != state) {
-        struct mixer_ctl *sco_mute;
-
-        adev->mic_mute = state;
-        if (adev->in_call) {
-            audio_route_apply_path(adev->route,
-                                   state ? "voice-uplink-off" : "voice-uplink");
-            audio_route_update_mixer(adev->route);
-        }
-        /* A SCO call does not go through the AFE uplink at all - btcvsd has its own mute, and it
-         * is harmless to set whether or not SCO is currently the active route. */
-        sco_mute = adev->mixer ? mixer_get_ctl_by_name(adev->mixer, "BTCVSD Tx Mute Switch")
-                               : NULL;
-        if (sco_mute)
-            mixer_ctl_set_value(sco_mute, 0, state ? 1 : 0);
+    if (adev->mic_mute == state)
+        goto done;
+    if (adev->in_call && adev->voice_out_device == OUT_DEVICE_BT_SCO) {
+        ret = speech_modem_mute(adev, 0x2f02, state);
+        if (ret)
+            voice_route_disable(adev, true);
+        else
+            adev->mic_mute = state;
+        goto done;
     }
+    if (!adev->mixer) {
+        ret = -ENODEV;
+        goto done;
+    }
+    if (adev->in_call) {
+        controls[count++] = mixer_get_ctl_by_name(adev->mixer, "PCM_2_PB_CH1 ADDA_UL_CH1");
+        controls[count++] = mixer_get_ctl_by_name(adev->mixer, "PCM_2_PB_CH2 ADDA_UL_CH2");
+    }
+    struct mixer_ctl *sco_mute = mixer_get_ctl_by_name(adev->mixer, "BTCVSD Tx Mute Switch");
+    if (sco_mute)
+        controls[count++] = sco_mute;
+    for (size_t i = 0; i < count; ++i) {
+        if (!controls[i]) {
+            ret = -ENOSYS;
+            goto done;
+        }
+        previous[i] = mixer_ctl_get_value(controls[i], 0);
+        if (previous[i] < 0) {
+            ret = previous[i];
+            goto done;
+        }
+    }
+    for (size_t i = 0; i < count; ++i) {
+        ret = mixer_ctl_set_value(controls[i], 0,
+                                 controls[i] == sco_mute ? state : !state);
+        if (ret) {
+            for (size_t j = 0; j <= i; ++j)
+                mixer_ctl_set_value(controls[j], 0, previous[j]);
+            goto done;
+        }
+    }
+    if (adev->in_call)
+        audio_route_apply_path(adev->route, state ? "voice-uplink-off" : "voice-uplink");
+    adev->mic_mute = state;
+done:
     pthread_mutex_unlock(&adev->lock);
+    return ret < 0 ? ret : (ret ? -EIO : 0);
+}
+
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+static int check_output_patch(const struct mindone_audio_device *adev,
+                               unsigned int num_sources,
+                               const struct audio_port_config *sources,
+                               enum output_device next)
+{
+    struct mindone_audio_route_state shadow = endpoint_snapshot(adev);
+    for (const struct mindone_stream_out *out = adev->outs; out; out = out->next) {
+        bool selected = false;
+        for (unsigned int j = 0; j < num_sources; j++)
+            if (sources[j].type == AUDIO_PORT_TYPE_MIX &&
+                sources[j].ext.mix.handle == out->io_handle)
+                selected = true;
+        if (!selected || out->standby || out->routed_device == OUT_DEVICE_NONE ||
+            out->routed_device == next ||
+            ((next == OUT_DEVICE_BT_SCO) != (out->routed_device == OUT_DEVICE_BT_SCO)))
+            continue;
+        struct mindone_audio_route_plan plan;
+        int rc = plan_endpoint_transition(&shadow, out->routed_device, next, &plan);
+        if (rc)
+            return rc;
+        shadow = plan.next;
+    }
     return 0;
 }
+#endif
 
-static int adev_get_mic_mute(const struct audio_hw_device *dev, bool *state)
-{
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
-    if (!state)
-        return -EINVAL;
-    *state = adev->mic_mute;
-    return 0;
-}
-
-static size_t adev_get_input_buffer_size(const struct audio_hw_device *dev,
-                                          const struct audio_config *config)
-{
-    size_t frame_size;
-    (void)dev;
-
-    if (!config)
-        return 0;
-
-    frame_size = audio_bytes_per_sample(config->format) *
-                 audio_channel_count_from_in_mask(config->channel_mask);
-    return IN_PERIOD_SIZE * IN_PERIOD_COUNT * frame_size;
-}
-
-/* ---- Audio patches (AUDIO_DEVICE_API_VERSION_3_0) -----------------------------
- * 15.09. A patch is the framework saying "connect these sources to these sinks". For a primary
- * HAL the only ones that reach us are mix->device (playback routing) and device->mix (capture
- * routing); everything else (A2DP, USB, remote submix) belongs to another HAL.
- *
- * These deliberately reuse apply_output_route()/apply_input_route() rather than re-deriving
- * routing: a second code path that decides endpoints is exactly how the two halves drift apart.
- *
- * Patch handles are not tracked individually. Output endpoints are reference-counted across the
- * open streams (see endpoint_acquire()), and a stream gives its endpoint back in standby, which
- * is the one place that knows whether the stream is still running. Tracking a table of handles
- * would buy nothing here and could disagree with the stream state.
- */
-static int adev_create_audio_patch(struct audio_hw_device *dev,
+static int create_audio_patch(struct mindone_audio_device *adev,
                                     unsigned int num_sources,
                                     const struct audio_port_config *sources,
                                     unsigned int num_sinks,
                                     const struct audio_port_config *sinks,
                                     audio_patch_handle_t *handle)
 {
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
-
     if (!sources || !sinks || num_sources < 1 || num_sinks < 1 || !handle)
         return -EINVAL;
 
@@ -2742,15 +2652,35 @@ static int adev_create_audio_patch(struct audio_hw_device *dev,
     pthread_mutex_lock(&adev->lock);
 
     if (sinks[0].type == AUDIO_PORT_TYPE_DEVICE) {
-        /* Playback: route the output endpoint at the sink device. */
+        if (num_sinks != 1) {
+            pthread_mutex_unlock(&adev->lock);
+            return -EINVAL;
+        }
         enum output_device d = output_device_from_mask(sinks[0].ext.device.type);
 
         if ((adev->in_call || adev->mode == AUDIO_MODE_IN_CALL) &&
             sources[0].type == AUDIO_PORT_TYPE_DEVICE &&
             sources[0].ext.device.type == AUDIO_DEVICE_IN_VOICE_CALL) {
-            if (d == OUT_DEVICE_BT_SCO)
-                d = OUT_DEVICE_EARPIECE;
-            if (!adev->in_call || adev->voice_out_device != d) {
+            if (num_sources != 1) {
+                pthread_mutex_unlock(&adev->lock);
+                return -EINVAL;
+            }
+            if (adev->in_call &&
+                (d == OUT_DEVICE_BT_SCO || adev->voice_out_device == OUT_DEVICE_BT_SCO) &&
+                adev->voice_out_device != d) {
+                int rc = voice_route_change_sco(adev, d);
+                if (rc) {
+                    pthread_mutex_unlock(&adev->lock);
+                    return rc;
+                }
+            } else if (!adev->in_call || adev->voice_out_device != d) {
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+                int planning_rc = check_endpoint_transition(adev, adev->voice_out_device, d);
+                if (planning_rc) {
+                    pthread_mutex_unlock(&adev->lock);
+                    return planning_rc;
+                }
+#endif
                 if (adev->in_call) {
                     int rc = speech_ccci_set_mode(adev, d);
                     if (rc) {
@@ -2759,27 +2689,39 @@ static int adev_create_audio_patch(struct audio_hw_device *dev,
                         return rc;
                     }
                 }
-                voice_route_disable(adev, false);
-                int rc = voice_route_enable(adev, d);
+                int rc = voice_route_disable(adev, false);
+                if (!rc)
+                    rc = voice_route_enable(adev, d);
                 if (rc) {
                     pthread_mutex_unlock(&adev->lock);
                     return rc;
                 }
             }
         } else {
-            /* One patch per output thread: the source mix port names it by the io handle we
-             * were given at open. With API 3.0 the framework routes ONLY through patches -- no
-             * routing key ever reaches out_set_parameters() -- so out->device is updated here
-             * for playing and standby streams alike; a standby stream picks it up when it next
-             * starts. A playing stream is re-routed in place, unless the new device lives on
-             * another PCM (SCO), in which case it restarts from its own write path. Should a
-             * patch carry no handle we recognise, every stream is moved, which is what the
-             * framework means by a device change anyway. */
-            int i, matched = 0;
             unsigned int si;
 
-            for (i = 0; i < adev->n_outs; i++) {
-                struct mindone_stream_out *o = adev->outs[i];
+            for (si = 0; si < num_sources; si++) {
+                bool found = false;
+                if (sources[si].type == AUDIO_PORT_TYPE_MIX)
+                    for (const struct mindone_stream_out *o = adev->outs; o; o = o->next)
+                        if (sources[si].ext.mix.handle == o->io_handle) {
+                            found = true;
+                            break;
+                        }
+                if (!found) {
+                    pthread_mutex_unlock(&adev->lock);
+                    return -EINVAL;
+                }
+            }
+
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+            int planning_rc = check_output_patch(adev, num_sources, sources, d);
+            if (planning_rc) {
+                pthread_mutex_unlock(&adev->lock);
+                return planning_rc;
+            }
+#endif
+            for (struct mindone_stream_out *o = adev->outs; o; o = o->next) {
                 bool mine = false;
 
                 for (si = 0; si < num_sources; si++)
@@ -2788,32 +2730,19 @@ static int adev_create_audio_patch(struct audio_hw_device *dev,
                         mine = true;
                 if (!mine)
                     continue;
-                matched++;
-                o->device = sinks[0].ext.device.type;
-                if (o->standby || o->routed_device == OUT_DEVICE_NONE)
-                    continue;
-                if ((d == OUT_DEVICE_BT_SCO) != (o->routed_device == OUT_DEVICE_BT_SCO)) {
-                    o->reopen_pending = true;
-                } else if (o->routed_device != d) {
-                    apply_output_route(adev, o->routed_device, d);
-                    o->routed_device = d;
-                }
-            }
-            if (!matched) {
-                for (i = 0; i < adev->n_outs; i++) {
-                    struct mindone_stream_out *o = adev->outs[i];
-
-                    o->device = sinks[0].ext.device.type;
-                    if (o->standby || o->routed_device == d ||
-                        o->routed_device == OUT_DEVICE_NONE)
-                        continue;
+                if (!o->standby && o->routed_device != OUT_DEVICE_NONE) {
                     if ((d == OUT_DEVICE_BT_SCO) != (o->routed_device == OUT_DEVICE_BT_SCO)) {
                         o->reopen_pending = true;
-                    } else {
-                        apply_output_route(adev, o->routed_device, d);
+                    } else if (o->routed_device != d) {
+                        int rc = apply_output_route(adev, o->routed_device, d);
+                        if (rc) {
+                            pthread_mutex_unlock(&adev->lock);
+                            return rc;
+                        }
                         o->routed_device = d;
                     }
                 }
+                o->device = sinks[0].ext.device.type;
             }
         }
     } else if (sources[0].type == AUDIO_PORT_TYPE_DEVICE) {
@@ -2849,52 +2778,31 @@ static int adev_create_audio_patch(struct audio_hw_device *dev,
 
     pthread_mutex_unlock(&adev->lock);
 
-    *handle = AUDIO_PATCH_HANDLE_NONE + 1;   /* single implicit patch, see the note above */
+    *handle = AUDIO_PATCH_HANDLE_NONE + 1;
     return 0;
 }
 
-static int adev_release_audio_patch(struct audio_hw_device *dev,
+static int release_audio_patch(struct mindone_audio_device *adev,
                                      audio_patch_handle_t handle)
 {
-    (void)dev; (void)handle;
-    /* Endpoints are released by standby (do_out_standby()/do_in_standby()), which is what
-     * actually knows whether a stream is still running on them. Undoing routing here would cut
-     * audio out from under a live stream when the framework rebuilds its patch graph. */
+    (void)adev; (void)handle;
     return 0;
 }
 
-static int adev_get_audio_port(struct audio_hw_device *dev, struct audio_port *port)
+int mindone_audio_device_close(struct mindone_audio_device *adev)
 {
-    (void)dev; (void)port;
-    /* Port capabilities come from audio_policy_configuration.xml on this device; there is nothing
-     * the HAL could report that the policy does not already state. */
-    return -ENOSYS;
-}
-
-static int adev_set_audio_port_config(struct audio_hw_device *dev,
-                                       const struct audio_port_config *config)
-{
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)dev;
-
-    if (!config)
+    if (!adev)
         return -EINVAL;
-
-    (void)adev;
-    return -ENOSYS;
-}
-
-static int adev_dump(const struct audio_hw_device *dev, int fd)
-{
-    (void)dev; (void)fd;
-    return 0;
-}
-
-static int adev_close(hw_device_t *device)
-{
-    struct mindone_audio_device *adev = (struct mindone_audio_device *)device;
-
     pthread_mutex_lock(&adev->lock);
-    voice_route_disable(adev, true);
+    if (adev->outs || adev->n_ins) {
+        pthread_mutex_unlock(&adev->lock);
+        return -EBUSY;
+    }
+    int rc = voice_route_disable(adev, true);
+    if (rc) {
+        pthread_mutex_unlock(&adev->lock);
+        return rc;
+    }
     speech_ccci_off(adev);
     speech_hostless_close(adev);
     pthread_mutex_unlock(&adev->lock);
@@ -2907,22 +2815,18 @@ static int adev_close(hw_device_t *device)
     return 0;
 }
 
-static int adev_open(const hw_module_t *module, const char *name,
-                      hw_device_t **device)
+int mindone_audio_device_open(struct mindone_audio_device **device)
 {
     struct mindone_audio_device *adev;
 
-    if (strcmp(name, AUDIO_HARDWARE_INTERFACE) != 0)
+    if (!device)
         return -EINVAL;
+    *device = NULL;
 
     adev = (struct mindone_audio_device *)calloc(1, sizeof(*adev));
     if (!adev)
         return -ENOMEM;
 
-    /* 🔴 15.09: calloc leaves voice_volume at 0, and 0 on this codec is the QUIETEST analogue
-     * step, not silence-until-set. Anything that applies it before the framework has told us a
-     * real call volume would therefore turn the sound down rather than leave it alone. Start at
-     * full and let set_voice_volume() lower it. */
     adev->speech_fd = -1;
     adev->voice_volume = 1.0f;
 
@@ -2944,53 +2848,241 @@ static int adev_open(const hw_module_t *module, const char *name,
     pthread_mutex_init(&adev->lock, NULL);
     adev->mode = AUDIO_MODE_NORMAL;
 
-    adev->hw_device.common.tag = HARDWARE_DEVICE_TAG;
-    adev->hw_device.common.version = AUDIO_DEVICE_API_VERSION_3_0;
-    adev->hw_device.common.module = (struct hw_module_t *)module;
-    adev->hw_device.common.close = adev_close;
-
-    adev->hw_device.init_check = adev_init_check;
-    adev->hw_device.set_voice_volume = adev_set_voice_volume;
-    adev->hw_device.set_master_volume = adev_set_master_volume;
-    adev->hw_device.get_master_volume = adev_get_master_volume;
-    adev->hw_device.set_master_mute = adev_set_master_mute;
-    adev->hw_device.get_master_mute = adev_get_master_mute;
-    adev->hw_device.set_mode = adev_set_mode;
-    adev->hw_device.set_mic_mute = adev_set_mic_mute;
-    adev->hw_device.get_mic_mute = adev_get_mic_mute;
-    adev->hw_device.set_parameters = adev_set_parameters;
-    adev->hw_device.get_parameters = adev_get_parameters;
-    adev->hw_device.get_input_buffer_size = adev_get_input_buffer_size;
-    adev->hw_device.open_output_stream = adev_open_output_stream;
-    adev->hw_device.close_output_stream = adev_close_output_stream;
-    adev->hw_device.open_input_stream = adev_open_input_stream;
-    adev->hw_device.close_input_stream = adev_close_input_stream;
-    adev->hw_device.dump = adev_dump;
-    /* 15.09: implemented rather than left NULL. The NULL convention is supported (AudioFlinger
-     * falls back to routing through set_parameters, which is why v2 worked), but with patches in
-     * place routing is driven by the framework's actual port graph instead of a parsed string,
-     * and device changes during a call arrive here too. */
-    adev->hw_device.create_audio_patch = adev_create_audio_patch;
-    adev->hw_device.release_audio_patch = adev_release_audio_patch;
-    adev->hw_device.get_audio_port = adev_get_audio_port;
-    adev->hw_device.set_audio_port_config = adev_set_audio_port_config;
-
-    *device = &adev->hw_device.common;
+    *device = adev;
     return 0;
 }
 
-static struct hw_module_methods_t hal_module_methods = {
-    .open = adev_open,
-};
+int mindone_audio_set_mode(struct mindone_audio_device *device, audio_mode_t mode)
+{
+    if (!device || (mode != AUDIO_MODE_NORMAL && mode != AUDIO_MODE_RINGTONE &&
+                    mode != AUDIO_MODE_IN_CALL && mode != AUDIO_MODE_IN_COMMUNICATION))
+        return -EINVAL;
+    return set_mode(device, mode);
+}
 
-struct audio_module HAL_MODULE_INFO_SYM = {
-    .common = {
-        .tag = HARDWARE_MODULE_TAG,
-        .module_api_version = AUDIO_MODULE_API_VERSION_0_1,
-        .hal_api_version = HARDWARE_HAL_API_VERSION,
-        .id = AUDIO_HARDWARE_MODULE_ID,
-        .name = "MindOne audio HW HAL (tinyalsa, MT6789/MT6366)",
-        .author = "mind_one project",
-        .methods = &hal_module_methods,
-    },
-};
+int mindone_audio_set_voice_volume(struct mindone_audio_device *device, float volume)
+{
+    return device ? set_voice_volume(device, volume) : -EINVAL;
+}
+
+int mindone_audio_set_mic_mute(struct mindone_audio_device *device, bool muted)
+{
+    return device ? set_mic_mute(device, muted) : -EINVAL;
+}
+
+int mindone_audio_get_voice(struct mindone_audio_device *device, struct mindone_audio_voice *voice)
+{
+    if (!device || !voice)
+        return -EINVAL;
+    pthread_mutex_lock(&device->lock);
+    voice->mode = device->mode;
+    voice->volume = device->voice_volume;
+    voice->mic_mute = device->mic_mute;
+    pthread_mutex_unlock(&device->lock);
+    return 0;
+}
+
+int mindone_audio_speech_gain(struct mindone_audio_device *device, int gain)
+{
+    if (!device || gain < -255 || gain > 0)
+        return -EINVAL;
+    pthread_mutex_lock(&device->lock);
+    int rc = -ENOTCONN;
+    if (device->in_call && device->speech_on && device->speech_fd >= 0)
+        rc = ccci_send_mailbox(device->speech_fd, 0x2f00, (uint16_t)(int16_t)gain, 0) ? -EIO : 0;
+    pthread_mutex_unlock(&device->lock);
+    return rc;
+}
+
+int mindone_audio_speech_pump(struct mindone_audio_device *device)
+{
+    if (!device)
+        return -EINVAL;
+    pthread_mutex_lock(&device->lock);
+    int rc = speech_rx_pump(device, "1");
+    pthread_mutex_unlock(&device->lock);
+    return rc;
+}
+
+int mindone_audio_set_sco(struct mindone_audio_device *device, struct mindone_audio_sco sco)
+{
+    if (!device || (sco.band != MINDONE_AUDIO_SCO_NB && sco.band != MINDONE_AUDIO_SCO_WB))
+        return -EINVAL;
+    int rc = 0;
+    pthread_mutex_lock(&device->lock);
+    bool wb = sco.band == MINDONE_AUDIO_SCO_WB;
+    if (wb != device->bt_wb) {
+        device->bt_wb = wb;
+        for (struct mindone_stream_out *out = device->outs; out; out = out->next)
+            if (out->routed_device == OUT_DEVICE_BT_SCO)
+                out->reopen_pending = true;
+        if (device->active_in && device->active_in->routed_device == IN_DEVICE_BT_SCO)
+            device->active_in->reopen_pending = true;
+        if (device->in_call && device->voice_out_device == OUT_DEVICE_BT_SCO)
+            rc = voice_route_change_sco(device, OUT_DEVICE_BT_SCO);
+    }
+    pthread_mutex_unlock(&device->lock);
+    return rc;
+}
+
+int mindone_audio_create_patch(struct mindone_audio_device *device,
+                              unsigned int source_count, const struct audio_port_config *sources,
+                              unsigned int sink_count, const struct audio_port_config *sinks,
+                              audio_patch_handle_t *handle)
+{
+    if (!device || !sources || !sinks || !handle || !source_count || !sink_count)
+        return -EINVAL;
+    return create_audio_patch(device, source_count, sources, sink_count, sinks, handle);
+}
+
+int mindone_audio_release_patch(struct mindone_audio_device *device, audio_patch_handle_t handle)
+{
+    return device ? release_audio_patch(device, handle) : -EINVAL;
+}
+
+int mindone_audio_output_open(struct mindone_audio_device *device, audio_io_handle_t handle,
+                             audio_devices_t devices, audio_output_flags_t flags,
+                             struct audio_config *config, struct mindone_stream_out **stream)
+{
+    return open_output_stream(device, handle, devices, flags, config, stream);
+}
+
+void mindone_audio_output_close(struct mindone_stream_out *stream)
+{
+    if (stream)
+        close_output_stream(stream);
+}
+
+int mindone_audio_output_command(struct mindone_stream_out *stream, enum mindone_audio_command command)
+{
+    return stream ? out_aidl_state(stream, command) : -EINVAL;
+}
+
+ssize_t mindone_audio_output_write(struct mindone_stream_out *stream, const void *buffer, size_t bytes)
+{
+    if (!stream || (!buffer && bytes) || bytes > SSIZE_MAX ||
+        !stream->frame_size || bytes % stream->frame_size)
+        return -EINVAL;
+    if (bytes) {
+        int rc = out_aidl_state(stream, MINDONE_AUDIO_TRANSFER);
+        if (rc)
+            return rc;
+    }
+    return out_write(stream, buffer, bytes);
+}
+
+int mindone_audio_output_latency(struct mindone_stream_out *stream, uint32_t *latency_ms)
+{
+    if (!stream || !latency_ms)
+        return -EINVAL;
+    *latency_ms = out_get_latency(stream);
+    return 0;
+}
+
+int mindone_audio_output_position(struct mindone_stream_out *stream, uint64_t *frames,
+                                 struct timespec *timestamp)
+{
+    return stream && frames && timestamp
+            ? out_aidl_get_position(stream, frames, timestamp) : -EINVAL;
+}
+
+int mindone_audio_output_route(struct mindone_stream_out *stream, struct mindone_audio_route route)
+{
+    return stream ? out_set_route(stream, route.devices) : -EINVAL;
+}
+
+int mindone_audio_output_gain(struct mindone_stream_out *stream, struct mindone_audio_gain gain)
+{
+    return stream ? out_set_volume(stream, gain.left, gain.right) : -EINVAL;
+}
+
+int mindone_audio_input_open(struct mindone_audio_device *device, audio_io_handle_t handle,
+                            audio_devices_t devices, audio_input_flags_t flags,
+                            struct audio_config *config, struct mindone_stream_in **stream)
+{
+    return open_input_stream(device, handle, devices, flags, config, stream);
+}
+
+void mindone_audio_input_close(struct mindone_stream_in *stream)
+{
+    if (stream)
+        close_input_stream(stream);
+}
+
+int mindone_audio_input_command(struct mindone_stream_in *stream, enum mindone_audio_command command)
+{
+    if (!stream)
+        return -EINVAL;
+    switch (command) {
+    case MINDONE_AUDIO_START:
+        return in_aidl_start(stream);
+    case MINDONE_AUDIO_FLUSH:
+    case MINDONE_AUDIO_STANDBY:
+        return in_standby(stream);
+    case MINDONE_AUDIO_PAUSE:
+    case MINDONE_AUDIO_DRAIN:
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
+ssize_t mindone_audio_input_read(struct mindone_stream_in *stream, void *buffer, size_t bytes)
+{
+    if (!stream || (!buffer && bytes) || bytes > SSIZE_MAX ||
+        !stream->frame_size || bytes % stream->frame_size)
+        return -EINVAL;
+    return in_read(stream, buffer, bytes);
+}
+
+int mindone_audio_input_buffer_size(struct mindone_stream_in *stream, size_t *bytes)
+{
+    if (!stream || !bytes)
+        return -EINVAL;
+    *bytes = in_get_buffer_size(stream);
+    return 0;
+}
+
+int mindone_audio_input_position(struct mindone_stream_in *stream, int64_t *frames, int64_t *time_ns)
+{
+    return stream && frames && time_ns
+            ? in_get_capture_position(stream, frames, time_ns) : -EINVAL;
+}
+
+int mindone_audio_input_route(struct mindone_stream_in *stream, struct mindone_audio_route route)
+{
+    return stream ? in_set_route(stream, route.devices) : -EINVAL;
+}
+
+int mindone_audio_input_gain(struct mindone_stream_in *stream, float gain)
+{
+    if (!stream || !isfinite(gain) || gain < 0.0f || gain > 1.0f)
+        return -EINVAL;
+    return in_set_gain(stream, gain);
+}
+
+int mindone_audio_output_get_config(struct mindone_stream_out *stream, struct audio_config *config)
+{
+    if (!stream || !config || !stream->frame_size)
+        return -EINVAL;
+    *config = (struct audio_config){
+        .sample_rate = out_get_sample_rate(stream),
+        .channel_mask = AUDIO_CHANNEL_OUT_STEREO,
+        .format = AUDIO_FORMAT_PCM_16_BIT,
+        .frame_count = out_get_buffer_size(stream) / stream->frame_size,
+    };
+    return 0;
+}
+
+int mindone_audio_input_get_config(struct mindone_stream_in *stream, struct audio_config *config)
+{
+    if (!stream || !config || !stream->frame_size)
+        return -EINVAL;
+    *config = (struct audio_config){
+        .sample_rate = in_get_sample_rate(stream),
+        .channel_mask = AUDIO_CHANNEL_IN_MONO,
+        .format = AUDIO_FORMAT_PCM_16_BIT,
+        .frame_count = in_get_buffer_size(stream) / stream->frame_size,
+    };
+    return 0;
+}

@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 
 # mindone_mdinit init service -- replaces the stock ccci_mdinit blob in
 # place. Same binary name/path/args as init.cccimdinit.rc's existing

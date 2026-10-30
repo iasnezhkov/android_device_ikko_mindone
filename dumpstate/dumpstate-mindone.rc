@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+service vendor.dumpstate-mindone /vendor/bin/hw/android.hardware.dumpstate-service.mindone
+    class hal
+    user system
+    group system log readproc
+    interface aidl android.hardware.dumpstate.IDumpstateDevice/default

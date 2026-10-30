@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+hal_server_domain(rild, hal_telephony)
+binder_use(rild)
+hal_client_domain(rild, mtk_hal_netdagent)

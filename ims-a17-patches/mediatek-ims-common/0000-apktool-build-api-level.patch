@@ -1,0 +1,11 @@
+diff --git a/apktool.yml b/apktool.yml
+--- a/apktool.yml
++++ b/apktool.yml
+@@ -5,6 +5,6 @@
+   ids:
+   tag: null
+ sdkInfo:
+-  minSdkVersion: 28
++  minSdkVersion: 35
+ packageInfo:
+   forcedPackageId: null

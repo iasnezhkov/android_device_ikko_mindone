@@ -1,8 +1,7 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: AIDL ISession (fingerprint V4) over HIDL IBiometricsFingerprint@2.1 (Silead). See BRIDGES-HIDL-AIDL.
 #define LOG_TAG "mindone-bridge-fingerprint"
 
 #include "SessionBridge.h"
@@ -13,6 +12,7 @@
 #include <android-base/stringprintf.h>
 
 #include <chrono>
+#include <thread>
 
 namespace mindone {
 
@@ -25,8 +25,6 @@ using ::android::hardware::hidl_vec;
 namespace {
 constexpr uint32_t kEnrollTimeoutSec = 60;
 
-// An unchecked failed Return<T> in a destructor crashes the process (libhidl: "Failed HIDL return status not
-// checked" -> LOG(FATAL)). Every HIDL call from the bridge goes through check().
 template <class T>
 bool check(const Return<T>& r, const char* what) {
     if (!r.isOk()) {
@@ -35,9 +33,7 @@ bool check(const Return<T>& r, const char* what) {
     }
     return true;
 }
-constexpr int64_t kLockoutTimedMs = 30000;   // HIDL 2.1 does not report a duration - 30s like the stock framework
-// ISession.aidl#resetLockout: the timestamp must be "relatively recent (e.g. on the order of
-// minutes, not hours)". See resetLockout() below for why this is only a partial check.
+constexpr int64_t kLockoutTimedMs = 30000;
 constexpr int64_t kMaxResetLockoutHatAgeMs = 60000;
 
 fp::AcquiredInfo mapAcquired(hfp::FingerprintAcquiredInfo a) {
@@ -58,9 +54,8 @@ fp::Error mapError(hfp::FingerprintError e) {
         default:                                            return fp::Error::UNKNOWN;
     }
 }
-}  // namespace
+}
 
-// ---- HIDL callback -> AIDL ISessionCallback ----
 Return<void> HidlCallback::onEnrollResult(uint64_t, uint32_t fingerId, uint32_t, uint32_t remaining) {
     if (!active_.load(std::memory_order_relaxed)) return Void();
     cb_->onEnrollmentProgress(static_cast<int32_t>(fingerId), static_cast<int32_t>(remaining));
@@ -68,39 +63,68 @@ Return<void> HidlCallback::onEnrollResult(uint64_t, uint32_t fingerId, uint32_t,
 }
 
 Return<void> HidlCallback::onAcquired(uint64_t, hfp::FingerprintAcquiredInfo info, int32_t vendorCode) {
+    std::lock_guard<std::mutex> guard(authenticationLock_);
     if (!active_.load(std::memory_order_relaxed)) return Void();
+    if (lockedOut_) return Void();
     cb_->onAcquired(mapAcquired(info), vendorCode);
     return Void();
 }
 
 Return<void> HidlCallback::onAuthenticated(uint64_t, uint32_t fingerId, uint32_t, const hidl_vec<uint8_t>& token) {
+    std::lock_guard<std::mutex> guard(authenticationLock_);
     if (!active_.load(std::memory_order_relaxed)) return Void();
+    if (!authenticating_ || lockedOut_) return Void();
     if (fingerId == 0) {
+        lockedOut_ = lockout_->addFailedAttempt();
         cb_->onAuthenticationFailed();
+        if (lockedOut_) {
+            authenticating_ = false;
+            if (hidl_ != nullptr) {
+                std::thread([hidl = hidl_] { check(hidl->cancel(), "cancel after lockout"); }).detach();
+            }
+            lockout_->notifyLockout(cb_);
+        }
         return Void();
     }
+    authenticating_ = false;
     HardwareAuthToken hat;
     if (!bytesToHat(token.data(), token.size(), &hat)) {
         LOG(ERROR) << "onAuthenticated: token too short (" << token.size() << ")";
         cb_->onError(fp::Error::UNABLE_TO_PROCESS, 0);
         return Void();
     }
+    lockout_->reset();
     cb_->onAuthenticationSucceeded(static_cast<int32_t>(fingerId), hat);
     return Void();
 }
 
 Return<void> HidlCallback::onError(uint64_t, hfp::FingerprintError error, int32_t vendorCode) {
+    std::lock_guard<std::mutex> guard(authenticationLock_);
     if (!active_.load(std::memory_order_relaxed)) return Void();
     if (removal_.fail()) return Void();
+    authenticating_ = false;
     const int32_t raw = static_cast<int32_t>(error);
-    if (raw == 7) {            // ERROR_LOCKOUT
+    if (raw == 7) {
         cb_->onLockoutTimed(kLockoutTimedMs);
-    } else if (raw == 9) {     // vendor extension, NOT part of the real HIDL 2.1 FingerprintError
+    } else if (raw == 9) {
         cb_->onLockoutPermanent();
-    } else {
+    } else if (!lockedOut_) {
         cb_->onError(mapError(error), vendorCode);
     }
     return Void();
+}
+
+bool HidlCallback::beginAuthentication() {
+    std::lock_guard<std::mutex> guard(authenticationLock_);
+    lockedOut_ = lockout_->notifyLockout(cb_);
+    authenticating_ = !lockedOut_;
+    return authenticating_;
+}
+
+void HidlCallback::beginEnrollment() {
+    std::lock_guard<std::mutex> guard(authenticationLock_);
+    authenticating_ = false;
+    lockedOut_ = false;
 }
 
 Return<void> HidlCallback::onRemoved(uint64_t, uint32_t fingerId, uint32_t, uint32_t remaining) {
@@ -131,33 +155,33 @@ Return<void> HidlCallback::onEnumerate(uint64_t, uint32_t fingerId, uint32_t, ui
     return Void();
 }
 
-// ---- cancellation ----
 ndk::ScopedAStatus CancellationSignal::cancel() {
     if (hidl_ != nullptr) check(hidl_->cancel(), "cancel");
     return ndk::ScopedAStatus::ok();
 }
 
-// ---- session ----
 SessionBridge::SessionBridge(::android::sp<hfp::IBiometricsFingerprint> hidl, int32_t userId,
-                             std::shared_ptr<fp::ISessionCallback> cb)
-    : hidl_(std::move(hidl)), userId_(userId), cb_(std::move(cb)) {
-    hidlCb_ = new HidlCallback(cb_);
+                             std::shared_ptr<fp::ISessionCallback> cb,
+                             std::shared_ptr<LockoutTracker> lockout)
+    : hidl_(std::move(hidl)), userId_(userId), cb_(std::move(cb)), lockout_(std::move(lockout)) {
+    lockout_->attach(cb_);
+    hidlCb_ = new HidlCallback(cb_, lockout_, hidl_);
     if (hidl_ == nullptr) {
-        // The HIDL HAL was down when this session was created (mid-reconnect after a crash, or
-        // it never came up). IFingerprint#createSession has no synchronous failure return, so the
-        // best available contract-compliant behavior is to hand back a session that reports the
-        // failure via the normal onError() path on first use - see onHidlDied() and the dead_
-        // guards on every method below, rather than crashing on a null hidl_ dereference (the
-        // previous version of this file always assumed hidl_ was valid).
         LOG(ERROR) << "session for user " << userId_
                    << ": HIDL biometrics.fingerprint@2.1 unavailable at session creation";
         dead_.store(true, std::memory_order_relaxed);
         return;
     }
-    // legacy template storage path, as used by the HIDL-era framework
     const std::string storePath = ::android::base::StringPrintf("/data/vendor_de/%d/fpdata", userId_);
     check(hidl_->setNotify(hidlCb_), "setNotify");
-    check(hidl_->setActiveGroup(static_cast<uint32_t>(userId_), storePath), "setActiveGroup");
+    auto group = hidl_->setActiveGroup(static_cast<uint32_t>(userId_), storePath);
+    if (!check(group, "setActiveGroup") ||
+        static_cast<hfp::RequestStatus>(group) != hfp::RequestStatus::SYS_OK) {
+        dead_.store(true, std::memory_order_relaxed);
+        hidlCb_->deactivate();
+        LOG(ERROR) << "session for user " << userId_ << ": cannot activate " << storePath;
+        return;
+    }
     LOG(INFO) << "session for user " << userId_ << " (" << storePath << ")";
 }
 
@@ -178,10 +202,6 @@ ndk::ScopedAStatus SessionBridge::generateChallenge() {
         if (ret.isOk()) {
             ch = ret;
         } else {
-            // ISession#generateChallenge has no onError path in the AIDL spec - onChallengeGenerated
-            // is its only documented terminal callback - so a transport failure can only be
-            // surfaced by logging loudly and returning a degenerate challenge. Previously this was
-            // completely silent (no log at all), making a HAL outage here invisible.
             LOG(ERROR) << "generateChallenge: HIDL transport error: " << ret.description();
         }
     }
@@ -203,14 +223,11 @@ ndk::ScopedAStatus SessionBridge::enroll(const HardwareAuthToken& hat, std::shar
         *out = ndk::SharedRefBase::make<CancellationSignal>(nullptr);
         return ndk::ScopedAStatus::ok();
     }
+    hidlCb_->beginEnrollment();
     auto bytes = hatToBytes(hat);
     ::android::hardware::hidl_array<uint8_t, 69> arr(bytes.data());
     auto ret = hidl_->enroll(arr, static_cast<uint32_t>(userId_), kEnrollTimeoutSec);
     if (!ret.isOk()) {
-        // Transport gone (HAL crashed) is a hardware problem, not a "bad fingerprint image"
-        // problem - HW_UNAVAILABLE is the correct Error per its own doc comment ("The hardware
-        // has an error."), UNABLE_TO_PROCESS is reserved for the hardware being up but rejecting
-        // this specific request. The previous version mapped both cases to UNABLE_TO_PROCESS.
         LOG(ERROR) << "enroll: HIDL transport error: " << ret.description();
         cb_->onError(fp::Error::HW_UNAVAILABLE, 0);
     } else if (static_cast<hfp::RequestStatus>(ret) != hfp::RequestStatus::SYS_OK) {
@@ -222,6 +239,10 @@ ndk::ScopedAStatus SessionBridge::enroll(const HardwareAuthToken& hat, std::shar
 }
 
 ndk::ScopedAStatus SessionBridge::authenticate(int64_t operationId, std::shared_ptr<ICancellationSignal>* out) {
+    if (!hidlCb_->beginAuthentication()) {
+        *out = ndk::SharedRefBase::make<CancellationSignal>(nullptr);
+        return ndk::ScopedAStatus::ok();
+    }
     if (dead_.load(std::memory_order_relaxed)) {
         cb_->onError(fp::Error::HW_UNAVAILABLE, 0);
         *out = ndk::SharedRefBase::make<CancellationSignal>(nullptr);
@@ -240,10 +261,6 @@ ndk::ScopedAStatus SessionBridge::authenticate(int64_t operationId, std::shared_
 }
 
 ndk::ScopedAStatus SessionBridge::detectInteraction(std::shared_ptr<ICancellationSignal>* out) {
-    // ISession.aidl: "If invoked on HALs that do not support this functionality, the HAL must
-    // respond with ISession#onError(UNABLE_TO_PROCESS, 0)." HIDL 2.1 has no detectInteraction and
-    // SensorProps.supportsDetectInteraction=false, so the framework should never call this - this
-    // path exists only to honor the spec's mandated behavior if it does anyway.
     cb_->onError(fp::Error::UNABLE_TO_PROCESS, 0);
     *out = ndk::SharedRefBase::make<CancellationSignal>(nullptr);
     return ndk::ScopedAStatus::ok();
@@ -256,13 +273,6 @@ ndk::ScopedAStatus SessionBridge::enumerateEnrollments() {
     }
     auto ret = hidl_->enumerate();
     if (!ret.isOk() || static_cast<hfp::RequestStatus>(ret) != hfp::RequestStatus::SYS_OK) {
-        // enumerateEnrollments()'s ONLY documented terminal callback is onEnrollmentsEnumerated -
-        // ISession.aidl defines no onError alternative for it. The previous version only checked
-        // ret.isOk() (transport), never the actual RequestStatus payload, so a HIDL-level
-        // rejection (e.g. SYS_EBUSY) meant onEnumerate() would never fire and the framework would
-        // wait for onEnrollmentsEnumerated() forever. Ending the operation's lifecycle here (with
-        // an empty list, the closest honest answer to "nothing was enumerated") is required so
-        // the operation actually terminates.
         LOG(ERROR) << "enumerate: request rejected, HIDL status "
                    << (ret.isOk() ? static_cast<int32_t>(static_cast<hfp::RequestStatus>(ret)) : -1);
         cb_->onEnrollmentsEnumerated({});
@@ -295,7 +305,6 @@ ndk::ScopedAStatus SessionBridge::getAuthenticatorId() {
 }
 
 ndk::ScopedAStatus SessionBridge::invalidateAuthenticatorId() {
-    // HIDL 2.1 has no invalidation call; return the current id (as the AOSP example does for legacy)
     uint64_t id = 0;
     if (!dead_.load(std::memory_order_relaxed)) {
         auto ret = hidl_->getAuthenticatorId();
@@ -310,22 +319,19 @@ ndk::ScopedAStatus SessionBridge::invalidateAuthenticatorId() {
 }
 
 ndk::ScopedAStatus SessionBridge::resetLockout(const HardwareAuthToken& hat) {
-    if (!dead_.load(std::memory_order_relaxed)) {
-        const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                      ::android::base::boot_clock::now().time_since_epoch())
-                                      .count();
-        const int64_t ageMs = nowMs - hat.timestamp.milliSeconds;
-        if (ageMs < 0 || ageMs > kMaxResetLockoutHatAgeMs) {
-            LOG(ERROR) << "resetLockout: HAT timestamp not recent (age " << ageMs
-                       << " ms, limit " << kMaxResetLockoutHatAgeMs
-                       << " ms) - rejecting (partial check only, HMAC not verifiable over HIDL 2.1)";
-            cb_->onError(fp::Error::UNABLE_TO_PROCESS, 0);
-            return ndk::ScopedAStatus::ok();
-        }
+    const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  ::android::base::boot_clock::now().time_since_epoch())
+                                  .count();
+    const int64_t timestampMs = hat.timestamp.milliSeconds;
+    if (timestampMs < 0 || timestampMs > nowMs ||
+        nowMs - timestampMs > kMaxResetLockoutHatAgeMs) {
+        LOG(ERROR) << "resetLockout: HAT timestamp not recent (timestamp " << timestampMs
+                   << " ms, limit " << kMaxResetLockoutHatAgeMs
+                   << " ms) - rejecting (partial check only, HMAC not verifiable over HIDL 2.1)";
+        cb_->onError(fp::Error::UNABLE_TO_PROCESS, 0);
+        return ndk::ScopedAStatus::ok();
     }
-    // on HIDL 2.1 the lockout is cleared by the HAL itself after a timeout; we just tell the
-    // framework it is cleared once the (partial) check above has passed.
-    cb_->onLockoutCleared();
+    lockout_->reset(cb_);
     return ndk::ScopedAStatus::ok();
 }
 
@@ -334,9 +340,6 @@ ndk::ScopedAStatus SessionBridge::close() {
     if (!dead_.load(std::memory_order_relaxed)) {
         check(hidl_->cancel(), "cancel");
     }
-    // Deactivate unconditionally (not just in the dead_ branch): once close() returns
-    // onSessionClosed(), the framework considers this session gone and must not receive any
-    // further callback from it, even a straggler from the stock HAL that was already in flight.
     cb_->onSessionClosed();
     return ndk::ScopedAStatus::ok();
 }
@@ -353,4 +356,4 @@ ndk::ScopedAStatus SessionBridge::onContextChanged(const ::aidl::android::hardwa
 ndk::ScopedAStatus SessionBridge::onPointerCancelWithContext(const fp::PointerContext&) { return ndk::ScopedAStatus::ok(); }
 ndk::ScopedAStatus SessionBridge::setIgnoreDisplayTouches(bool) { return ndk::ScopedAStatus::ok(); }
 
-}  // namespace mindone
+}

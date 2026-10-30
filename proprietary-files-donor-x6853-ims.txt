@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+vendor/bin/volte_imsm_93|f3c33c1e79ecc849b7239ec93abcbfdb3ee4b445
+vendor/bin/volte_imcb|a29deb59a6da7da7d175a94e1239ce9f941b4e92
+vendor/bin/volte_stack|0a9b86192e40332941b18d57cfbbdc3521842676
+vendor/bin/volte_ua|5e5ce5c4a71508e8e0d9ac11f1a4f571d05720c1
+vendor/lib64/libvolte_core_shr.so|aba816957ff8054f7c2425d69d1ce86d8af3b544
+vendor/lib64/libvolte_xdmc_shr.so|2d830aa4d6b338331bb3050c4a3484cb74fecd98
+vendor/lib64/libipsec_ims_shr.so|c113735ba6ea541806f8c3e1dd332a05df4af9ab
+vendor/lib64/libverno.so|2fad18650ed6a0275d69a74235397f9edf8288cd
+vendor/bin/rcs_volte_stack|18473c206e093bc04ed3f42ea75475623ea2df75
+vendor/bin/volte_rcs_ua|0090195d1c1674e1510ce16f16aded12406052ba
+vendor/lib64/librcs_volte_core.so|2d4a4e10d870294cc201336543a5976ec7982d2a
+vendor/lib64/vendor.mediatek.hardware.rcs@2.0.so|7626ccd82c28d48713efb118f022fa2e71622b90
+vendor/lib64/vendor.mediatek.hardware.rcs-V1-ndk.so|0995ccd4ce90c21c68c15c955467b507dc85f4e9

@@ -1,3 +1,18 @@
-# mindone vendor property contexts
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 
 vendor.silead.fp.ext.    u:object_r:vendor_silead_fp_prop:s0
+ro.vendor.mindone.fp.type    u:object_r:vendor_silead_fp_prop:s0 exact enum rear side home udfps
+
+vendor.mindone.modules.    u:object_r:vendor_mindone_modules_prop:s0
+ro.vendor.mindone.gauge.period_s u:object_r:vendor_mindone_gauge_config_prop:s0 exact string
+persist.vendor.dumpstate.verbose_logging.enabled    u:object_r:vendor_dumpstate_prop:s0 exact bool
+
+persist.vendor.debug.hwc. u:object_r:vendor_mtk_hwc_debug_log_prop:s0 prefix
+persist.vendor.hwcomposer.boot_display_config. u:object_r:vendor_mtk_hwc_boot_display_config_prop:s0 prefix
+vendor.dp. u:object_r:vendor_dp_prop:s0 prefix
+persist.vendor.dp. u:object_r:vendor_dp_prop:s0 prefix
+
+persist.vendor.livedisplay.rgb u:object_r:vendor_mindone_livedisplay_prop:s0 exact string
+
+vendor.lackof.atci.channel u:object_r:vendor_mtk_radio_prop:s0 exact bool

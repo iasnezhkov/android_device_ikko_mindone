@@ -1,0 +1,187 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: BSD-3-Clause
+soong_namespace {
+    imports: ["vendor/ikko/mindone"],
+}
+
+package {
+    default_applicable_licenses: ["mindone_codec2_license"],
+}
+
+license {
+    name: "mindone_codec2_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-BSD",
+        "legacy_unencumbered",
+    ],
+    license_text: ["NOTICE"],
+}
+
+cc_defaults {
+    name: "mindone_codec2_library_defaults",
+    cflags: [
+        "-Werror",
+        "-Wall",
+        "-Wno-unused-parameter",
+        "-Wthread-safety",
+    ],
+}
+
+cc_library {
+    name: "libmindone_codec2_common",
+    stem: "libv4l2_codec2_common",
+    vendor_available: true,
+    defaults: ["libcodec2-impl-defaults", "mindone_codec2_library_defaults"],
+    srcs: [
+        "common/Common.cpp",
+        "common/EncodeHelpers.cpp",
+        "common/FormatConverter.cpp",
+        "common/Fourcc.cpp",
+        "common/H264.cpp",
+        "common/H264NalParser.cpp",
+        "common/HEVCNalParser.cpp",
+        "common/LibyuvImageConverter.cpp",
+        "common/NalParser.cpp",
+        "common/VideoTypes.cpp",
+        "common/VideoPixelFormat.cpp",
+    ],
+    export_include_dirs: ["common/include"],
+    shared_libs: [
+        "libchrome",
+        "libcutils",
+        "liblog",
+        "libstagefright_foundation",
+        "libui",
+        "libutils",
+    ],
+    static_libs: ["libyuv_static"],
+}
+
+cc_library_shared {
+    name: "libmindone_codec2_plugin_store",
+    stem: "libc2plugin_store",
+    vendor_available: true,
+    defaults: ["libcodec2-impl-defaults", "mindone_codec2_library_defaults"],
+    srcs: [
+        "plugin_store/DmabufHelpers.cpp",
+        "plugin_store/V4L2PluginStore.cpp",
+        "plugin_store/VendorAllocatorLoader.cpp",
+    ],
+    export_include_dirs: ["plugin_store/include"],
+    header_libs: ["libcodec2_internal"],
+    shared_libs: [
+        "android.hardware.graphics.bufferqueue@2.0",
+        "libchrome",
+        "libcutils",
+        "libhardware",
+        "libnativewindow",
+        "liblog",
+        "libstagefright_bufferpool@1.0",
+        "libstagefright_bufferqueue_helper",
+        "libstagefright_foundation",
+        "libui",
+    ],
+}
+
+cc_library {
+    name: "libmindone_codec2_components",
+    stem: "libv4l2_codec2_components",
+    vendor: true,
+    defaults: ["libcodec2-aidl-defaults", "mindone_codec2_library_defaults"],
+    srcs: [
+        "components/VideoFrame.cpp",
+        "components/VideoFramePool.cpp",
+        "components/ComponentStore.cpp",
+        "components/DecodeComponent.cpp",
+        "components/DecodeInterface.cpp",
+        "components/EncodeComponent.cpp",
+        "components/EncodeInterface.cpp",
+        "components/VideoDecoder.cpp",
+        "components/VideoEncoder.cpp",
+    ],
+    export_include_dirs: ["components/include"],
+    header_libs: ["libcodec2_internal"],
+    shared_libs: [
+        "android.hardware.graphics.common@1.0",
+        "libmindone_codec2_plugin_store",
+        "libchrome",
+        "libcodec2_soft_common",
+        "libcutils",
+        "liblog",
+        "libsfplugin_ccodec_utils",
+        "libstagefright_bufferqueue_helper",
+        "libstagefright_foundation",
+        "libui",
+        "libnativewindow",
+        "libmindone_codec2_common",
+    ],
+}
+
+cc_library {
+    name: "libmindone_codec2_v4l2",
+    stem: "libv4l2_codec2_v4l2",
+    vendor: true,
+    defaults: ["libcodec2-hidl-defaults", "mindone_codec2_library_defaults"],
+    srcs: [
+        "v4l2/V4L2ComponentCommon.cpp",
+        "v4l2/V4L2ComponentFactory.cpp",
+        "v4l2/V4L2ComponentStore.cpp",
+        "v4l2/V4L2Decoder.cpp",
+        "v4l2/V4L2DecodeComponent.cpp",
+        "v4l2/V4L2Device.cpp",
+        "v4l2/V4L2DevicePoller.cpp",
+        "v4l2/V4L2Encoder.cpp",
+        "v4l2/V4L2EncodeComponent.cpp",
+        "v4l2/TiledCaptureBuffer.cpp",
+        "v4l2/MdpImageConverter.cpp",
+        "v4l2/MdpReplay.cpp",
+    ],
+    export_include_dirs: ["v4l2/include"],
+    header_libs: ["libcodec2_internal"],
+    shared_libs: [
+        "android.hardware.graphics.common@1.0",
+        "libmindone_codec2_plugin_store",
+        "libchrome",
+        "libcodec2_soft_common",
+        "libcutils",
+        "libdpframework",
+        "liblog",
+        "libsfplugin_ccodec_utils",
+        "libstagefright_bufferqueue_helper",
+        "libstagefright_foundation",
+        "libui",
+        "libmindone_codec2_common",
+        "libmindone_codec2_components",
+    ],
+}
+
+cc_binary {
+    name: "android.hardware.media.c2-service.mindone",
+    stem: "android.hardware.media.c2-service-v4l2",
+    vendor: true,
+    relative_install_path: "hw",
+    overrides: ["android.hardware.media.c2-service-v4l2"],
+    defaults: ["libcodec2-aidl-defaults"],
+    srcs: [
+        "service/service.cpp",
+        "service/MdpReplayInterpose.cpp",
+    ],
+    shared_libs: [
+        "libmindone_codec2_v4l2",
+        "libmindone_codec2_components",
+        "libavservices_minijail",
+        "libchrome",
+        "libcutils",
+        "liblog",
+        "libutils",
+    ],
+    required: [
+        "android.hardware.media.c2-default-seccomp_policy",
+        "android.hardware.media.c2-v4l2-extended-seccomp_policy",
+    ],
+    cflags: ["-DV4L2_CODEC2_SERVICE_V4L2_STORE"],
+    ldflags: ["-Wl,--export-dynamic"],
+    init_rc: ["//device/ikko/mindone:mindone_codec2_init_rc"],
+    vintf_fragments: ["service/android.hardware.media.c2-service-v4l2.xml"],
+}

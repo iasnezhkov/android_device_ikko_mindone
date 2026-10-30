@@ -1,6 +1,10 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
-
 service vendor.fingerprint-mindone /vendor/bin/hw/android.hardware.biometrics.fingerprint-service.mindone
-    class early_hal
+    class late_start
     user system
-    group system input
+    group system input uhid
+
+on post-fs-data
+    mkdir /data/vendor/fingerprint_mindone 0700 system system
+    restorecon_recursive /data/vendor/fingerprint_mindone

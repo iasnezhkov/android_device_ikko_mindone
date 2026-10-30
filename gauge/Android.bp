@@ -1,0 +1,41 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+rust_library_rlib {
+    name: "libmindone_gauge",
+    lints: "vendor",
+    clippy_lints: "vendor",
+    crate_name: "mindone_gauge",
+    vendor: true,
+    edition: "2021",
+    srcs: ["src/lib.rs"],
+    rustlibs: ["libnix", "librustix", "librustutils"],
+}
+
+rust_test_host {
+    name: "mindone_gauge_test",
+    lints: "vendor",
+    clippy_lints: "vendor",
+    crate_name: "mindone_gauge_test",
+    edition: "2021",
+    srcs: ["src/lib.rs"],
+    test_suites: ["general-tests"],
+}
+
+rust_binary {
+    name: "mindone_gauged",
+    lints: "vendor",
+    clippy_lints: "vendor",
+    crate_name: "mindone_gauged",
+    vendor: true,
+    compile_multilib: "64",
+    relative_install_path: "hw",
+    edition: "2021",
+    srcs: ["src/main.rs"],
+    rustlibs: ["libmindone_gauge"],
+    init_rc: ["mindone_gauged.rc"],
+}

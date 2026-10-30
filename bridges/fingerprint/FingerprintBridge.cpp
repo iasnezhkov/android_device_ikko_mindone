@@ -1,8 +1,7 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: AIDL IFingerprint (V4) over HIDL IBiometricsFingerprint@2.1.
 #define LOG_TAG "mindone-bridge-fingerprint"
 
 #include "FingerprintBridge.h"
@@ -25,14 +24,13 @@ constexpr int32_t kSensorId = 0;
 constexpr int32_t kMaxEnrollments = 5;
 
 FingerprintSensorType sensorTypeFromProp() {
-    // ro.vendor.mindone.fp.type = rear|side|home|udfps (default rear); confirm against MindOne hardware
     const std::string t = ::android::base::GetProperty("ro.vendor.mindone.fp.type", "rear");
     if (t == "side") return FingerprintSensorType::POWER_BUTTON;
     if (t == "home") return FingerprintSensorType::HOME_BUTTON;
     if (t == "udfps") return FingerprintSensorType::UNDER_DISPLAY_OPTICAL;
     return FingerprintSensorType::REAR;
 }
-}  // namespace
+}
 
 FingerprintBridge::FingerprintBridge(std::shared_ptr<FingerprintHidlConn> conn) : conn_(std::move(conn)) {
     conn_->setStateCallback([this](bool available) { onHidlStateChanged(available); });
@@ -44,7 +42,7 @@ ndk::ScopedAStatus FingerprintBridge::getSensorProps(std::vector<SensorProps>* o
     p.commonProps.sensorStrength = SensorStrength::STRONG;
     p.commonProps.maxEnrollmentsPerUser = kMaxEnrollments;
     p.sensorType = sensorTypeFromProp();
-    SensorLocation loc;  // displayId int / display "" - default values (not UDFPS: coordinates are not needed)
+    SensorLocation loc;
     p.sensorLocations = {loc};
     p.supportsNavigationGestures = false;
     p.supportsDetectInteraction = false;
@@ -58,27 +56,22 @@ ndk::ScopedAStatus FingerprintBridge::createSession(int32_t sensorId, int32_t us
                                                     const std::shared_ptr<ISessionCallback>& cb,
                                                     std::shared_ptr<ISession>* out) {
     LOG(INFO) << "createSession sensor=" << sensorId << " user=" << userId;
-    if (sensorId != kSensorId) {
-        // getSensorProps() only ever advertises kSensorId, so a well-behaved framework never
-        // asks for anything else - log loudly rather than silently humoring a bad sensorId.
-        LOG(ERROR) << "createSession: unexpected sensorId " << sensorId << " (only " << kSensorId
-                   << " is advertised by getSensorProps)";
+    if (sensorId != kSensorId || userId < 0 || cb == nullptr) {
+        LOG(ERROR) << "createSession: rejected sensor=" << sensorId << " user=" << userId
+                   << " callback=" << (cb != nullptr);
+        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
     }
 
     std::shared_ptr<SessionBridge> session;
     {
         std::lock_guard<std::mutex> l(lock_);
         if (auto prev = activeSession_.lock()) {
-            // IFingerprint.aidl: "Calling this method while there is an active session is
-            // considered an error" - this is a framework-side contract, not something we can
-            // reject synchronously (createSession has no failure return), but a stale previous
-            // session silently losing its HIDL notify() registration used to be invisible. Log it.
             LOG(ERROR) << "createSession: a previous session is still open (framework contract "
                           "violation) - its HIDL callback registration will be replaced";
         }
-        // conn_->get() may be nullptr if the HIDL HAL is down right now (mid-reconnect after a
-        // crash) - SessionBridge tolerates that by starting in the "dead" state (see its ctor).
-        session = ndk::SharedRefBase::make<SessionBridge>(conn_->get(), userId, cb);
+        auto& lockout = lockouts_[userId];
+        if (!lockout) lockout = std::make_shared<LockoutTracker>(userId);
+        session = ndk::SharedRefBase::make<SessionBridge>(conn_->get(), userId, cb, lockout);
         activeSession_ = session;
     }
     *out = session;
@@ -100,4 +93,4 @@ void FingerprintBridge::onHidlStateChanged(bool available) {
     if (session) session->onHidlDied();
 }
 
-}  // namespace mindone
+}

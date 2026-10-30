@@ -1,0 +1,31 @@
+From 3615bf4a57af5dfca12c5f008b3c6f9a096740c0 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Thu, 29 Oct 2026 09:55:21 +0900
+Subject: [PATCH] libchrome: let the device-owned V4L2 Codec2 HAL link
+ libchrome
+
+The iKKO MindOne device tree carries its V4L2 Codec2 HAL in
+device/ikko/mindone/codec2 instead of patching external/v4l2_codec2.
+The HAL uses the libchrome threading and callback utilities exactly as
+the upstream copy does, which is already on the visibility list.
+
+Change-Id: Ie3829906432f344b2f57c8d3549574e225a9075b
+---
+ Android.bp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Android.bp b/Android.bp
+index fe939ad..6424370 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -890,6 +890,7 @@ cc_library {
+         "//external/libbrillo",
+         "//external/libpalmrejection",
+         "//external/puffin",
++        "//device/ikko/mindone/codec2:__subpackages__",
+         "//external/v4l2_codec2:__subpackages__",
+         "//external/zucchini",
+         "//frameworks/base/services",
+-- 
+2.43.0
+

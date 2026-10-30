@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+binder_use(mtk_hal_power)
+allow mtk_hal_power hal_power_service:service_manager find;

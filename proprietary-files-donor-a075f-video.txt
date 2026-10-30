@@ -1,0 +1,4 @@
+vendor/lib64/mt6789/libmtk_drvb.so;SYMLINK=vendor/lib64/libmtk_drvb.so|d3bcc17d5422f7a5be0a524c31bc9df011ecdf73
+vendor/lib64/libbwc.so|41bae39688f933f469b9273c539e9379c0aaaf33
+vendor/lib64/libion_mtk.so|0c1661203ed773df3f29456246fbe8d6db8ce005
+vendor/lib64/libion_ulit.so|6be045443c73eaa7c7a1ee7cff925abf8a2156d7

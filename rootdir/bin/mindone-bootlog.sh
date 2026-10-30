@@ -1,4 +1,6 @@
 #!/vendor/bin/sh
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 
 D=/metadata/mindone
 T=/system/bin/timeout
@@ -33,15 +35,10 @@ snap() {
     getprop > $D/getprop-$S.txt 2>&1
 }
 
-# Seconds since the monitor started. Time is taken from the kernel CLOCK (/proc/uptime), not from an
-# iteration count: counting iterations already produced a false conclusion once, when a loop step
-# turned out longer than expected.
 elapsed() { set -- $(cat /proc/uptime); echo ${1%.*}; }
 START=$(elapsed)
 BOOTED=
 
-# Wait until the $1-second mark. Returns 0 if the mark was reached (boot did not complete),
-# 1 if either boot completed or the mark is past the limit.
 waitto() {
     [ "$1" -gt "$LIMIT" ] && return 1
     while :; do
@@ -51,7 +48,6 @@ waitto() {
     done
 }
 
-# Three snapshots, so an early stall can be told apart from a late one.
 waitto 30  && snap 030
 waitto 90  && snap 090
 waitto 240 && snap 240
@@ -73,10 +69,6 @@ sync
 echo "boot not completed after ${LIMIT}s on slot $(getprop ro.boot.slot_suffix), rebooting for evidence" > $D/reboot.txt
 sync
 sleep 2
-# 1) ask init nicely; 2) if init is stuck inside a builtin command (e.g. mount_all
-# --late waiting on vold), it will never read sys.powerctl - fall back to the KERNEL: magic sysrq 'b'
-# = emergency_restart, userspace is not involved (CONFIG_MAGIC_SYSRQ=y; init.rc
-# sets /proc/sys/kernel/sysrq to 0, we turn it back on).
 setprop sys.powerctl reboot
 sleep 15
 sync

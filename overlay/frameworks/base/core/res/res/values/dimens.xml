@@ -1,16 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-FileCopyrightText: 2026 The LineageOS Project
     SPDX-License-Identifier: Apache-2.0
 -->
 <resources>
     <dimen name="navigation_bar_height">24dp</dimen>
     <dimen name="navigation_bar_height_landscape">24dp</dimen>
 
-    <!-- The inset apps and the IME are laid out above. Zero = no dead strip. -->
     <dimen name="navigation_bar_frame_height">0dp</dimen>
     <dimen name="navigation_bar_frame_height_landscape">0dp</dimen>
 
-    <!-- Explicit, because it would otherwise inherit the 0dp above and take the gestures with it. -->
     <dimen name="navigation_bar_gesture_height">24dp</dimen>
 </resources>

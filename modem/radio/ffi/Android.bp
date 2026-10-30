@@ -1,0 +1,17 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ */
+
+rust_ffi_static {
+    name: "libmindone_radio_ffi",
+    crate_name: "mindone_radio_ffi",
+    srcs: ["lib.rs"],
+    edition: "2021",
+    vendor: true,
+    lints: "none",
+    flags: ["-Dwarnings", "-Cpanic=unwind"],
+    rustlibs: ["libmindone_radio_runtime", "libmindone_radio_network", "libmindone_radio_modem", "libmindone_radio_state"],
+    export_include_dirs: ["."],
+    whole_static_libs: ["libmindone_radio_posix"],
+}

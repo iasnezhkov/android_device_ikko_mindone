@@ -2,13 +2,6 @@
 
 name: tree hygiene
 
-# This repository has one rule that cannot be relaxed: it must never contain a vendor blob.
-# ~1300 proprietary files are needed to build, every one of them extracted by the user from
-# their own device, and a single one committed by accident turns a publishable tree into a
-# redistribution of someone else's property. A person cannot check that by hand on every push.
-#
-# The rest is ordinary hygiene: no binaries, no absolute paths from anyone's machine, English
-# only. This deliberately does not build the ROM -- that needs a 250 GB checkout and hours.
 
 on:
   push:
@@ -24,8 +17,6 @@ jobs:
         run: |
           set -eu
           fail=0
-          # Column 1 of proprietary-files.txt is the source path on the device; anything after
-          # ':' is where it is installed. Either spelling appearing as a real file here is a leak.
           while IFS= read -r line; do
             case "$line" in ''|'#'*) continue ;; esac
             src=${line%%:*}

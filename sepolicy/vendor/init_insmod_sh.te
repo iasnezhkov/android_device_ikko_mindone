@@ -1,2 +1,7 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 dontaudit init_insmod_sh debugfs_fb:dir { search };
 dontaudit init_insmod_sh self:key write;
+dontaudit init_insmod_sh kmsg_device:chr_file ioctl;
+set_prop(init_insmod_sh, vendor_mindone_modules_prop)
+allow init_insmod_sh kmsg_device:chr_file { getattr open write };

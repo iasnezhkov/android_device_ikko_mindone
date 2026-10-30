@@ -1,318 +1,223 @@
+<!-- SPDX-FileCopyrightText: 2026 The LineageOS Project -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 <div align="center">
 
 # iKKO MindOne
 
-### Unofficial LineageOS 23 device tree — an independent research project
+### Unofficial LineageOS 23.2 device tree — an independent research project
 
-[![Android](https://img.shields.io/badge/Android-16-3DDC84?style=flat-square&logo=android&logoColor=white)](https://source.android.com/)
-[![LineageOS](https://img.shields.io/badge/LineageOS-23.2-167C80?style=flat-square)](https://lineageos.org/)
-[![Kernel](https://img.shields.io/badge/kernel-6.12%20ACK-A42E2B?style=flat-square&logo=linux&logoColor=white)](#-what-else-you-need)
-[![SoC](https://img.shields.io/badge/Helio%20G99-MT6789%20%2F%20MT8781-0071C5?style=flat-square)](#)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
-
-**Credit-card sized · one 50 MP lens flips to be either camera · 96 Hz panel**
+**Android 16 · MT6789 / MT8781 (Helio G99) · arm64 only · 96 Hz display**
 
 </div>
 
 ---
 
-> ### ⚠️ Experimental, research project, still moving
-> An independent, unofficial bring-up — not a vendor release, built with no vendor support or
-> assistance, and no vendor source code. It runs as a daily driver, but things change
-> between commits, some hardware is unfinished, and nothing here is certified by anyone.
-> Start with [Status](#-status).
+> An independent, unofficial LineageOS source release.
+> Read [Status](#-status) and keep a tested recovery route before installing.
 
 ## 🧬 Why this one is unusual
 
-No vendor kernel source, no vendor device tree, no reference BSP, no vendor support of any
-kind — none of it was available or offered, and the phone shipped with a vendor kernel that never
-moved past **5.10**, under Android 15. So it now runs a **hand-ported Google ACK**
-(`android12-5.10` → 6.1 → **6.12**) as a GKI mixed build — the `vmlinux` itself has no KMI
-difference from the stock GKI ABI, and every bit of device support (~296 modules) is out-of-tree
-and loadable — and this tree carries **~19 000 lines of working code** where a device tree
-normally carries only configuration. "No vendor source" is about what was used to build this, not
-about what the phone needs to run: the proprietary blobs it still depends on (radio, GPU
-userspace, camera libraries) are not part of this repository at all — each user extracts those
-from their own device, as [docs/BLOBS.md](docs/BLOBS.md) describes.
+The device shipped with a Linux 5.10 vendor kernel. The companion kernel project ports
+its device support to Google's **android16-6.12-2026-09_r10 GKI prebuilt**, CI **16736897**.
+The core kernel is Google's prebuilt; device drivers are loadable vendor modules built
+through Kleaf, with device DTB/DTBO outputs. Device code is not added to the GKI core.
 
-<table>
-<tr><td width="25%"><b>🎧 Audio HAL</b><br><sub>2 800 lines</sub></td>
-<td>A complete primary HAL, written from scratch. Not a wrapper.</td></tr>
-<tr><td><b>📐 Sensors HAL</b><br><sub>2 500 lines</sub></td>
-<td>Straight onto the kernel's <code>hf_manager</code>, calibration from <code>nvcfg</code>.</td></tr>
-<tr><td><b>🌉 HIDL bridges</b><br><sub>2 800 lines</sub></td>
-<td>Five services keeping closed HIDL HALs reachable: four bridge to AIDL as VINTF rises toward
-Android 17, one proxies the camera provider (opt-in, not yet verified on hardware).</td></tr>
-<tr><td><b>🎬 Video (Codec2)</b><br><sub>36 patches</sub></td>
-<td>Hardware decode/encode through the open V4L2 Codec2 HAL — 36 patches to
-<code>external_v4l2_codec2</code> adding MediaTek block-format support, on by default.</td></tr>
-<tr><td><b>📡 Modem stack</b><br><sub>11 000 lines</sub></td>
-<td>Open CCCI userspace. <b>Not shipped</b>, except one small status helper — see why below.</td></tr>
-<tr><td><b>📶 Wi-Fi commands</b><br><sub>140 lines</sub></td>
-<td>Private <code>DRIVER</code> commands for MediaTek gen4m.</td></tr>
-</table>
+This product builds **LineageOS 23.2 / Android 16**, uses **FCM 202504**, and inherits
+`core_64_bit_only.mk`. It does not provide a 32-bit application runtime. Android HAL
+interfaces use AIDL, including frontends over legacy backends where necessary.
+Vendor-specific HIDL interfaces and proprietary backend libraries still remain. IMS
+extraction also handles removed Android 17 APIs without a framework exception for IMS.
+
+| Component maintained here | Implementation |
+|---|---|
+| Audio | AIDL primary service over the local AFE/tinyalsa backend, with modem voice routing and a sound-trigger backend |
+| Sensors | AIDL service using `hf_manager` and device calibration |
+| GNSS | AIDL frontend over the legacy receiver backend, with session-controlled receiver power |
+| Camera provider | AIDL frontend over the proprietary HIDL camera backend; proprietary imaging libraries remain required |
+| Video | In-tree `codec2/`, derived from the open V4L2 Codec2 implementation, with MediaTek format and buffer handling |
+| Vibrator | In-tree AIDL service for the legacy vibrator backend |
+| LiveDisplay | Local service using the display CCORR controls |
+| Secure element | Radio-backed AIDL service |
+| Tethering offload | AIDL service with a native MDDP connection-mode backend |
+| Gatekeeper / fingerprint | AIDL bridges to legacy implementations |
+| Modem / Wi-Fi helpers | Rust `gsm0710muxd`, modem status and Wi-Fi-calling components, private gen4m commands; the open RIL lives beside the selected donor radio stack |
+
+The local services do not remove the need for proprietary radio, graphics, imaging,
+receiver and firmware components. Only extraction lists, source and fixups belong here.
 
 ## 🚀 Build
 
-<details open>
-<summary><b>What you need first</b></summary>
-
-| | |
-|---|---|
-| **Host** | Linux, x86_64. 16 GB RAM workable, 32 GB comfortable |
-| **Disk** | ~300 GB for the tree and build output |
-| **Time** | Hours for the first build; minutes for incremental |
-| **Device** | Yours, bootloader unlocked, adb root — for the blob extraction step |
-
-Set up the AOSP host prerequisites first (`repo`, JDK, build packages);
-LineageOS documents them at <https://wiki.lineageos.org/current_infrastructure>.
-
-</details>
+Use a Linux x86_64 host with the LineageOS build prerequisites and sufficient disk space
+for a complete Android checkout and outputs. Start with the `lineage-23.2` source branch:
 
 ```sh
-# 1 · LineageOS 23 source tree (~250 GB, takes a while)
-mkdir lineage && cd lineage
+mkdir lineage
+cd lineage
 repo init -u https://github.com/LineageOS/android.git -b lineage-23.2
 repo sync -c -j8
-
-# 2 · this device tree
-git clone <this repo> device/ikko/mindone
-
-# 3 · blobs — from YOUR OWN device, over adb
-adb root
-(cd device/ikko/mindone && ./extract-files.py --adb)
-
-# 4 · kernel output (build the kernel repository first)
-mkdir -p device/ikko/mindone/kernel/dtb device/ikko/mindone/kernel/modules
-rm -f device/ikko/mindone/kernel/dtb/*.dtb          # <- see the warning below
-cp <kernel-out>/Image.gz                                 device/ikko/mindone/kernel/
-cp <kernel-out>/arch/arm64/boot/dts/mediatek/mindone.dtb device/ikko/mindone/kernel/dtb/
-cp <k6set>/*.ko                                          device/ikko/mindone/kernel/modules/
-
-# 5 · apply and verify the ordered patches after each repo sync
-bash device/ikko/mindone/apply-patches.sh apply
-bash device/ikko/mindone/apply-patches.sh check
-
-# 6 · build
-source build/envsetup.sh && breakfast mindone && mka bacon
+git clone <device-repository-url> device/ikko/mindone
 ```
 
-The patch helper requires Bash 4 or newer, Python 3 and Git. It resolves the synced
-`lineage-23.2` upstream refs, checks every series before changing any project, and
-leaves already applied series unchanged. Conflicting local changes are refused; preserve
-those changes before retrying. `apply --dry-run` previews the operation.
+### Obtain proprietary inputs
 
-One SurfaceFlinger flag (a persistent on-disk shader cache, which avoids a first-navigation hitch
-after every boot) is turned on by a release configuration that is not part of this repository yet.
-The build works fine without it — shaders just compile on first use instead of coming from a
-warm cache.
+Extract MindOne files from your own device or firmware backup using
+`extract-files.py` in a synced LineageOS checkout. Current extraction also requires
+three donor sources; extracting only factory MindOne files is insufficient.
 
-➡️ **`out/target/product/mindone/lineage-23.2-<date>-UNOFFICIAL-mindone.zip`**
+| Donor | Required groups | Obtain locally |
+|---|---|---|
+| Samsung Galaxy A07 SM-A075F | `graphics,radio,video,drm,connsys` | Graphics list identifies `A075FXXU7DZJ5`; other groups are identified by pinned hashes |
+| Lenovo TB351FU | `video` | Unpack files matching the hashes in `proprietary-files-donor-lenovo-tb351fu-video.txt` |
+| Infinix X6853 | `ims` | Unpack files matching the hashes in `proprietary-files-donor-x6853-ims.txt` |
 
-> 🔴 **That package will not install as-is.** The device accepts only images signed with the
-> certificate in its own `otacerts.zip`; `mka bacon` output carries the AOSP test key. Sign it
-> with your own keys — [docs/FLASHING.md](docs/FLASHING.md#signing).
+Obtain firmware from a source you are entitled to use. Unpack sparse/super images and
+filesystems into roots containing paths such as `vendor/bin/...` and `system_ext/lib64/...`.
+The extraction lists pin file hashes; a matching model name alone is insufficient.
+Keep those files outside Git. Donor bootloaders and complete donor partitions are not
+installation inputs for this phone.
 
-> 🔴 **`kernel/dtb/` must hold exactly one `.dtb`.** The build concatenates *every* `*.dtb` in
-> that directory into one blob. Leave an older one beside the new one — easy, since the directory
-> is a build product and `.gitignore`d, so it survives a clean checkout of the repository — and
-> the `vendor_boot` silently ends up carrying the device tree twice. Nothing warns you; the phone
-> just stops booting, with no adb and a preloader window every ~33 seconds. Hence the `rm -f`
-> in step 4.
+Set the donor roots to those unpacked directories, then extract the MindOne files:
 
-<details>
-<summary><b>When the build breaks</b></summary>
+```sh
+export MINDONE_DONOR_A075F_ROOT="$A075F_ROOT"
+export MINDONE_DONOR_GROUPS=graphics,radio,video,drm,connsys
+export MINDONE_DONOR_LENOVO_TB351FU_ROOT="$TB351FU_ROOT"
+export MINDONE_DONOR_LENOVO_TB351FU_GROUPS=video
+export MINDONE_DONOR_X6853_ROOT="$X6853_ROOT"
+export MINDONE_DONOR_X6853_GROUPS=ims
+(cd device/ikko/mindone && ./extract-files.py --adb)
+```
 
-| Symptom | Cause |
-|---|---|
-| `breakfast` cannot find the device | the tree is not at `device/ikko/mindone` |
-| Build fails on a missing vendor file | step 3 did not run, or ran against different firmware |
-| Boots to a black screen, adb alive | wrong slot or `vendor_dlkm` region — see [docs/FLASHING.md](docs/FLASHING.md) |
-| Does not start at all, no console | a raw `Image` instead of `Image.gz` in step 4 |
-| `ModuleNotFoundError: extract_utils` | `extract-files.py` needs a synced LineageOS tree around it |
-| `cp: ... is not a directory` in step 4 | `kernel/dtb` and `kernel/modules` are build products, not in the repository — the `mkdir -p` creates them |
-| Built fine, then the phone does not boot and shows a preloader window every ~33 s | two `.dtb` files in `kernel/dtb/`, concatenated into a doubled device tree. Compare the `dtb` size inside `vendor_boot` against the blob you built: an exact multiple means this |
+`A075F_ROOT`, `TB351FU_ROOT` and `X6853_ROOT` are local directories you supply.
+Extraction verifies donor hashes and rejects conflicting destinations. When roots are
+omitted, the extractor can also obtain the selected files from an already matching
+source; a factory MindOne source does not contain the required donor set.
+[Proprietary-file documentation](docs/BLOBS.md) describes the donor connsys cohorts,
+their absent RXFILTER support and the stock firmware patch. Do not substitute arbitrary firmware.
 
-</details>
+### Stage the kernel set and build
+
+Build device modules and DTB/DTBO in the companion kernel repository on
+`android16-6.12`, using `docs/BUILD.md` in that repository.
+Use the r10 core image, its exact GKI modules and metadata, and the device modules built
+against that base as one reviewed set. Do not mix outputs from different candidates.
+
+Populate the ignored `kernel/` build inputs before building the ROM:
+
+```text
+kernel/Image.gz
+kernel/dtb/mindone.dtb
+kernel/dtbo.img
+kernel/modules/*.ko
+kernel/modules.load.ramdisk
+kernel/modules.load.recovery
+kernel/modules.load
+kernel/modules.load.system
+kernel/system_dlkm/flatten/lib/modules/*.ko
+```
+
+The current companion kernel requests 26 first-stage and 236 vendor-DLKM modules,
+a disjoint combined set of 262; recovery requests 131. This device stages 26 entries in
+`kernel/modules.load.ramdisk`, 235 in `kernel/modules.load`, 131 in
+`kernel/modules.load.recovery` and 24 in `kernel/modules.load.system`. The vendor count
+differs because `libarc4` is staged in `system_dlkm` instead. The unused `subaf`,
+`sub2af`, `main2af` and `main3af` wrappers are absent; `mainaf` remains.
+Counts exclude blank/comment lines and describe requested loading.
+
+The load lists select the actual staged modules. Keep exactly one `.dtb` in `kernel/dtb/`;
+concatenating multiple device trees can prevent boot. Preserve the paired DTBO and the
+GKI `system_dlkm` modules, including the selected USB-network and PPP modules.
+
+Apply and check the ordered framework/platform patches after syncing:
+
+```sh
+bash device/ikko/mindone/apply-patches.sh apply
+bash device/ikko/mindone/apply-patches.sh check
+source build/envsetup.sh
+breakfast mindone
+mka bacon
+```
+
+The patch helper requires Bash 4+, Python 3 and Git. The default media service is the
+in-tree Codec2 implementation; the former external Codec2 patch series is no longer
+its source. The resulting unofficial package must be signed with keys trusted by the
+installed system before it can be installed as an update.
 
 ## 📊 Status
 
-| ✅ Works | |
+| Area | Implementation |
 |---|---|
-| **Audio** | media speaker, microphone and Bluetooth A2DP; cellular call microphone and switching between earpiece and speaker confirmed on 11 October 2026. See the validation limits below |
-| **Cellular** | calls, SMS, mobile data *(stock modem stack)* |
-| **Wireless** | Wi-Fi, Bluetooth, NFC |
-| **Video** | hardware decode: AVC, HEVC (incl. 10-bit Main10), VP9, MPEG-4, H.263. Hardware encode: AVC, HEVC. Through the open V4L2 Codec2 HAL, on by default |
-| **Camera** | both logical cameras of the flip module: 4096×3072 stills (12.5 MP JPEG, RAW/DNG), 4096×2304 video, autofocus |
-| **System** | fingerprint, USB, charging, thermal, suspend/resume, 96 Hz |
-
-| 🚧 Unfinished | |
-|---|---|
-| **RPMB** | hardware-backed key storage fails its MAC check; falls back safely, boot unaffected |
-| **Camera colour** | some saved JPEGs show a green cast; the cause remains unresolved. RAW metadata and paired RAW/JPEG lifetime fixes do not establish a fix for JPEG colour |
-| **50 MP capture / 120 fps** | not available with this camera HAL yet — stills top out at 12.5 MP, high-speed video does not reach 120 fps |
-| **10-bit ByteBuffers** | the V4L2 Codec2 HAL's down-conversion to 8-bit works for normal playback; decoding straight into a P010 buffer when an app explicitly asks for one still fails |
-| **60 Hz panel mode** | implemented, held back: the panel does not report its physical size, so a second refresh-rate mode would reach apps as `dpi 0` |
-| **vSIM** | parked deliberately |
-| **Our RIL** | 27 of 201 methods; not shipped |
-| **Audio HAL** | in use, but not finished: Bluetooth SCO media and headset mic are implemented and not yet verified on hardware, calls over SCO are not wired, and an external keyboard with its own DAC and headphone jack is coming — the HAL will be finished against it |
-
-Current focus is testing and optimisation. Kernel 6.18 and Android 17 are where this goes next;
-both have been looked at, neither is committed to.
-
-### What has and has not been tested
-
-Worth being explicit, because "it works" means different things to different people.
-
-| | |
-|---|---|
-| **Daily use** | Yes — this is the author's phone. Calls, data, camera, audio, sensors, charging, suspend |
-| **Own `vendor` partition** | Yes. The whole `super` built here (system, vendor, product, system_ext, odm_dlkm, vendor_dlkm) is written to the device and booted. Earlier builds ran on the factory `vendor`; that is no longer the case |
-| **VTS / CTS** | **No.** Neither has been run. There is no compatibility evidence of any kind, and none is claimed |
-| **Any certification** | None. Not by Google, not by LineageOS, not by anyone |
-| **Reproducible builds** | Kernel only, on one machine into one path (byte-identical `Image`). Cross-machine untested |
-
-### Current source and installed validation
-
-On 11 October 2026, a cellular call confirmed microphone audio and working receive audio while
-switching earpiece → speaker → earpiece. The accepted audio HAL and matching kernel modules were
-then installed through a signed OTA; their hashes and persistent loading were verified after
-reboot, with 50 post-install checks passing. No additional call was made after that final
-persistence-only reboot. Incoming-call acceptance, VoIP and Bluetooth call audio were not part
-of this test; it does not establish those paths as working.
-
-The source snapshot also contains changes with narrower validation:
-
-- Codec2 Surface/YUV encoder layout fixes passed on-device frame-pattern checks and were
-  installed persistently. A real Android Auto head-unit session and injected fatal encoder
-  failures remain untested.
-- Thermal sensor and cooling-request retry changes passed a native build and a temporary healthy
-  service test. The additional initial cooling-request fix has host regression coverage, but its
-  native build and retained-state device test remain pending. These patches are not all installed.
-- The power HAL node-restoration patch has host and native build/test coverage; its device
-  installation and failure-recovery scenario remain pending.
-- Learned battery-state persistence is installed and passed the default userspace-gauge boot
-  path. Restoration with the optional kernel gauge, shutdown failures and power-loss durability
-  are not established by that check.
-
-This is a source update, not evidence that every included change is running on the tested phone.
-No battery-capacity, energy-saving or performance improvement is claimed from these checks.
-
-If you need a device that passes a compliance suite, this is not it yet.
+| Audio | AIDL primary service over the AFE/tinyalsa backend, with media, cellular earpiece/speaker, headset microphone and modem Bluetooth SCO routing |
+| Video | In-tree V4L2 Codec2 with AVC/HEVC encoding and AVC, HEVC, VP8, VP9, MPEG-4 and H.263 decoding |
+| Camera | AIDL frontend over the stock camera backend, default sensor pixel mode and separate stock MDP/gralloc libraries beside donor graphics |
+| GNSS | AIDL extensions and session-controlled receiver power |
+| Display | 96 Hz default and VFP-only 60 Hz idle mode, SurfaceFlinger idle/touch timers, LiveDisplay calibration and Night Light integration |
+| Radio / IMS / secure element | Selected donor AIDL radio, 64-bit IMS, Wi-Fi-calling helper and radio-backed AIDL secure-element service |
+| Tethering offload | AIDL service with native MDDP connection-mode support |
+| Sound trigger | Backend over the kernel voice-wakeup interface |
+| Vibrator | In-tree AIDL service for the AW862xx haptics driver |
+| Own radio HAL crates | Rust AT transport, registration/signal/SIM state, network/modem handlers, shared core and event-driven reactor beside the selected donor radio stack |
 
 ## 🔬 The interesting parts
 
-**🎧 Audio.** A full primary HAL. The microphone needed the codec's digital-mic path enabled and
-the analog type *not* forced — with stock mixer settings it recorded silence and reported no
-error. The loudspeaker gets a 180 Hz high-pass (the driver cannot reproduce below it and only
-gains excursion from trying) and a −1 dB limiter shared across channels, so peaks do not shift
-the stereo image.
+The tree contains AIDL integration for legacy MediaTek backends, a primary audio
+implementation, an event-driven sensor service, a GNSS frontend and the camera provider
+frontend. `codec2/` maintains the V4L2 media implementation in-tree, including MediaTek
+block-format conversion and Surface/YUV encoder handling. Its upstream notices remain
+part of the source distribution.
 
-**📐 Sensors.** Both worker threads block on real events: with every sensor off, the HAL causes
-no wake-ups at all.
-
-**🌉 Bridges.** Four AIDL services proxying to closed HIDL HALs — fingerprint, gatekeeper, secure
-element, tethering offload. Groundwork for **Android 17**, not a requirement of 16: A17 carries
-no VINTF matrix at level 6, and raising `target-level` means providing AIDL instances where it
-expects them. Each bridge survives its HIDL peer dying (`linkToDeath` + reconnect) instead of
-binding once at start. A fifth, different in kind, proxies the stock camera provider under its own
-HIDL interface at a second instance name; it is opt-in (`MINDONE_CAMERA_PROXY`, off by default)
-and has only been confirmed to build, not to run on the device yet.
-
-**🎬 Video.** Hardware decode (AVC, HEVC including 10-bit Main10, VP9, MPEG-4, H.263) and encode
-(AVC, HEVC) through the open V4L2 Codec2 HAL, replacing the stock OMX/C2 chain entirely by
-default. MediaTek's tiled block format is detiled through the MDP hardware block, with a CPU
-fallback when MDP is unavailable; a decoded 10-bit frame is down-converted to 8-bit for apps that
-ask for plain YUV. The one gap: an app that explicitly requests a P010 (10-bit) `ByteBuffer`
-still fails to get one.
-
-**📡 Modem.** An open CCCI userspace stack — the file service the modem needs at boot (all 37
-operations), the boot/state daemon, the RPC daemon, a line-discipline mux and a minimal RIL.
-🔴 **Deliberately not in `PRODUCT_PACKAGES`:** the RIL implements 27 of 201 methods and
-`emergencyDial` is still a stub, which disqualifies it from a phone anyone carries. The ROM runs
-the stock stack. The code is here because it is far enough along to continue, and it is exercised
-by swapping one component at a time against the live stock stack. Two small pieces live alongside
-it: `volte_md_status`, a status helper that *is* shipped, mirrors modem state events into a vendor
-property for other components to read; `wfca/`, a Wi-Fi-calling agent for the same CCCI channel,
-is not yet wired into the build.
+LiveDisplay waits for boot completion before opening DRM and replays retained colour
+on authenticated display events. Native
+MDDP support supplies the tethering-offload backend. Gatekeeper and fingerprint bridges
+keep legacy services reachable through the selected AIDL interfaces.
 
 ## ⚡ Device requirements
 
-- An unlocked bootloader.
-- 🔴 **All six logical partitions of both A/B slots start at the same offset inside `super`.**
-  That is the normal shape of a Virtual A/B device, not a defect — `update_engine` (the LineageOS
-  Updater, or headless) writes the inactive slot through a copy-on-write snapshot and switches to
-  it correctly; both slots boot, and this is the recommended way to install. Writing partitions
-  by hand with `fastboot` bypasses that mechanism and is a fallback, not the everyday path. Either
-  way, keep a full dump of the stock partitions **including the partition table** before you
-  start — without it there is nothing to restore from.
+Use an unlocked bootloader and preserve a verified stock firmware/partition-table backup
+and a signed known-good restore package before the initial installation.
 
-📖 Read **[docs/FLASHING.md](docs/FLASHING.md)** before writing anything.
+Deliver the paired `boot`, `vendor_boot`, `vendor_dlkm`, `system_dlkm` and DTBO
+inside a full signed ROM. Sign the complete target-files archive and generate the full OTA without `--partial`, using the Android releasetools in [docs/FLASHING.md](docs/FLASHING.md#signing). The signing
+certificate must match the installed trust store. Install the signed package using
+**Settings → System → System updates → Local update** or the documented
+`update_engine_client` path, and reboot only after successful installation.
+
+Virtual A/B updates use snapshots over shared logical-partition extents. Keep the
+kernel, DTB/DTBO, GKI modules, vendor modules, userspace and AVB descriptors paired.
+The target slot's TEE size/content must be preserved by packaging; the two TEE partitions
+have different sizes. Do not apply an old partial-OTA partition list to a set that also
+changes DTBO or `system_dlkm`.
+
+Before snapshot merge, a failed trial may return to the retained successful slot.
+After merge, restore an earlier build by installing a compatible signed known-good
+package; merely switching slots is not a rollback. For initial installation or recovery
+when OTA is unavailable, use a complete matched image set and the Linux-host fastboot
+fallback in [docs/FLASHING.md](docs/FLASHING.md). Check current partition geometry,
+AVB coverage and exact readback lengths before writing; never overwrite a mounted
+`super` from the running system.
 
 ## 📚 Documentation
 
-| | |
-|---|---|
-| **[docs/FLASHING.md](docs/FLASHING.md)** | How to install (`update_engine`, kernel-only OTAs, the fastboot fallback), and the traps |
-| **[docs/BLOBS.md](docs/BLOBS.md)** | How proprietary files are extracted, and what is deliberately left out |
-| **[docs/OWN-COMPONENTS.md](docs/OWN-COMPONENTS.md)** | The HALs and daemons this tree implements, and why each exists |
-| **[CONTRIBUTING.md](CONTRIBUTING.md)** | The one rule that matters, and how to report something usefully |
+- [Flashing, signing and restore constraints](docs/FLASHING.md)
+- [Proprietary files and matching Wi-Fi firmware](docs/BLOBS.md)
+- [Component background](docs/OWN-COMPONENTS.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## 🧩 What else you need
 
-The kernel and all ~296 out-of-tree drivers live in **one separate repository**, Google
-ACK-based, with a branch per kernel version — the same layout the Android Common Kernel itself
-uses. Take branch **`android16-6.12`**; that is what this tree is built against, and the only
-branch published so far. (The 6.1 step of the forward-port is not imported yet.)
-
-Build it first, then drop its output here:
-
-```
-kernel/Image.gz          kernel/dtb/mindone.dtb          kernel/modules/*.ko
-```
-
-Those paths are excluded from this repository on purpose — they are build products, not source.
+The companion kernel source branch is `android16-6.12`. It supplies the device DTB/DTBO
+and loadable drivers over Google's r10 GKI core. Firmware, proprietary userspace and
+kernel build products must be obtained or built separately; none belong in this Git tree.
 
 ## 🔎 Useful beyond this phone
 
-Most of what is here is SoC- or Android-version-level rather than specific to this board, so it
-transfers to any **MediaTek MT6789 / MT8781 (Helio G99)** bring-up:
-
-- a **primary audio HAL written from scratch** for MediaTek AFE — mixer paths, digital-mic
-  enablement, DL/UL routing through `tinyalsa`, speaker processing;
-- **HIDL→AIDL bridges** — the pattern for keeping closed HIDL HALs usable as VINTF target level
-  rises toward Android 17;
-- a **sensors HAL over `hf_manager`**, calibration from `nvcfg`;
-- **wpa_supplicant private driver commands for gen4m** (`lib_driver_cmd_mt66xx`);
-- an **open CCCI modem userspace stack** — normally shipped only as `ccci_mdinit`, `ccci_rpcd`
-  and `ccci_fsd` binaries;
-- **MediaTek support for the open V4L2 Codec2 HAL** — block-format detiling through MDP, 10-bit
-  handling — as patches to `external_v4l2_codec2` rather than a fork;
-- a device tree for a Virtual A/B device with **shared base partitions across both A/B slots**,
-  offsets, the snapshot/merge mechanics and the failure modes actually seen, written down.
-
-<details>
-<summary><sub>Search terms</sub></summary>
-<sub>
-
-MT6789, MT8781, MT8781V-CA, Helio G99, MediaTek, LineageOS 23, Android 16,
-`audio.primary.mediatek`, tinyalsa, MTK AFE, `mt6366` codec, HIDL to AIDL bridge, VINTF
-target-level, `hf_manager`, gen4m, `lib_driver_cmd_mt66xx`, CCCI, `ccci_mdinit`, `extract-files`,
-proprietary-files, A/B slots, dynamic partitions, `super` layout, V4L2 Codec2,
-`external_v4l2_codec2`, MDP detile, Virtual A/B, `update_engine`, `libsnapshot`, GKI mixed build.
-
-</sub>
-</details>
+The AFE audio backend, `hf_manager` sensors, AIDL frontends for legacy services,
+MediaTek V4L2 Codec2 handling and gen4m private commands can inform other MT6789/MT8781
+ports. Partition geometry, panel setup, calibration and donor compatibility remain
+board-specific and must be measured again.
 
 ---
 
-<div align="center">
-<sub>
-
-**Apache-2.0**, matching LineageOS convention — see [LICENSE](LICENSE). The few headers that mirror
-the kernel's user-space ABI (`modem/ccci-userspace/common/ccci_*.h`, `sensors-hf/hf_manager_uapi.h`)
-are GPL-2.0, like the kernel headers they mirror.
-Vendor blobs are not covered by this license and are not distributed here.
-
-</sub>
-</div>
+See [LICENSE](LICENSE) and individual file notices. Imported code retains its own
+license, including the BSD notices in [codec2/NOTICE](codec2/NOTICE).

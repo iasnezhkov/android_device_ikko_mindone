@@ -1,0 +1,6396 @@
+{
+  "aidl_versions": {
+    "config": 4,
+    "data": 4,
+    "ims": 3,
+    "messaging": 4,
+    "modem": 4,
+    "network": 4,
+    "sim": 4,
+    "voice": 4
+  },
+  "services": {
+    "config": {
+      "aidl_version": 4,
+      "method_count": 11,
+      "methods": [
+        {
+          "name": "getHalDeviceCapabilities",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getHalDeviceCapabilitiesResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "modemReducedFeatureSet1",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getNumOfLiveModems",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getNumOfLiveModemsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "numOfLiveModems",
+                "nullable": false,
+                "type": "byte"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getPhoneCapability",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getPhoneCapabilityResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "phoneCapability",
+                "nullable": false,
+                "type": "android.hardware.radio.config.PhoneCapability"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSimSlotsStatus",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSimSlotsStatusResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "slotStatus",
+                "nullable": false,
+                "type": "android.hardware.radio.config.SimSlotStatus[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setNumOfLiveModems",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int8_t",
+              "cpp_type": "int8_t",
+              "name": "numOfLiveModems",
+              "nullable": false,
+              "type": "byte"
+            }
+          ],
+          "response": {
+            "name": "setNumOfLiveModemsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setPreferredDataModem",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int8_t",
+              "cpp_type": "int8_t",
+              "name": "modemId",
+              "nullable": false,
+              "type": "byte"
+            }
+          ],
+          "response": {
+            "name": "setPreferredDataModemResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setResponseFunctions",
+          "parameters": [
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::config::IRadioConfigResponse>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::config::IRadioConfigResponse>",
+              "name": "radioConfigResponse",
+              "nullable": false,
+              "type": "android.hardware.radio.config.IRadioConfigResponse"
+            },
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::config::IRadioConfigIndication>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::config::IRadioConfigIndication>",
+              "name": "radioConfigIndication",
+              "nullable": false,
+              "type": "android.hardware.radio.config.IRadioConfigIndication"
+            }
+          ],
+          "serial": false
+        },
+        {
+          "name": "setSimSlotsMapping",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::config::SlotPortMapping>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::config::SlotPortMapping>",
+              "name": "slotMap",
+              "nullable": false,
+              "type": "android.hardware.radio.config.SlotPortMapping[]"
+            }
+          ],
+          "response": {
+            "name": "setSimSlotsMappingResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSimultaneousCallingSupport",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSimultaneousCallingSupportResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "enabledLogicalSlots",
+                "nullable": false,
+                "type": "int[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSimTypeInfo",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSimTypeInfoResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "simTypeInfo",
+                "nullable": false,
+                "type": "android.hardware.radio.config.SimTypeInfo[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setSimType",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::config::SimType>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::config::SimType>",
+              "name": "simTypes",
+              "nullable": false,
+              "type": "android.hardware.radio.config.SimType[]"
+            }
+          ],
+          "response": {
+            "name": "setSimTypeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        }
+      ],
+      "serial_method_count": 10,
+      "sha256": "09141ee447313ffa9f108ca7aab168ea19cee8873be4d61e7be29b23318f4985",
+      "source": "aidl_api/android.hardware.radio.config/4/android/hardware/radio/config/IRadioConfig.aidl"
+    },
+    "data": {
+      "aidl_version": 4,
+      "method_count": 16,
+      "methods": [
+        {
+          "name": "allocatePduSessionId",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "allocatePduSessionIdResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "id",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "cancelHandover",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "callId",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "cancelHandoverResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "deactivateDataCall",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "cid",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::data::DataRequestReason",
+              "cpp_type": "::aidl::android::hardware::radio::data::DataRequestReason",
+              "name": "reason",
+              "nullable": false,
+              "type": "android.hardware.radio.data.DataRequestReason"
+            }
+          ],
+          "response": {
+            "name": "deactivateDataCallResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getDataCallList",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getDataCallListResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "dcResponse",
+                "nullable": false,
+                "type": "android.hardware.radio.data.SetupDataCallResult[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSlicingConfig",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSlicingConfigResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "slicingConfig",
+                "nullable": false,
+                "type": "android.hardware.radio.data.SlicingConfig"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "releasePduSessionId",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "id",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "releasePduSessionIdResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "responseAcknowledgement",
+          "parameters": [],
+          "serial": false
+        },
+        {
+          "name": "setDataAllowed",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "allow",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setDataAllowedResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setDataProfile",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::data::DataProfileInfo>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::data::DataProfileInfo>",
+              "name": "profiles",
+              "nullable": false,
+              "type": "android.hardware.radio.data.DataProfileInfo[]"
+            }
+          ],
+          "response": {
+            "name": "setDataProfileResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setDataThrottling",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::data::DataThrottlingAction",
+              "cpp_type": "::aidl::android::hardware::radio::data::DataThrottlingAction",
+              "name": "dataThrottlingAction",
+              "nullable": false,
+              "type": "android.hardware.radio.data.DataThrottlingAction"
+            },
+            {
+              "cpp_parameter": "int64_t",
+              "cpp_type": "int64_t",
+              "name": "completionDurationMillis",
+              "nullable": false,
+              "type": "long"
+            }
+          ],
+          "response": {
+            "name": "setDataThrottlingResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setInitialAttachApn",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::optional<::aidl::android::hardware::radio::data::DataProfileInfo>&",
+              "cpp_type": "std::optional<::aidl::android::hardware::radio::data::DataProfileInfo>",
+              "name": "dataProfileInfo",
+              "nullable": true,
+              "type": "android.hardware.radio.data.DataProfileInfo"
+            }
+          ],
+          "response": {
+            "name": "setInitialAttachApnResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setResponseFunctions",
+          "parameters": [
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::data::IRadioDataResponse>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::data::IRadioDataResponse>",
+              "name": "radioDataResponse",
+              "nullable": false,
+              "type": "android.hardware.radio.data.IRadioDataResponse"
+            },
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::data::IRadioDataIndication>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::data::IRadioDataIndication>",
+              "name": "radioDataIndication",
+              "nullable": false,
+              "type": "android.hardware.radio.data.IRadioDataIndication"
+            }
+          ],
+          "serial": false
+        },
+        {
+          "name": "setupDataCall",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::AccessNetwork",
+              "cpp_type": "::aidl::android::hardware::radio::AccessNetwork",
+              "name": "accessNetwork",
+              "nullable": false,
+              "type": "android.hardware.radio.AccessNetwork"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::data::DataProfileInfo&",
+              "cpp_type": "::aidl::android::hardware::radio::data::DataProfileInfo",
+              "name": "dataProfileInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.data.DataProfileInfo"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "roamingAllowed",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::data::DataRequestReason",
+              "cpp_type": "::aidl::android::hardware::radio::data::DataRequestReason",
+              "name": "reason",
+              "nullable": false,
+              "type": "android.hardware.radio.data.DataRequestReason"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::data::LinkAddress>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::data::LinkAddress>",
+              "name": "addresses",
+              "nullable": false,
+              "type": "android.hardware.radio.data.LinkAddress[]"
+            },
+            {
+              "cpp_parameter": "const std::vector<std::string>&",
+              "cpp_type": "std::vector<std::string>",
+              "name": "dnses",
+              "nullable": false,
+              "type": "String[]"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "pduSessionId",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::optional<::aidl::android::hardware::radio::data::SliceInfo>&",
+              "cpp_type": "std::optional<::aidl::android::hardware::radio::data::SliceInfo>",
+              "name": "sliceInfo",
+              "nullable": true,
+              "type": "android.hardware.radio.data.SliceInfo"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "matchAllRuleAllowed",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setupDataCallResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "dcResponse",
+                "nullable": false,
+                "type": "android.hardware.radio.data.SetupDataCallResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "startHandover",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "callId",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "startHandoverResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "startKeepalive",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::data::KeepaliveRequest&",
+              "cpp_type": "::aidl::android::hardware::radio::data::KeepaliveRequest",
+              "name": "keepalive",
+              "nullable": false,
+              "type": "android.hardware.radio.data.KeepaliveRequest"
+            }
+          ],
+          "response": {
+            "name": "startKeepaliveResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "status",
+                "nullable": false,
+                "type": "android.hardware.radio.data.KeepaliveStatus"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "stopKeepalive",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "sessionHandle",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "stopKeepaliveResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        }
+      ],
+      "serial_method_count": 14,
+      "sha256": "267fdffc72fbf710f447a4178eeeae5e0c3e6003c4dcb9743a2dd75b9063d432",
+      "source": "aidl_api/android.hardware.radio.data/4/android/hardware/radio/data/IRadioData.aidl"
+    },
+    "ims": {
+      "aidl_version": 3,
+      "method_count": 8,
+      "methods": [
+        {
+          "name": "setSrvccCallInfo",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::ims::SrvccCall>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::ims::SrvccCall>",
+              "name": "srvccCalls",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.SrvccCall[]"
+            }
+          ],
+          "response": {
+            "name": "setSrvccCallInfoResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "updateImsRegistrationInfo",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::ims::ImsRegistration&",
+              "cpp_type": "::aidl::android::hardware::radio::ims::ImsRegistration",
+              "name": "imsRegistration",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.ImsRegistration"
+            }
+          ],
+          "response": {
+            "name": "updateImsRegistrationInfoResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "startImsTraffic",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "token",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::ims::ImsTrafficType",
+              "cpp_type": "::aidl::android::hardware::radio::ims::ImsTrafficType",
+              "name": "imsTrafficType",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.ImsTrafficType"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::AccessNetwork",
+              "cpp_type": "::aidl::android::hardware::radio::AccessNetwork",
+              "name": "accessNetworkType",
+              "nullable": false,
+              "type": "android.hardware.radio.AccessNetwork"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::ims::ImsCall::Direction",
+              "cpp_type": "::aidl::android::hardware::radio::ims::ImsCall::Direction",
+              "name": "trafficDirection",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.ImsCall.Direction"
+            }
+          ],
+          "response": {
+            "name": "startImsTrafficResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "failureInfo",
+                "nullable": true,
+                "type": "android.hardware.radio.ims.ConnectionFailureInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "stopImsTraffic",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "token",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "stopImsTrafficResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "triggerEpsFallback",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::ims::EpsFallbackReason",
+              "cpp_type": "::aidl::android::hardware::radio::ims::EpsFallbackReason",
+              "name": "reason",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.EpsFallbackReason"
+            }
+          ],
+          "response": {
+            "name": "triggerEpsFallbackResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setResponseFunctions",
+          "parameters": [
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::ims::IRadioImsResponse>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::ims::IRadioImsResponse>",
+              "name": "radioImsResponse",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.IRadioImsResponse"
+            },
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::ims::IRadioImsIndication>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::ims::IRadioImsIndication>",
+              "name": "radioImsIndication",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.IRadioImsIndication"
+            }
+          ],
+          "serial": false
+        },
+        {
+          "name": "sendAnbrQuery",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::ims::ImsStreamType",
+              "cpp_type": "::aidl::android::hardware::radio::ims::ImsStreamType",
+              "name": "mediaType",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.ImsStreamType"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::ims::ImsStreamDirection",
+              "cpp_type": "::aidl::android::hardware::radio::ims::ImsStreamDirection",
+              "name": "direction",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.ImsStreamDirection"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "bitsPerSecond",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "sendAnbrQueryResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "updateImsCallStatus",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::ims::ImsCall>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::ims::ImsCall>",
+              "name": "imsCalls",
+              "nullable": false,
+              "type": "android.hardware.radio.ims.ImsCall[]"
+            }
+          ],
+          "response": {
+            "name": "updateImsCallStatusResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        }
+      ],
+      "serial_method_count": 7,
+      "sha256": "2a177f15dbca667da52f29ffc524d6515f0e82ef02bdd100c1ec83b21d87e06f",
+      "source": "aidl_api/android.hardware.radio.ims/3/android/hardware/radio/ims/IRadioIms.aidl"
+    },
+    "messaging": {
+      "aidl_version": 4,
+      "method_count": 23,
+      "methods": [
+        {
+          "name": "acknowledgeIncomingGsmSmsWithPdu",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "success",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "ackPdu",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "acknowledgeIncomingGsmSmsWithPduResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "acknowledgeLastIncomingCdmaSms",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::messaging::CdmaSmsAck&",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::CdmaSmsAck",
+              "name": "smsAck",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.CdmaSmsAck"
+            }
+          ],
+          "response": {
+            "name": "acknowledgeLastIncomingCdmaSmsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "acknowledgeLastIncomingGsmSms",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "success",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::messaging::SmsAcknowledgeFailCause",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::SmsAcknowledgeFailCause",
+              "name": "cause",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.SmsAcknowledgeFailCause"
+            }
+          ],
+          "response": {
+            "name": "acknowledgeLastIncomingGsmSmsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "deleteSmsOnRuim",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "index",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "deleteSmsOnRuimResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "deleteSmsOnSim",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "index",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "deleteSmsOnSimResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getCdmaBroadcastConfig",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getCdmaBroadcastConfigResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "configs",
+                "nullable": false,
+                "type": "android.hardware.radio.messaging.CdmaBroadcastSmsConfigInfo[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getGsmBroadcastConfig",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getGsmBroadcastConfigResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "configs",
+                "nullable": false,
+                "type": "android.hardware.radio.messaging.GsmBroadcastSmsConfigInfo[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSmscAddress",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSmscAddressResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "smsc",
+                "nullable": false,
+                "type": "String"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "reportSmsMemoryStatus",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "available",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "reportSmsMemoryStatusResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "responseAcknowledgement",
+          "parameters": [],
+          "serial": false
+        },
+        {
+          "name": "sendCdmaSms",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::messaging::CdmaSmsMessage&",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::CdmaSmsMessage",
+              "name": "sms",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.CdmaSmsMessage"
+            }
+          ],
+          "response": {
+            "name": "sendCdmaSmsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "sms",
+                "nullable": false,
+                "type": "android.hardware.radio.messaging.SendSmsResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendCdmaSmsExpectMore",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::messaging::CdmaSmsMessage&",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::CdmaSmsMessage",
+              "name": "sms",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.CdmaSmsMessage"
+            }
+          ],
+          "response": {
+            "name": "sendCdmaSmsExpectMoreResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "sms",
+                "nullable": false,
+                "type": "android.hardware.radio.messaging.SendSmsResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendImsSms",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::messaging::ImsSmsMessage&",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::ImsSmsMessage",
+              "name": "message",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.ImsSmsMessage"
+            }
+          ],
+          "response": {
+            "name": "sendImsSmsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "sms",
+                "nullable": false,
+                "type": "android.hardware.radio.messaging.SendSmsResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendSms",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::messaging::GsmSmsMessage&",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::GsmSmsMessage",
+              "name": "message",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.GsmSmsMessage"
+            }
+          ],
+          "response": {
+            "name": "sendSmsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "sms",
+                "nullable": false,
+                "type": "android.hardware.radio.messaging.SendSmsResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendSmsExpectMore",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::messaging::GsmSmsMessage&",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::GsmSmsMessage",
+              "name": "message",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.GsmSmsMessage"
+            }
+          ],
+          "response": {
+            "name": "sendSmsExpectMoreResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "sms",
+                "nullable": false,
+                "type": "android.hardware.radio.messaging.SendSmsResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCdmaBroadcastActivation",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "activate",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setCdmaBroadcastActivationResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCdmaBroadcastConfig",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::messaging::CdmaBroadcastSmsConfigInfo>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::messaging::CdmaBroadcastSmsConfigInfo>",
+              "name": "configInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.CdmaBroadcastSmsConfigInfo[]"
+            }
+          ],
+          "response": {
+            "name": "setCdmaBroadcastConfigResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setGsmBroadcastActivation",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "activate",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setGsmBroadcastActivationResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setGsmBroadcastConfig",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::messaging::GsmBroadcastSmsConfigInfo>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::messaging::GsmBroadcastSmsConfigInfo>",
+              "name": "configInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.GsmBroadcastSmsConfigInfo[]"
+            }
+          ],
+          "response": {
+            "name": "setGsmBroadcastConfigResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setResponseFunctions",
+          "parameters": [
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::messaging::IRadioMessagingResponse>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::messaging::IRadioMessagingResponse>",
+              "name": "radioMessagingResponse",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.IRadioMessagingResponse"
+            },
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::messaging::IRadioMessagingIndication>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::messaging::IRadioMessagingIndication>",
+              "name": "radioMessagingIndication",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.IRadioMessagingIndication"
+            }
+          ],
+          "serial": false
+        },
+        {
+          "name": "setSmscAddress",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "smsc",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "setSmscAddressResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "writeSmsToRuim",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::messaging::CdmaSmsWriteArgs&",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::CdmaSmsWriteArgs",
+              "name": "cdmaSms",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.CdmaSmsWriteArgs"
+            }
+          ],
+          "response": {
+            "name": "writeSmsToRuimResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "index",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "writeSmsToSim",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::messaging::SmsWriteArgs&",
+              "cpp_type": "::aidl::android::hardware::radio::messaging::SmsWriteArgs",
+              "name": "smsWriteArgs",
+              "nullable": false,
+              "type": "android.hardware.radio.messaging.SmsWriteArgs"
+            }
+          ],
+          "response": {
+            "name": "writeSmsToSimResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "index",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        }
+      ],
+      "serial_method_count": 21,
+      "sha256": "1dced4b4a2c2d919db23d8ff27cfb44925b41fb7213500e2e51da4fd425e58d0",
+      "source": "aidl_api/android.hardware.radio.messaging/4/android/hardware/radio/messaging/IRadioMessaging.aidl"
+    },
+    "modem": {
+      "aidl_version": 4,
+      "method_count": 18,
+      "methods": [
+        {
+          "name": "enableModem",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "on",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "enableModemResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getBasebandVersion",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getBasebandVersionResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "version",
+                "nullable": false,
+                "type": "String"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getDeviceIdentity",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getDeviceIdentityResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "imei",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "imeisv",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "esn",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "meid",
+                "nullable": false,
+                "type": "String"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getHardwareConfig",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getHardwareConfigResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "config",
+                "nullable": false,
+                "type": "android.hardware.radio.modem.HardwareConfig[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getModemActivityInfo",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getModemActivityInfoResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "activityInfo",
+                "nullable": false,
+                "type": "android.hardware.radio.modem.ActivityStatsInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getModemStackStatus",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getModemStackStatusResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "isEnabled",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getRadioCapability",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getRadioCapabilityResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "rc",
+                "nullable": false,
+                "type": "android.hardware.radio.modem.RadioCapability"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "nvReadItem",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::modem::NvItem",
+              "cpp_type": "::aidl::android::hardware::radio::modem::NvItem",
+              "name": "itemId",
+              "nullable": false,
+              "type": "android.hardware.radio.modem.NvItem"
+            }
+          ],
+          "response": {
+            "name": "nvReadItemResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "result",
+                "nullable": false,
+                "type": "String"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "nvResetConfig",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::modem::ResetNvType",
+              "cpp_type": "::aidl::android::hardware::radio::modem::ResetNvType",
+              "name": "resetType",
+              "nullable": false,
+              "type": "android.hardware.radio.modem.ResetNvType"
+            }
+          ],
+          "response": {
+            "name": "nvResetConfigResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "nvWriteCdmaPrl",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<uint8_t>&",
+              "cpp_type": "std::vector<uint8_t>",
+              "name": "prl",
+              "nullable": false,
+              "type": "byte[]"
+            }
+          ],
+          "response": {
+            "name": "nvWriteCdmaPrlResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "nvWriteItem",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::modem::NvWriteItem&",
+              "cpp_type": "::aidl::android::hardware::radio::modem::NvWriteItem",
+              "name": "item",
+              "nullable": false,
+              "type": "android.hardware.radio.modem.NvWriteItem"
+            }
+          ],
+          "response": {
+            "name": "nvWriteItemResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "requestShutdown",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "requestShutdownResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "responseAcknowledgement",
+          "parameters": [],
+          "serial": false
+        },
+        {
+          "name": "sendDeviceState",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::modem::DeviceStateType",
+              "cpp_type": "::aidl::android::hardware::radio::modem::DeviceStateType",
+              "name": "deviceStateType",
+              "nullable": false,
+              "type": "android.hardware.radio.modem.DeviceStateType"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "state",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "sendDeviceStateResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setRadioCapability",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::modem::RadioCapability&",
+              "cpp_type": "::aidl::android::hardware::radio::modem::RadioCapability",
+              "name": "rc",
+              "nullable": false,
+              "type": "android.hardware.radio.modem.RadioCapability"
+            }
+          ],
+          "response": {
+            "name": "setRadioCapabilityResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "rc",
+                "nullable": false,
+                "type": "android.hardware.radio.modem.RadioCapability"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setRadioPower",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "powerOn",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "forEmergencyCall",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "preferredForEmergencyCall",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setRadioPowerResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setResponseFunctions",
+          "parameters": [
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::modem::IRadioModemResponse>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::modem::IRadioModemResponse>",
+              "name": "radioModemResponse",
+              "nullable": false,
+              "type": "android.hardware.radio.modem.IRadioModemResponse"
+            },
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::modem::IRadioModemIndication>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::modem::IRadioModemIndication>",
+              "name": "radioModemIndication",
+              "nullable": false,
+              "type": "android.hardware.radio.modem.IRadioModemIndication"
+            }
+          ],
+          "serial": false
+        },
+        {
+          "name": "getImei",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getImeiResponse",
+            "parameters": [
+              {
+                "name": "responseInfo",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "imeiInfo",
+                "nullable": true,
+                "type": "android.hardware.radio.modem.ImeiInfo"
+              }
+            ]
+          },
+          "serial": true
+        }
+      ],
+      "serial_method_count": 16,
+      "sha256": "eb2e6340d334be243bf7d0f0ff58f44e742140f5015b172321d60a965bfd2da5",
+      "source": "aidl_api/android.hardware.radio.modem/4/android/hardware/radio/modem/IRadioModem.aidl"
+    },
+    "network": {
+      "aidl_version": 4,
+      "method_count": 51,
+      "methods": [
+        {
+          "name": "getAllowedNetworkTypesBitmap",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getAllowedNetworkTypesBitmapResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "networkTypeBitmap",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getAvailableBandModes",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getAvailableBandModesResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "bandModes",
+                "nullable": false,
+                "type": "android.hardware.radio.network.RadioBandMode[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getAvailableNetworks",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getAvailableNetworksResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "networkInfos",
+                "nullable": false,
+                "type": "android.hardware.radio.network.OperatorInfo[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getBarringInfo",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getBarringInfoResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "cellIdentity",
+                "nullable": false,
+                "type": "android.hardware.radio.network.CellIdentity"
+              },
+              {
+                "name": "barringInfos",
+                "nullable": false,
+                "type": "android.hardware.radio.network.BarringInfo[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getCdmaRoamingPreference",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getCdmaRoamingPreferenceResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "type",
+                "nullable": false,
+                "type": "android.hardware.radio.network.CdmaRoamingType"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getCellInfoList",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getCellInfoListResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "cellInfo",
+                "nullable": false,
+                "type": "android.hardware.radio.network.CellInfo[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getDataRegistrationState",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getDataRegistrationStateResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "dataRegResponse",
+                "nullable": false,
+                "type": "android.hardware.radio.network.RegStateResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getImsRegistrationState",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getImsRegistrationStateResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "isRegistered",
+                "nullable": false,
+                "type": "boolean"
+              },
+              {
+                "name": "ratFamily",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioTechnologyFamily"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getNetworkSelectionMode",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getNetworkSelectionModeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "manual",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getOperator",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getOperatorResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "longName",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "shortName",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "numeric",
+                "nullable": false,
+                "type": "String"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSignalStrength",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSignalStrengthResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "signalStrength",
+                "nullable": false,
+                "type": "android.hardware.radio.network.SignalStrength"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSystemSelectionChannels",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSystemSelectionChannelsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "specifiers",
+                "nullable": false,
+                "type": "android.hardware.radio.network.RadioAccessSpecifier[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getVoiceRadioTechnology",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getVoiceRadioTechnologyResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "rat",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioTechnology"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getVoiceRegistrationState",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getVoiceRegistrationStateResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "voiceRegResponse",
+                "nullable": false,
+                "type": "android.hardware.radio.network.RegStateResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "isNrDualConnectivityEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "isNrDualConnectivityEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "isEnabled",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "responseAcknowledgement",
+          "parameters": [],
+          "serial": false
+        },
+        {
+          "name": "setAllowedNetworkTypesBitmap",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "networkTypeBitmap",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "setAllowedNetworkTypesBitmapResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setBandMode",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::network::RadioBandMode",
+              "cpp_type": "::aidl::android::hardware::radio::network::RadioBandMode",
+              "name": "mode",
+              "nullable": false,
+              "type": "android.hardware.radio.network.RadioBandMode"
+            }
+          ],
+          "response": {
+            "name": "setBandModeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setBarringPassword",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "facility",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "oldPassword",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "newPassword",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "setBarringPasswordResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCdmaRoamingPreference",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::network::CdmaRoamingType",
+              "cpp_type": "::aidl::android::hardware::radio::network::CdmaRoamingType",
+              "name": "type",
+              "nullable": false,
+              "type": "android.hardware.radio.network.CdmaRoamingType"
+            }
+          ],
+          "response": {
+            "name": "setCdmaRoamingPreferenceResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCellInfoListRate",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "rate",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "setCellInfoListRateResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setIndicationFilter",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "indicationFilter",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "setIndicationFilterResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setLinkCapacityReportingCriteria",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "hysteresisMs",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "hysteresisDlKbps",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "hysteresisUlKbps",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<int32_t>&",
+              "cpp_type": "std::vector<int32_t>",
+              "name": "thresholdsDownlinkKbps",
+              "nullable": false,
+              "type": "int[]"
+            },
+            {
+              "cpp_parameter": "const std::vector<int32_t>&",
+              "cpp_type": "std::vector<int32_t>",
+              "name": "thresholdsUplinkKbps",
+              "nullable": false,
+              "type": "int[]"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::AccessNetwork",
+              "cpp_type": "::aidl::android::hardware::radio::AccessNetwork",
+              "name": "accessNetwork",
+              "nullable": false,
+              "type": "android.hardware.radio.AccessNetwork"
+            }
+          ],
+          "response": {
+            "name": "setLinkCapacityReportingCriteriaResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setLocationUpdates",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setLocationUpdatesResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setNetworkSelectionModeAutomatic",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "setNetworkSelectionModeAutomaticResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setNetworkSelectionModeManual",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "operatorNumeric",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::AccessNetwork",
+              "cpp_type": "::aidl::android::hardware::radio::AccessNetwork",
+              "name": "ran",
+              "nullable": false,
+              "type": "android.hardware.radio.AccessNetwork"
+            }
+          ],
+          "response": {
+            "name": "setNetworkSelectionModeManualResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setNrDualConnectivityState",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::network::NrDualConnectivityState",
+              "cpp_type": "::aidl::android::hardware::radio::network::NrDualConnectivityState",
+              "name": "nrDualConnectivityState",
+              "nullable": false,
+              "type": "android.hardware.radio.network.NrDualConnectivityState"
+            }
+          ],
+          "response": {
+            "name": "setNrDualConnectivityStateResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setResponseFunctions",
+          "parameters": [
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::network::IRadioNetworkResponse>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::network::IRadioNetworkResponse>",
+              "name": "radioNetworkResponse",
+              "nullable": false,
+              "type": "android.hardware.radio.network.IRadioNetworkResponse"
+            },
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::network::IRadioNetworkIndication>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::network::IRadioNetworkIndication>",
+              "name": "radioNetworkIndication",
+              "nullable": false,
+              "type": "android.hardware.radio.network.IRadioNetworkIndication"
+            }
+          ],
+          "serial": false
+        },
+        {
+          "name": "setSignalStrengthReportingCriteria",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::network::SignalThresholdInfo>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::network::SignalThresholdInfo>",
+              "name": "signalThresholdInfos",
+              "nullable": false,
+              "type": "android.hardware.radio.network.SignalThresholdInfo[]"
+            }
+          ],
+          "response": {
+            "name": "setSignalStrengthReportingCriteriaResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setSuppServiceNotifications",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setSuppServiceNotificationsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setSystemSelectionChannels",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "specifyChannels",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "const std::vector<::aidl::android::hardware::radio::network::RadioAccessSpecifier>&",
+              "cpp_type": "std::vector<::aidl::android::hardware::radio::network::RadioAccessSpecifier>",
+              "name": "specifiers",
+              "nullable": false,
+              "type": "android.hardware.radio.network.RadioAccessSpecifier[]"
+            }
+          ],
+          "response": {
+            "name": "setSystemSelectionChannelsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "startNetworkScan",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::network::NetworkScanRequest&",
+              "cpp_type": "::aidl::android::hardware::radio::network::NetworkScanRequest",
+              "name": "request",
+              "nullable": false,
+              "type": "android.hardware.radio.network.NetworkScanRequest"
+            }
+          ],
+          "response": {
+            "name": "startNetworkScanResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "stopNetworkScan",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "stopNetworkScanResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "supplyNetworkDepersonalization",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "netPin",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "supplyNetworkDepersonalizationResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "remainingRetries",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setUsageSetting",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::network::UsageSetting",
+              "cpp_type": "::aidl::android::hardware::radio::network::UsageSetting",
+              "name": "usageSetting",
+              "nullable": false,
+              "type": "android.hardware.radio.network.UsageSetting"
+            }
+          ],
+          "response": {
+            "name": "setUsageSettingResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getUsageSetting",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getUsageSettingResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "usageSetting",
+                "nullable": false,
+                "type": "android.hardware.radio.network.UsageSetting"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setEmergencyMode",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::network::EmergencyMode",
+              "cpp_type": "::aidl::android::hardware::radio::network::EmergencyMode",
+              "name": "emcModeType",
+              "nullable": false,
+              "type": "android.hardware.radio.network.EmergencyMode"
+            }
+          ],
+          "response": {
+            "name": "setEmergencyModeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "regState",
+                "nullable": false,
+                "type": "android.hardware.radio.network.EmergencyRegResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "triggerEmergencyNetworkScan",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::network::EmergencyNetworkScanTrigger&",
+              "cpp_type": "::aidl::android::hardware::radio::network::EmergencyNetworkScanTrigger",
+              "name": "request",
+              "nullable": false,
+              "type": "android.hardware.radio.network.EmergencyNetworkScanTrigger"
+            }
+          ],
+          "response": {
+            "name": "triggerEmergencyNetworkScanResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "cancelEmergencyNetworkScan",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "resetScan",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "cancelEmergencyNetworkScanResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "exitEmergencyMode",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "exitEmergencyModeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setNullCipherAndIntegrityEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enabled",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setNullCipherAndIntegrityEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "isNullCipherAndIntegrityEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "isNullCipherAndIntegrityEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "isEnabled",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "isN1ModeEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "isN1ModeEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "isEnabled",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setN1ModeEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setN1ModeEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "isCellularIdentifierTransparencyEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "isCellularIdentifierTransparencyEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "isEnabled",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCellularIdentifierTransparencyEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enabled",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setCellularIdentifierTransparencyEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setSecurityAlgorithmsUpdatedEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setSecurityAlgorithmsUpdatedEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "isSecurityAlgorithmsUpdatedEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "isSecurityAlgorithmsUpdatedEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "isEnabled",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setSatellitePlmn",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<std::string>&",
+              "cpp_type": "std::vector<std::string>",
+              "name": "carrierPlmnArray",
+              "nullable": false,
+              "type": "String[]"
+            },
+            {
+              "cpp_parameter": "const std::vector<std::string>&",
+              "cpp_type": "std::vector<std::string>",
+              "name": "allSatellitePlmnArray",
+              "nullable": false,
+              "type": "String[]"
+            }
+          ],
+          "response": {
+            "name": "setSatellitePlmnResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setSatelliteEnabledForCarrier",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "satelliteEnabled",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setSatelliteEnabledForCarrierResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "isSatelliteEnabledForCarrier",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "isSatelliteEnabledForCarrierResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "isEnabled",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        }
+      ],
+      "serial_method_count": 49,
+      "sha256": "ba98565c1a978c402dbada196fbe4a3d2bb9af59fd25ebf769d708180992a465",
+      "source": "aidl_api/android.hardware.radio.network/4/android/hardware/radio/network/IRadioNetwork.aidl"
+    },
+    "sim": {
+      "aidl_version": 4,
+      "method_count": 37,
+      "methods": [
+        {
+          "name": "areUiccApplicationsEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "areUiccApplicationsEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "enabled",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "changeIccPin2ForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "oldPin2",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "newPin2",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "changeIccPin2ForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "remainingRetries",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "changeIccPinForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "oldPin",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "newPin",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "changeIccPinForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "remainingRetries",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "enableUiccApplications",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "enableUiccApplicationsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getAllowedCarriers",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getAllowedCarriersResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "carriers",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.CarrierRestrictions"
+              },
+              {
+                "name": "multiSimPolicy",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.SimLockMultiSimPolicy"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getCdmaSubscription",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getCdmaSubscriptionResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "mdn",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "hSid",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "hNid",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "min",
+                "nullable": false,
+                "type": "String"
+              },
+              {
+                "name": "prl",
+                "nullable": false,
+                "type": "String"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getCdmaSubscriptionSource",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getCdmaSubscriptionSourceResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "source",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.CdmaSubscriptionSource"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getFacilityLockForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "facility",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "password",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serviceClass",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "appId",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "getFacilityLockForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "response",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getIccCardStatus",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getIccCardStatusResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "cardStatus",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.CardStatus"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getImsiForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "getImsiForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "imsi",
+                "nullable": false,
+                "type": "String"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSimPhonebookCapacity",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSimPhonebookCapacityResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "capacity",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.PhonebookCapacity"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getSimPhonebookRecords",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getSimPhonebookRecordsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "iccCloseLogicalChannel",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "channelId",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "iccCloseLogicalChannelResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "iccIoForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::sim::IccIo&",
+              "cpp_type": "::aidl::android::hardware::radio::sim::IccIo",
+              "name": "iccIo",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.IccIo"
+            }
+          ],
+          "response": {
+            "name": "iccIoForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "iccIo",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.IccIoResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "iccOpenLogicalChannel",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "p2",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "iccOpenLogicalChannelResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "channelId",
+                "nullable": false,
+                "type": "int"
+              },
+              {
+                "name": "selectResponse",
+                "nullable": false,
+                "type": "byte[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "iccTransmitApduBasicChannel",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::sim::SimApdu&",
+              "cpp_type": "::aidl::android::hardware::radio::sim::SimApdu",
+              "name": "message",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.SimApdu"
+            }
+          ],
+          "response": {
+            "name": "iccTransmitApduBasicChannelResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "result",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.IccIoResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "iccTransmitApduLogicalChannel",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::sim::SimApdu&",
+              "cpp_type": "::aidl::android::hardware::radio::sim::SimApdu",
+              "name": "message",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.SimApdu"
+            }
+          ],
+          "response": {
+            "name": "iccTransmitApduLogicalChannelResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "result",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.IccIoResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "reportStkServiceIsRunning",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "reportStkServiceIsRunningResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "requestIccSimAuthentication",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "authContext",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "authData",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "requestIccSimAuthenticationResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "result",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.IccIoResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "responseAcknowledgement",
+          "parameters": [],
+          "serial": false
+        },
+        {
+          "name": "sendEnvelope",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "contents",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "sendEnvelopeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "commandResponse",
+                "nullable": false,
+                "type": "String"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendEnvelopeWithStatus",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "contents",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "sendEnvelopeWithStatusResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "iccIo",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.IccIoResult"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendTerminalResponseToSim",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "contents",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "sendTerminalResponseToSimResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setAllowedCarriers",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::sim::CarrierRestrictions&",
+              "cpp_type": "::aidl::android::hardware::radio::sim::CarrierRestrictions",
+              "name": "carriers",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.CarrierRestrictions"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::sim::SimLockMultiSimPolicy",
+              "cpp_type": "::aidl::android::hardware::radio::sim::SimLockMultiSimPolicy",
+              "name": "multiSimPolicy",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.SimLockMultiSimPolicy"
+            }
+          ],
+          "response": {
+            "name": "setAllowedCarriersResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCarrierInfoForImsiEncryption",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::sim::ImsiEncryptionInfo&",
+              "cpp_type": "::aidl::android::hardware::radio::sim::ImsiEncryptionInfo",
+              "name": "imsiEncryptionInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.ImsiEncryptionInfo"
+            }
+          ],
+          "response": {
+            "name": "setCarrierInfoForImsiEncryptionResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCdmaSubscriptionSource",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::sim::CdmaSubscriptionSource",
+              "cpp_type": "::aidl::android::hardware::radio::sim::CdmaSubscriptionSource",
+              "name": "cdmaSub",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.CdmaSubscriptionSource"
+            }
+          ],
+          "response": {
+            "name": "setCdmaSubscriptionSourceResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setFacilityLockForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "facility",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "lockState",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "password",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serviceClass",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "appId",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "setFacilityLockForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "retry",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setResponseFunctions",
+          "parameters": [
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::sim::IRadioSimResponse>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::sim::IRadioSimResponse>",
+              "name": "radioSimResponse",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.IRadioSimResponse"
+            },
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::sim::IRadioSimIndication>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::sim::IRadioSimIndication>",
+              "name": "radioSimIndication",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.IRadioSimIndication"
+            }
+          ],
+          "serial": false
+        },
+        {
+          "name": "setSimCardPower",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::sim::CardPowerState",
+              "cpp_type": "::aidl::android::hardware::radio::sim::CardPowerState",
+              "name": "powerUp",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.CardPowerState"
+            }
+          ],
+          "response": {
+            "name": "setSimCardPowerResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setUiccSubscription",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::sim::SelectUiccSub&",
+              "cpp_type": "::aidl::android::hardware::radio::sim::SelectUiccSub",
+              "name": "uiccSub",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.SelectUiccSub"
+            }
+          ],
+          "response": {
+            "name": "setUiccSubscriptionResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "supplyIccPin2ForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "pin2",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "supplyIccPin2ForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "remainingRetries",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "supplyIccPinForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "pin",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "supplyIccPinForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "remainingRetries",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "supplyIccPuk2ForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "puk2",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "pin2",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "supplyIccPuk2ForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "remainingRetries",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "supplyIccPukForApp",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "puk",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "pin",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "aid",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "supplyIccPukForAppResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "remainingRetries",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "supplySimDepersonalization",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::sim::PersoSubstate",
+              "cpp_type": "::aidl::android::hardware::radio::sim::PersoSubstate",
+              "name": "persoType",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.PersoSubstate"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "controlKey",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "supplySimDepersonalizationResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "persoType",
+                "nullable": false,
+                "type": "android.hardware.radio.sim.PersoSubstate"
+              },
+              {
+                "name": "remainingRetries",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "updateSimPhonebookRecords",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::sim::PhonebookRecordInfo&",
+              "cpp_type": "::aidl::android::hardware::radio::sim::PhonebookRecordInfo",
+              "name": "recordInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.PhonebookRecordInfo"
+            }
+          ],
+          "response": {
+            "name": "updateSimPhonebookRecordsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "updatedRecordIndex",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "iccCloseLogicalChannelWithSessionInfo",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::sim::SessionInfo&",
+              "cpp_type": "::aidl::android::hardware::radio::sim::SessionInfo",
+              "name": "sessionInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.sim.SessionInfo"
+            }
+          ],
+          "response": {
+            "name": "iccCloseLogicalChannelWithSessionInfoResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        }
+      ],
+      "serial_method_count": 35,
+      "sha256": "c0b3ea406e6b0fb5dd4a41b9fb5282e1214dec3e5163af45805842977747b780",
+      "source": "aidl_api/android.hardware.radio.sim/4/android/hardware/radio/sim/IRadioSim.aidl"
+    },
+    "voice": {
+      "aidl_version": 4,
+      "method_count": 39,
+      "methods": [
+        {
+          "name": "acceptCall",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "acceptCallResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "cancelPendingUssd",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "cancelPendingUssdResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "conference",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "conferenceResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "dial",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::voice::Dial&",
+              "cpp_type": "::aidl::android::hardware::radio::voice::Dial",
+              "name": "dialInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.voice.Dial"
+            }
+          ],
+          "response": {
+            "name": "dialResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "emergencyDial",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::voice::Dial&",
+              "cpp_type": "::aidl::android::hardware::radio::voice::Dial",
+              "name": "dialInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.voice.Dial"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "categories",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::vector<std::string>&",
+              "cpp_type": "std::vector<std::string>",
+              "name": "urns",
+              "nullable": false,
+              "type": "String[]"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::voice::EmergencyCallRouting",
+              "cpp_type": "::aidl::android::hardware::radio::voice::EmergencyCallRouting",
+              "name": "routing",
+              "nullable": false,
+              "type": "android.hardware.radio.voice.EmergencyCallRouting"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "hasKnownUserIntentEmergency",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "isTesting",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "emergencyDialResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "exitEmergencyCallbackMode",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "exitEmergencyCallbackModeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "explicitCallTransfer",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "explicitCallTransferResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getCallForwardStatus",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::voice::CallForwardInfo&",
+              "cpp_type": "::aidl::android::hardware::radio::voice::CallForwardInfo",
+              "name": "callInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.voice.CallForwardInfo"
+            }
+          ],
+          "response": {
+            "name": "getCallForwardStatusResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "callForwardInfos",
+                "nullable": false,
+                "type": "android.hardware.radio.voice.CallForwardInfo[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getCallWaiting",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serviceClass",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getCallWaitingResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "enable",
+                "nullable": false,
+                "type": "boolean"
+              },
+              {
+                "name": "serviceClass",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getClip",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getClipResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "status",
+                "nullable": false,
+                "type": "android.hardware.radio.voice.ClipStatus"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getClir",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getClirResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "n",
+                "nullable": false,
+                "type": "int"
+              },
+              {
+                "name": "m",
+                "nullable": false,
+                "type": "int"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getCurrentCalls",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getCurrentCallsResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "calls",
+                "nullable": false,
+                "type": "android.hardware.radio.voice.Call[]"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getLastCallFailCause",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getLastCallFailCauseResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "failCauseinfo",
+                "nullable": false,
+                "type": "android.hardware.radio.voice.LastCallFailCauseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getMute",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getMuteResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "enable",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getPreferredVoicePrivacy",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getPreferredVoicePrivacyResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "enable",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "getTtyMode",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "getTtyModeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "mode",
+                "nullable": false,
+                "type": "android.hardware.radio.voice.TtyMode"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "handleStkCallSetupRequestFromSim",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "accept",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "handleStkCallSetupRequestFromSimResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "hangup",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "gsmIndex",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "hangupConnectionResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "hangupForegroundResumeBackground",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "hangupForegroundResumeBackgroundResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "hangupWaitingOrBackground",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "hangupWaitingOrBackgroundResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "isVoNrEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "isVoNrEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              },
+              {
+                "name": "enable",
+                "nullable": false,
+                "type": "boolean"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "rejectCall",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "rejectCallResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "responseAcknowledgement",
+          "parameters": [],
+          "serial": false
+        },
+        {
+          "name": "sendBurstDtmf",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "dtmf",
+              "nullable": false,
+              "type": "String"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "on",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "off",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "sendBurstDtmfResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendCdmaFeatureCode",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "featureCode",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "sendCdmaFeatureCodeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendDtmf",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "s",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "sendDtmfResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "sendUssd",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "ussd",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "sendUssdResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "separateConnection",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "gsmIndex",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "separateConnectionResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCallForward",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const ::aidl::android::hardware::radio::voice::CallForwardInfo&",
+              "cpp_type": "::aidl::android::hardware::radio::voice::CallForwardInfo",
+              "name": "callInfo",
+              "nullable": false,
+              "type": "android.hardware.radio.voice.CallForwardInfo"
+            }
+          ],
+          "response": {
+            "name": "setCallForwardResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setCallWaiting",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serviceClass",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "setCallWaitingResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setClir",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "status",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "setClirResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setMute",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setMuteResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setPreferredVoicePrivacy",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setPreferredVoicePrivacyResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setResponseFunctions",
+          "parameters": [
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::voice::IRadioVoiceResponse>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::voice::IRadioVoiceResponse>",
+              "name": "radioVoiceResponse",
+              "nullable": false,
+              "type": "android.hardware.radio.voice.IRadioVoiceResponse"
+            },
+            {
+              "cpp_parameter": "const std::shared_ptr<::aidl::android::hardware::radio::voice::IRadioVoiceIndication>&",
+              "cpp_type": "std::shared_ptr<::aidl::android::hardware::radio::voice::IRadioVoiceIndication>",
+              "name": "radioVoiceIndication",
+              "nullable": false,
+              "type": "android.hardware.radio.voice.IRadioVoiceIndication"
+            }
+          ],
+          "serial": false
+        },
+        {
+          "name": "setTtyMode",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "::aidl::android::hardware::radio::voice::TtyMode",
+              "cpp_type": "::aidl::android::hardware::radio::voice::TtyMode",
+              "name": "mode",
+              "nullable": false,
+              "type": "android.hardware.radio.voice.TtyMode"
+            }
+          ],
+          "response": {
+            "name": "setTtyModeResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "setVoNrEnabled",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "bool",
+              "cpp_type": "bool",
+              "name": "enable",
+              "nullable": false,
+              "type": "boolean"
+            }
+          ],
+          "response": {
+            "name": "setVoNrEnabledResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "startDtmf",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            },
+            {
+              "cpp_parameter": "const std::string&",
+              "cpp_type": "std::string",
+              "name": "s",
+              "nullable": false,
+              "type": "String"
+            }
+          ],
+          "response": {
+            "name": "startDtmfResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "stopDtmf",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "stopDtmfResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        },
+        {
+          "name": "switchWaitingOrHoldingAndActive",
+          "parameters": [
+            {
+              "cpp_parameter": "int32_t",
+              "cpp_type": "int32_t",
+              "name": "serial",
+              "nullable": false,
+              "type": "int"
+            }
+          ],
+          "response": {
+            "name": "switchWaitingOrHoldingAndActiveResponse",
+            "parameters": [
+              {
+                "name": "info",
+                "nullable": false,
+                "type": "android.hardware.radio.RadioResponseInfo"
+              }
+            ]
+          },
+          "serial": true
+        }
+      ],
+      "serial_method_count": 37,
+      "sha256": "b0fe18cdd18a3dc6c0b95d55d5985c3b6f63ed4b4ee48f23958f19ca7ac434af",
+      "source": "aidl_api/android.hardware.radio.voice/4/android/hardware/radio/voice/IRadioVoice.aidl"
+    }
+  }
+}

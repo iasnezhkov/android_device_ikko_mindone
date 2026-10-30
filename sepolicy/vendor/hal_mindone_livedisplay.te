@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+type hal_mindone_livedisplay_default, domain;
+type hal_mindone_livedisplay_default_exec, exec_type, vendor_file_type, file_type;
+init_daemon_domain(hal_mindone_livedisplay_default)
+hal_server_domain(hal_mindone_livedisplay_default, hal_lineage_livedisplay)
+binder_use(hal_mindone_livedisplay_default)
+allow hal_mindone_livedisplay_default gpu_device:dir search;
+allow hal_mindone_livedisplay_default dri_device:chr_file { open read write getattr ioctl };
+allowxperm hal_mindone_livedisplay_default dri_device:chr_file ioctl { 0x6400 0x640d 0x641f 0x6460 0x6494 0x64a0 0x64aa 0x64b9 };
+get_prop(hal_mindone_livedisplay_default, boot_status_prop)
+vendor_internal_prop(vendor_mindone_livedisplay_prop)
+set_prop(hal_mindone_livedisplay_default, vendor_mindone_livedisplay_prop)
+allow hal_mindone_livedisplay_default self:netlink_kobject_uevent_socket { create bind read setopt };

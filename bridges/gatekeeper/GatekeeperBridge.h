@@ -1,12 +1,11 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <aidl/android/hardware/gatekeeper/BnGatekeeper.h>
-
-#include "GatekeeperHidlConn.h"
+#include <hardware/gatekeeper.h>
 
 #include <memory>
 
@@ -14,7 +13,9 @@ namespace mindone {
 
 class GatekeeperBridge : public aidl::android::hardware::gatekeeper::BnGatekeeper {
   public:
-    explicit GatekeeperBridge(std::shared_ptr<GatekeeperHidlConn> conn) : conn_(std::move(conn)) {}
+    static std::shared_ptr<GatekeeperBridge> open();
+    explicit GatekeeperBridge(gatekeeper_device* device) : device_(device) {}
+    ~GatekeeperBridge();
 
     ndk::ScopedAStatus enroll(int32_t uid, const std::vector<uint8_t>& currentPasswordHandle,
                               const std::vector<uint8_t>& currentPassword,
@@ -28,7 +29,7 @@ class GatekeeperBridge : public aidl::android::hardware::gatekeeper::BnGatekeepe
     ndk::ScopedAStatus deleteAllUsers() override;
 
   private:
-    std::shared_ptr<GatekeeperHidlConn> conn_;
+    gatekeeper_device* device_;
 };
 
-}  // namespace mindone
+}

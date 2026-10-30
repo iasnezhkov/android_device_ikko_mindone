@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #define LOG_TAG "mindone.sensors"
@@ -24,5 +24,5 @@ int main() {
     CHECK_EQ(status, STATUS_OK);
 
     ABinderProcess_joinThreadPool();
-    return EXIT_FAILURE;  // should never reach here
+    return EXIT_FAILURE;
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #define LOG_TAG "mindone.sensors.cali"
@@ -9,12 +9,17 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <ctime>
 #include <limits>
 
 #include <log/log.h>
 
 #include "NvcfgJson.h"
+
+#ifdef MINDONE_HF_RUST_WIRE
+#include "HfRustCore.h"
+#endif
 
 namespace mindone {
 namespace hf {
@@ -27,12 +32,6 @@ int64_t nowMs() {
     return static_cast<int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
 }
 
-// Files are rewritten through nvcfg_json::writeIntArray() (write .tmp, fsync,
-// rename). No SELinux relabel step is needed: a file created inside a
-// directory labelled nvcfg_file inherits that type (SELinux default for new
-// file objects is the parent directory's type unless a type_transition rule
-// says otherwise; none does here), and the stock hal_sensors_default policy
-// already grants create_file_perms on nvcfg_file.
 
 bool allZero(const std::vector<int32_t>& v) {
     for (int32_t x : v) {
@@ -41,11 +40,7 @@ bool allZero(const std::vector<int32_t>& v) {
     return true;
 }
 
-// Copies as many int32 values from `values` into `buf` at `region` as fit,
-// warning (not failing) on a count mismatch - a JSON file with the "wrong"
-// number of values is still real, on-device factory data, and refusing to
-// use any of it in that case would be worse than a partial/zero-padded
-// push. `what`/`sensorType` are for the log line only.
+#ifndef MINDONE_HF_RUST_WIRE
 void writeRegion(std::vector<uint8_t>* buf, CalibrationStore::RegionLayout region,
                   const std::vector<int32_t>& values, const char* what, uint8_t sensorType) {
     const size_t wantCount = region.length / 4;
@@ -59,50 +54,18 @@ void writeRegion(std::vector<uint8_t>* buf, CalibrationStore::RegionLayout regio
         std::memcpy(buf->data() + region.offset, values.data(), n * sizeof(int32_t));
     }
 }
+#endif
 
-}  // namespace
+}
 
-// ---------------------------------------------------------------------
-// The fixed layout table. See CalibrationStore.h's file header comment for
-// the kernel-source citations behind every offset/length below.
-// ---------------------------------------------------------------------
 const std::array<CalibrationStore::SensorLayout, 4>& CalibrationStore::allLayouts() {
     static const std::array<SensorLayout, 4> kLayouts = {{
-            // ACCELEROMETER: 24B = bias[3] (0..11) + cali[3] (12..23). An
-            // EXPLICIT kernel case (not the "whole buffer is cali" default
-            // branch), so acc_cali.json is expected to hold exactly 3
-            // values, same split-file shape as gyro - see CalibrationStore.h
-            // header comment. No acc_cali.json/acc_bias.json sample exists
-            // on this device (no factory accel cal was ever run) to check
-            // directly; buildPayload() still auto-detects a 6-value combined
-            // file too, as a harmless defensive fallback.
             {SENSOR_TYPE_ACCELEROMETER, 24, {0, 12}, {12, 12}, {0, 0}, "acc", "acc_bias.json",
              "acc_bias", "acc_cali.json", "acc_cali"},
-            // MAGNETIC_FIELD: 36B = bias[3] (0..11) + cali[6] (12..35).
-            // Both files exist and were dumped verbatim on-device: mag_bias
-            // ={90374,-4208,285690}, mag_cali={90374,-4208,285690,36368,0,0}
-            // - note mag_cali's first 3 values duplicate mag_bias exactly.
             {SENSOR_TYPE_MAGNETIC_FIELD, 36, {0, 12}, {12, 24}, {0, 0}, "mag", "mag_bias.json",
              "mag_bias", "mag_cali.json", "mag_cali"},
-            // GYROSCOPE: 48B = bias[3] (0..11) + cali[3] (12..23) +
-            // temp[6] (24..47). gyro_bias.json exists on-device
-            // ({4522,-8042,-3870}); gyro_cali.json/gyro_temp.json are real
-            // filenames confirmed present in the stock blob's string table
-            // (`strings -a sensors.mediatek.V2.0.so`) but no sample of
-            // either exists on THIS device (no factory run for them here),
-            // so those two regions push as zero until either a sample
-            // appears or a runtime BIAS/CALI/TEMP_ACTION populates our own
-            // persisted copy. temp's 6 int32 are best-effort read as a
-            // linear thermal model (libksensor.so exports thermo_a/thermo_b/
-            // mpe_update_gyro_thermal_calib): [0..2]=per-axis slope,
-            // [3..5]=per-axis intercept - medium confidence, not confirmed
-            // against a real sample.
             {SENSOR_TYPE_GYROSCOPE, 48, {0, 12}, {12, 12}, {24, 24}, "gyro", "gyro_bias.json",
              "gyro_bias", "gyro_cali.json", "gyro_cali"},
-            // LIGHT: 4B, the WHOLE buffer is the "cali" region (no bias
-            // split - see transceiver_update_config()'s default branch).
-            // als_cali.json is a confirmed real filename (stock string
-            // table) but no sample exists on this device.
             {SENSOR_TYPE_LIGHT, 4, {0, 0}, {0, 4}, {0, 0}, "light", nullptr, nullptr,
              "als_cali.json", "als_cali"},
     }};
@@ -138,7 +101,59 @@ void CalibrationStore::seedCache(CachedRegion* cache, const std::vector<int32_t>
 }
 
 std::vector<uint8_t> CalibrationStore::buildPayload(const SensorLayout& layout) {
-    std::vector<uint8_t> buf(layout.totalLength, 0);  // zero default for every region
+#ifdef MINDONE_HF_RUST_WIRE
+    std::optional<std::vector<int32_t>> bias;
+    std::optional<std::vector<int32_t>> cali;
+    std::optional<std::vector<int32_t>> temp;
+    if (layout.bias.length > 0 && layout.biasFile) {
+        bias = nvcfg_json::readIntArray(baseDir_ + "/" + layout.biasFile, layout.biasKey);
+    }
+    if (layout.cali.length > 0 && layout.caliFile) {
+        bool keyMismatch = false;
+        std::string actualKey;
+        cali = nvcfg_json::readIntArray(baseDir_ + "/" + layout.caliFile, layout.caliKey,
+                                      &keyMismatch, &actualKey);
+        if (cali && keyMismatch) {
+            ALOGW("sensor_type=%u (%s): calibration key is %s, expected %s; using values",
+                  layout.sensorType, layout.name, actualKey.c_str(), layout.caliKey);
+        }
+    }
+    if (layout.temp.length > 0) {
+        const std::string key = std::string(layout.name) + "_temp";
+        temp = nvcfg_json::readIntArray(baseDir_ + "/" + key + ".json", key);
+    }
+    struct mindone_hf_calibration_payload result{};
+    const int32_t status = mindone_hf_calibration_payload(layout.sensorType,
+            bias ? bias->data() : nullptr, bias ? bias->size() : 0,
+            cali ? cali->data() : nullptr, cali ? cali->size() : 0,
+            temp ? temp->data() : nullptr, temp ? temp->size() : 0, &result);
+    const auto& actual = result.layout;
+    if (status != 0 || actual.length != layout.totalLength ||
+        actual.bias_offset != layout.bias.offset || actual.bias_length != layout.bias.length ||
+        actual.cali_offset != layout.cali.offset || actual.cali_length != layout.cali.length ||
+        actual.temp_offset != layout.temp.offset || actual.temp_length != layout.temp.length ||
+        result.combined > 1 ||
+        (result.combined != 0 && (!cali || actual.bias_length == 0 ||
+         cali->size() != (actual.bias_length + actual.cali_length) / sizeof(int32_t)))) {
+        ALOGE("sensor_type=%u: rejected calibration payload status=%d", layout.sensorType, status);
+        return {};
+    }
+    if (bias) seedCache(&biasCache_[layout.sensorType], *bias);
+    if (cali) {
+        if (result.combined != 0) {
+            const size_t biasCount = actual.bias_length / sizeof(int32_t);
+            std::vector<int32_t> biasPart(cali->begin(), cali->begin() + biasCount);
+            std::vector<int32_t> caliPart(cali->begin() + biasCount, cali->end());
+            seedCache(&biasCache_[layout.sensorType], biasPart);
+            seedCache(&caliCache_[layout.sensorType], caliPart);
+        } else {
+            seedCache(&caliCache_[layout.sensorType], *cali);
+        }
+    }
+    if (temp) seedCache(&tempCache_[layout.sensorType], *temp);
+    return std::vector<uint8_t>(result.bytes, result.bytes + actual.length);
+#else
+    std::vector<uint8_t> buf(layout.totalLength, 0);
 
     if (layout.bias.length > 0 && layout.biasFile) {
         auto bias = nvcfg_json::readIntArray(baseDir_ + "/" + layout.biasFile, layout.biasKey);
@@ -169,11 +184,6 @@ std::vector<uint8_t> CalibrationStore::buildPayload(const SensorLayout& layout) 
             const size_t biasCount = layout.bias.length / 4;
             const size_t caliCount = layout.cali.length / 4;
             if (layout.bias.length > 0 && cali->size() == biasCount + caliCount) {
-                // Combined file holding [bias..., cali...] together, same
-                // shape as mag_cali.json's own 6-value layout - the
-                // suspected acc_cali.json case (see class-level comment).
-                // This file wins over a same-named *_bias.json if both
-                // happened to exist, since it's a strict superset.
                 ALOGI("sensor_type=%u (%s): %s has %zu values (bias+cali count) - "
                       "treating as a combined file, first %zu -> bias, rest -> cali",
                       layout.sensorType, layout.name, layout.caliFile, cali->size(), biasCount);
@@ -191,30 +201,28 @@ std::vector<uint8_t> CalibrationStore::buildPayload(const SensorLayout& layout) 
         }
     }
 
-    // temp region: no stock filename is known for ANY sensor_type today -
-    // it only ever gets populated by our own reverse-path persistence (see
-    // persistRegion()), under an invented "<name>_temp.json" name. Reading
-    // it back here on a later boot is exactly what makes that persistence
-    // useful instead of write-only.
     if (layout.temp.length > 0) {
         const std::string tempFile = std::string(layout.name) + "_temp.json";
         auto temp = nvcfg_json::readIntArray(baseDir_ + "/" + tempFile,
                                               std::string(layout.name) + "_temp");
         if (temp) {
             writeRegion(&buf, layout.temp, *temp, "temp", layout.sensorType);
+            seedCache(&tempCache_[layout.sensorType], *temp);
         }
     }
 
     return buf;
+#endif
 }
 
 void CalibrationStore::pushAll(HfManagerClient& client) {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& layout : allLayouts()) {
         if (!client.queryRegistered(layout.sensorType)) {
-            continue;  // not present on this SCP firmware - see header comment
+            continue;
         }
         std::vector<uint8_t> payload = buildPayload(layout);
+        if (payload.size() != layout.totalLength) continue;
         if (!client.configCalibration(layout.sensorType, payload.data(),
                                        static_cast<uint8_t>(payload.size()))) {
             ALOGE("sensor_type=%u (%s): CONFIG_CALI push failed, %zu bytes", layout.sensorType,
@@ -224,10 +232,6 @@ void CalibrationStore::pushAll(HfManagerClient& client) {
         ALOGI("sensor_type=%u (%s): pushed %zu-byte CONFIG_CALI", layout.sensorType, layout.name,
               payload.size());
 
-        // Subscribe so onKernelEvent() actually receives anything -
-        // hf_manager_distinguish_event() (hf_manager.c:557-600) drops BIAS_
-        // ACTION/CALI_ACTION/TEMP_ACTION for this client's fd otherwise,
-        // regardless of whether the sensor itself is enabled.
         if (layout.bias.length > 0) {
             if (!client.requestBiasReports(layout.sensorType, true)) {
                 ALOGE("sensor_type=%u (%s): failed to subscribe to BIAS_ACTION",
@@ -251,19 +255,46 @@ void CalibrationStore::pushAll(HfManagerClient& client) {
 
 void CalibrationStore::onKernelEvent(const hf_manager_event& ke) {
     const SensorLayout* layout = layoutFor(ke.sensor_type);
-    if (!layout) return;  // not a sensor_type this store manages
+    if (!layout) return;
 
     std::lock_guard<std::mutex> lock(mutex_);
-    if (ke.action == BIAS_ACTION && layout->bias.length > 0) {
-        persistRegion(*layout, /*isBias=*/true, ke.word, layout->bias.length / 4);
-    } else if (ke.action == CALI_ACTION && layout->cali.length > 0) {
-        persistRegion(*layout, /*isBias=*/false, ke.word, layout->cali.length / 4);
+#ifdef MINDONE_HF_RUST_WIRE
+    struct mindone_hf_calibration_event event{};
+    if (mindone_hf_calibration_event(ke.sensor_type, ke.action, ke.word,
+                                    sizeof(ke.word) / sizeof(ke.word[0]), &event) != 0) return;
+    Region region;
+    size_t expected;
+    switch (event.region) {
+        case 0: region = Region::Bias; expected = layout->bias.length / 4; break;
+        case 1: region = Region::Cali; expected = layout->cali.length / 4; break;
+        case 2: region = Region::Temp; expected = layout->temp.length / 4; break;
+        default: return;
     }
+    if (event.count != expected || expected == 0 || expected > 6) return;
+    persistRegion(*layout, region, event.words, event.count);
+#else
+    if (ke.action == BIAS_ACTION && layout->bias.length > 0) {
+        persistRegion(*layout, Region::Bias, ke.word, layout->bias.length / 4);
+    } else if (ke.action == CALI_ACTION && layout->cali.length > 0) {
+        persistRegion(*layout, Region::Cali, ke.word, layout->cali.length / 4);
+    } else if (ke.action == TEMP_ACTION && layout->temp.length > 0) {
+        persistRegion(*layout, Region::Temp, ke.word, layout->temp.length / 4);
+    }
+#endif
 }
 
-void CalibrationStore::persistRegion(const SensorLayout& layout, bool isBias,
+std::unordered_map<uint8_t, CalibrationStore::CachedRegion>& CalibrationStore::cacheFor(Region region) {
+    switch (region) {
+        case Region::Bias: return biasCache_;
+        case Region::Cali: return caliCache_;
+        case Region::Temp: return tempCache_;
+    }
+    std::abort();
+}
+
+void CalibrationStore::persistRegion(const SensorLayout& layout, Region region,
                                       const int32_t* words, size_t count) {
-    auto& cache = isBias ? biasCache_[layout.sensorType] : caliCache_[layout.sensorType];
+    auto& cache = cacheFor(region)[layout.sensorType];
     const std::vector<int32_t> newValues(words, words + count);
     const bool unchanged = cache.haveValue && cache.values == newValues;
     if (unchanged && (cache.pending || allZero(newValues) ||
@@ -274,23 +305,28 @@ void CalibrationStore::persistRegion(const SensorLayout& layout, bool isBias,
     if (allZero(newValues)) {
         if (!unchanged) {
             ALOGW("sensor_type=%u (%s): %s reported all-zero - not persisted (factory data kept)",
-                  layout.sensorType, layout.name, isBias ? "bias" : "cali");
+                  layout.sensorType, layout.name,
+                  region == Region::Bias ? "bias" : region == Region::Cali ? "cali" : "temp");
         }
         cache.pending = false;
     } else {
         cache.pending = !cache.havePersistedValue || cache.persistedValues != newValues;
     }
     if (cache.pending && nowMs() - cache.lastAttemptMs >= kMinRewriteIntervalMs) {
-        writePending(layout, isBias, cache);
+        writePending(layout, region, cache);
     }
     if (cache.pending != wasPending) changed_.notify_one();
 }
 
-void CalibrationStore::writePending(const SensorLayout& layout, bool isBias,
+void CalibrationStore::writePending(const SensorLayout& layout, Region region,
                                     CachedRegion& cache) {
-    const char* file = isBias ? layout.biasFile : layout.caliFile;
-    const char* key = isBias ? layout.biasKey : layout.caliKey;
-    const char* what = isBias ? "bias" : "cali";
+    const std::string tempKey = std::string(layout.name) + "_temp";
+    const std::string tempFile = tempKey + ".json";
+    const char* file = region == Region::Bias ? layout.biasFile :
+            region == Region::Cali ? layout.caliFile : tempFile.c_str();
+    const char* key = region == Region::Bias ? layout.biasKey :
+            region == Region::Cali ? layout.caliKey : tempKey.c_str();
+    const char* what = region == Region::Bias ? "bias" : region == Region::Cali ? "cali" : "temp";
     cache.pending = false;
     cache.lastAttemptMs = nowMs();
     if (!file || !key) return;
@@ -311,8 +347,8 @@ void CalibrationStore::persistenceLoop() {
     for (;;) {
         int64_t next = std::numeric_limits<int64_t>::max();
         for (const auto& layout : allLayouts()) {
-            for (bool isBias : {true, false}) {
-                auto& regions = isBias ? biasCache_ : caliCache_;
+            for (Region region : {Region::Bias, Region::Cali, Region::Temp}) {
+                auto& regions = cacheFor(region);
                 auto it = regions.find(layout.sensorType);
                 if (it == regions.end()) continue;
                 auto& cache = it->second;
@@ -323,7 +359,7 @@ void CalibrationStore::persistenceLoop() {
                 if (!cache.pending) continue;
                 const int64_t due = cache.lastAttemptMs + kMinRewriteIntervalMs;
                 if (stopping_ || nowMs() >= due) {
-                    writePending(layout, isBias, cache);
+                    writePending(layout, region, cache);
                 } else {
                     next = std::min(next, due);
                 }

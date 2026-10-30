@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+
+type hal_radio_mindone, domain;
+type hal_radio_mindone_exec, exec_type, vendor_file_type, file_type;
+init_daemon_domain(hal_radio_mindone)
+hal_server_domain(hal_radio_mindone, hal_radio)
+binder_use(hal_radio_mindone)
+allow hal_radio_mindone mtk_radio_device:dir search;
+allow hal_radio_mindone mtk_radio_device:lnk_file read;
+allow hal_radio_mindone devpts:chr_file { getattr open read write };

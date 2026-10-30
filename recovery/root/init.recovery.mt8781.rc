@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 on init
     write /sys/module/musb_hdrc/parameters/kernel_init_done 1
     write /sys/module/musb_hdrc/parameters/musb_force_on 1

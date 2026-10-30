@@ -1,0 +1,24 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "vendor.mediatek.hardware.mtkpower@1.2-service.mindone",
+    defaults: ["hidl_defaults"],
+    vendor: true,
+    compile_multilib: "64",
+    relative_install_path: "hw",
+    init_rc: ["mtkpower.rc"],
+    srcs: ["service.cpp"],
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+    shared_libs: [
+        "android.hardware.power-V2-ndk",
+        "//hardware/google/interfaces:pixel-power-ext-V1-ndk",
+        "libbase",
+        "libbinder_ndk",
+        "libhidlbase",
+        "libutils",
+        "vendor.mediatek.hardware.mtkpower@1.0",
+        "vendor.mediatek.hardware.mtkpower@1.1",
+        "vendor.mediatek.hardware.mtkpower@1.2",
+    ],
+}

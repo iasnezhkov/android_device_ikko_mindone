@@ -1,0 +1,309 @@
+// Copyright 2020 The Chromium Authors. All rights reserved.
+// SPDX-License-Identifier: BSD-3-Clause
+
+#define LOG_TAG "VideoFramePool"
+
+#include <v4l2_codec2/components/VideoFramePool.h>
+
+#include <stdint.h>
+#include <sys/stat.h>
+#include <memory>
+
+#include <C2BlockInternal.h>
+#include <bufferpool/BufferPoolTypes.h>
+
+#include <android/hardware_buffer.h>
+#include <android/hardware/graphics/common/1.0/types.h>
+#include <base/bind.h>
+#include <base/memory/ptr_util.h>
+#include <base/time/time.h>
+#include <log/log.h>
+
+#include <v4l2_codec2/common/VideoTypes.h>
+#include <v4l2_codec2/plugin_store/DmabufHelpers.h>
+#include <v4l2_codec2/plugin_store/V4L2AllocatorId.h>
+
+using android::hardware::graphics::common::V1_0::BufferUsage;
+using android::hardware::media::bufferpool::BufferPoolData;
+
+namespace android {
+
+std::optional<uint32_t> VideoFramePool::getBufferIdFromGraphicBlock(C2BlockPool& blockPool,
+                                                                    const C2Block2D& block) {
+    ALOGV("%s() blockPool.getAllocatorId() = %u", __func__, blockPool.getAllocatorId());
+
+    switch (blockPool.getAllocatorId()) {
+    case V4L2AllocatorId::SECURE_GRAPHIC:
+        FALLTHROUGH;
+    case C2PlatformAllocatorStore::BUFFERQUEUE: {
+        auto dmabufId = android::getDmabufId(block.handle()->data[0]);
+        if (!dmabufId) {
+            return std::nullopt;
+        }
+        return dmabufId.value();
+    }
+    case C2PlatformAllocatorStore::IGBA: {
+        std::shared_ptr<_C2BlockPoolData> blockPoolData =
+                _C2BlockFactory::GetGraphicBlockPoolData(block);
+        struct AHardwareBuffer *buf;
+        if (blockPoolData->getType() != _C2BlockPoolData::TYPE_AHWBUFFER) {
+            ALOGE("Blockpool type must be AHardwareBuffer for IGBA.");
+            return std::nullopt;
+        }
+        if (!_C2BlockFactory::GetAHardwareBuffer(blockPoolData, &buf)) {
+            ALOGE("Failed to GetAHardwareBuffer() for IGBA.");
+            return std::nullopt;
+        }
+        uint64_t id;
+        if (__builtin_available(android 31, *)) {
+            if (AHardwareBuffer_getId(buf, &id) != OK) {
+                ALOGE("Failed to getId for AHardwareBuffer.");
+                return std::nullopt;
+            }
+            return static_cast<uint32_t>(id);
+        } else {
+
+            id = reinterpret_cast<uint64_t>(buf);
+            return static_cast<uint32_t>(id);
+        }
+    }
+    case C2PlatformAllocatorStore::GRALLOC:
+        FALLTHROUGH;
+    case V4L2AllocatorId::SECURE_LINEAR: {
+        std::shared_ptr<_C2BlockPoolData> blockPoolData =
+                _C2BlockFactory::GetGraphicBlockPoolData(block);
+        if (!blockPoolData || blockPoolData->getType() != _C2BlockPoolData::TYPE_BUFFERPOOL) {
+            const C2Handle* const handle = block.handle();
+            for (int i = 0; handle && i < handle->numFds; i++) {
+                struct stat sb {};
+                if (fstat(handle->data[i], &sb) == 0 && sb.st_size > 0) {
+                    return static_cast<uint32_t>(sb.st_ino);
+                }
+            }
+            ALOGE("C2GraphicBlock has neither HIDL bufferpool data nor a sized buffer fd.");
+            return std::nullopt;
+        }
+        std::shared_ptr<BufferPoolData> bpData;
+        if (!_C2BlockFactory::GetBufferPoolData(blockPoolData, &bpData) || !bpData) {
+            ALOGE("BufferPoolData unavailable in block.");
+            return std::nullopt;
+        }
+        return bpData->mId;
+    }
+    }
+
+    ALOGE("%s(): unknown allocator ID: %u", __func__, blockPool.getAllocatorId());
+    return std::nullopt;
+}
+
+std::unique_ptr<VideoFramePool> VideoFramePool::Create(
+        std::shared_ptr<C2BlockPool> blockPool, const size_t numBuffers, const ui::Size& size,
+        HalPixelFormat pixelFormat, bool isSecure,
+        scoped_refptr<::base::SequencedTaskRunner> taskRunner) {
+    ALOG_ASSERT(blockPool != nullptr);
+
+    uint64_t usage = static_cast<uint64_t>(BufferUsage::VIDEO_DECODER);
+    if (isSecure) {
+        usage |= C2MemoryUsage::READ_PROTECTED;
+    } else {
+        usage |= C2MemoryUsage::CPU_READ | C2MemoryUsage::CPU_WRITE;
+    }
+    const C2MemoryUsage memoryUsage(usage);
+
+    std::unique_ptr<VideoFramePool> pool =
+            ::base::WrapUnique(new VideoFramePool(std::move(blockPool), numBuffers, size,
+                                                  pixelFormat, memoryUsage, std::move(taskRunner)));
+    if (!pool->initialize()) return nullptr;
+    return pool;
+}
+
+VideoFramePool::VideoFramePool(std::shared_ptr<C2BlockPool> blockPool, const size_t maxBufferCount,
+                               const ui::Size& size, HalPixelFormat pixelFormat,
+                               C2MemoryUsage memoryUsage,
+                               scoped_refptr<::base::SequencedTaskRunner> taskRunner)
+      : mBlockPool(std::move(blockPool)),
+        mMaxBufferCount(maxBufferCount),
+        mSize(size),
+        mPixelFormat(pixelFormat),
+        mMemoryUsage(memoryUsage),
+        mClientTaskRunner(std::move(taskRunner)) {
+    ALOGV("%s(size=%dx%d)", __func__, size.width, size.height);
+    ALOG_ASSERT(mClientTaskRunner->RunsTasksInCurrentSequence());
+    DCHECK(mBlockPool);
+    DCHECK(mClientTaskRunner);
+}
+
+bool VideoFramePool::initialize() {
+    if (!mFetchThread.Start()) {
+        ALOGE("Fetch thread failed to start.");
+        return false;
+    }
+    mFetchTaskRunner = mFetchThread.task_runner();
+
+    mClientWeakThis = mClientWeakThisFactory.GetWeakPtr();
+    mFetchWeakThis = mFetchWeakThisFactory.GetWeakPtr();
+
+    return true;
+}
+
+VideoFramePool::~VideoFramePool() {
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(mClientTaskRunner->RunsTasksInCurrentSequence());
+
+    mClientWeakThisFactory.InvalidateWeakPtrs();
+
+    if (mFetchThread.IsRunning()) {
+        mFetchTaskRunner->PostTask(FROM_HERE,
+                                   ::base::BindOnce(&VideoFramePool::destroyTask, mFetchWeakThis));
+        mFetchThread.Stop();
+    }
+}
+
+void VideoFramePool::destroyTask() {
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(mFetchTaskRunner->RunsTasksInCurrentSequence());
+
+    mFetchWeakThisFactory.InvalidateWeakPtrs();
+}
+
+bool VideoFramePool::shouldDropBuffer(uint32_t bufferId) {
+    if (mBuffers.size() < mMaxBufferCount) {
+        return false;
+    }
+
+    if (mBuffers.find(bufferId) != mBuffers.end()) {
+        return false;
+    }
+
+    return true;
+}
+
+bool VideoFramePool::getVideoFrame(GetVideoFrameCB cb) {
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(mClientTaskRunner->RunsTasksInCurrentSequence());
+
+    if (mOutputCb) {
+        return false;
+    }
+
+    mOutputCb = std::move(cb);
+    mFetchTaskRunner->PostTask(
+            FROM_HERE, ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis));
+    return true;
+}
+
+void VideoFramePool::getVideoFrameTaskThunk(
+        scoped_refptr<::base::SequencedTaskRunner> taskRunner,
+        std::optional<::base::WeakPtr<VideoFramePool>> weakPool) {
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(weakPool);
+
+    taskRunner->PostTask(FROM_HERE,
+                         ::base::BindOnce(&VideoFramePool::getVideoFrameTask, *weakPool));
+}
+
+void VideoFramePool::getVideoFrameTask() {
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(mFetchTaskRunner->RunsTasksInCurrentSequence());
+
+    constexpr size_t kFetchRetryDelayInit = 256;
+    constexpr size_t kFetchRetryDelayMax = 16384;
+    constexpr size_t kFenceWaitTimeoutNs = 16000000;
+
+    C2Fence fence;
+    std::shared_ptr<C2GraphicBlock> block;
+    c2_status_t err = mBlockPool->fetchGraphicBlock(mSize.width, mSize.height,
+                                                    static_cast<uint32_t>(mPixelFormat),
+                                                    mMemoryUsage, &block, &fence);
+
+    if (err == C2_BLOCKING && !fence.ready()) {
+        err = fence.wait(kFenceWaitTimeoutNs);
+        if (err == C2_OK) {
+            ALOGV("%s(): fence wait succeded, retrying now", __func__);
+            mFetchTaskRunner->PostTask(
+                    FROM_HERE,
+                    ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis));
+            return;
+        }
+        ALOGV("%s(): fence wait unsucessful err=%d", __func__, err);
+    } else if (err == C2_OMITTED) {
+
+        err = mBlockPool->fetchGraphicBlock(mSize.width, mSize.height,
+                                            static_cast<uint32_t>(mPixelFormat), mMemoryUsage,
+                                            &block);
+    }
+
+    if (err == C2_OK && !block) err = C2_CORRUPTED;
+
+    std::optional<uint32_t> bufferId;
+    if (err == C2_OK) {
+        bufferId = getBufferIdFromGraphicBlock(*mBlockPool, *block);
+
+        if (bufferId) {
+            ALOGV("%s(): Got buffer with id = %u", __func__, *bufferId);
+
+            if (shouldDropBuffer(*bufferId)) {
+
+                ALOGV("%s(): Dropping allocated buffer with id = %u", __func__, *bufferId);
+                bufferId = std::nullopt;
+                block.reset();
+                err = C2_TIMED_OUT;
+            }
+        }
+    }
+
+    if (err == C2_TIMED_OUT || err == C2_BLOCKING) {
+        ALOGV("%s(): fetchGraphicBlock() timeout, waiting %zuus (%zu retry)", __func__, mFetchDelayUs,
+              mFetchRetries + 1);
+        mFetchTaskRunner->PostDelayedTask(
+                FROM_HERE, ::base::BindOnce(&VideoFramePool::getVideoFrameTask, mFetchWeakThis),
+                ::base::TimeDelta::FromMicroseconds(mFetchDelayUs));
+
+        mFetchDelayUs = std::min(mFetchDelayUs * 4, kFetchRetryDelayMax);
+        mFetchRetries++;
+        return;
+    }
+
+    mFetchRetries = 0;
+    mFetchDelayUs = kFetchRetryDelayInit;
+
+    if (err != C2_OK) {
+        ALOGE("%s(): Failed to fetch block, err=%d", __func__, err);
+        mClientTaskRunner->PostTask(
+                FROM_HERE, ::base::BindOnce(&VideoFramePool::onVideoFrameReady, mClientWeakThis,
+                                          std::optional<FrameWithBlockId>{}));
+        return;
+    }
+
+    ALOG_ASSERT(block != nullptr);
+    std::unique_ptr<VideoFrame> frame = VideoFrame::Create(std::move(block));
+    std::optional<FrameWithBlockId> frameWithBlockId;
+
+    if (bufferId && frame) {
+
+        frameWithBlockId = std::make_pair(std::move(frame), *bufferId);
+        mBuffers.insert(*bufferId);
+    } else {
+        ALOGE("%s(): Failed to generate VideoFrame or get the buffer id.", __func__);
+    }
+
+    mClientTaskRunner->PostTask(
+            FROM_HERE, ::base::BindOnce(&VideoFramePool::onVideoFrameReady, mClientWeakThis,
+                                        std::move(frameWithBlockId)));
+}
+
+void VideoFramePool::onVideoFrameReady(std::optional<FrameWithBlockId> frameWithBlockId) {
+    ALOGV("%s()", __func__);
+    ALOG_ASSERT(mClientTaskRunner->RunsTasksInCurrentSequence());
+
+    if (!frameWithBlockId) {
+        ALOGE("Failed to get GraphicBlock, abandoning all pending requests.");
+        mClientWeakThisFactory.InvalidateWeakPtrs();
+        mClientWeakThis = mClientWeakThisFactory.GetWeakPtr();
+    }
+
+    ALOG_ASSERT(mOutputCb);
+    std::move(mOutputCb).Run(std::move(frameWithBlockId));
+}
+
+}

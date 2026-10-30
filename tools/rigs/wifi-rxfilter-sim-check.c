@@ -1,3 +1,7 @@
+/*
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ * SPDX-License-Identifier: Apache-2.0
+ */
 typedef unsigned int u32;
 typedef unsigned char u8;
 extern u32 rxfilter_legacy_bitmap(const u8*);

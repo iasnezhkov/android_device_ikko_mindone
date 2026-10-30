@@ -1,5 +1,5 @@
 //
-// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -32,6 +32,13 @@ cc_binary {
 
 cc_binary {
     name: "mindone_rpcd",
+    licenses: ["Android-Apache-2.0", "mindone_ccci_rpc_route_license"],
     defaults: ["mindone_ccci_daemon_defaults"],
-    srcs: ["rpcd/ccci_rpcd.c", "common/nvram_shim.c"],
+    srcs: ["rpcd/ccci_rpcd.c", "common/nvram_shim.c", "common/ccci_rpc_route.c"],
+}
+
+license {
+    name: "mindone_ccci_rpc_route_license",
+    license_kinds: ["SPDX-license-identifier-GPL-2.0"],
+    license_text: ["common/GPL-2.0.txt"],
 }

@@ -8,20 +8,15 @@ package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
-cc_library_shared {
-    name: "audio.primary.mindone",
+cc_defaults {
+    name: "mindone_audio_impl_defaults",
     vendor: true,
-    relative_install_path: "hw",
-    compile_multilib: "both",
-    srcs: [
-        "audio_hw.c",
-    ],
     shared_libs: [
         "liblog",
         "libcutils",
         "libutils",
-        "libtinyalsa",
-        "libaudioroute",
+        "libtinyalsav2",
+        "libaudioroutev2",
         "libaudioutils",
     ],
     header_libs: [
@@ -35,8 +30,72 @@ cc_library_shared {
     ],
 }
 
-// mixer_paths.xml ships next to the .so under /vendor/etc, matching the
-// convention every audio_route-based legacy HAL uses (path is read at
-// adev_open() time -- see README-INTEGRATION.md for the exact
-// PRODUCT_COPY_FILES / prebuilt_etc entry, since this Android.bp module
-// only builds the shared library).
+cc_library_shared {
+    name: "libmindone_audio_backend",
+    defaults: ["mindone_audio_impl_defaults"],
+    srcs: ["audio_hw.c"],
+    export_include_dirs: ["."],
+    compile_multilib: "64",
+}
+
+cc_library_static {
+    name: "libaudio.mindone.rust.impl",
+    srcs: ["audio_hw.c"],
+    defaults: ["mindone_audio_impl_defaults"],
+    compile_multilib: "64",
+    cflags: ["-DMINDONE_AUDIO_RUST_ROUTES"],
+    static_libs: ["libmindone_audio_routes_ffi"],
+}
+
+rust_library_rlib {
+    name: "libmindone_audio_routes",
+    crate_name: "mindone_audio_routes",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["rust/lib.rs"],
+    no_stdlibs: true,
+    stdlibs: ["libcore.rust_sysroot", "libcompiler_builtins.rust_sysroot"],
+}
+
+rust_ffi_static {
+    name: "libmindone_audio_routes_ffi",
+    crate_name: "mindone_audio_routes_ffi",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["rust/ffi.rs"],
+    rustlibs: ["libmindone_audio_routes"],
+    prefer_rlib: true,
+    export_include_dirs: ["."],
+}
+
+rust_test {
+    name: "mindone_audio_routes_test",
+    crate_name: "mindone_audio_routes_test",
+    vendor: true,
+    host_supported: true,
+    target: {
+        glibc: {
+            enabled: false,
+        },
+    },
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["tests/core.rs"],
+    rustlibs: ["libmindone_audio_routes"],
+    prefer_rlib: true,
+    test_suites: ["device-tests"],
+}

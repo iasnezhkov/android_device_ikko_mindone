@@ -1,5 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 
 dontaudit gmscore_app oem_unlock_prop:file { open getattr map };
 dontaudit gmscore_app vendor_default_prop:file { open getattr map };
-# 13.09: adbd_prop private platform type(s), unknown to vendor policy (checkpolicy: unknown type) - dropped.

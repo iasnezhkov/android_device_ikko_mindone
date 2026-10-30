@@ -1,8 +1,7 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
-// mindone: hw_auth_token_t (69 bytes) <-> AIDL keymaster HardwareAuthToken.
 #pragma once
 #include <aidl/android/hardware/keymaster/HardwareAuthToken.h>
 #include <endian.h>
@@ -14,7 +13,6 @@ namespace mindone {
 
 constexpr size_t kHwAuthTokenSize = 69;
 
-// version u8 | challenge u64 LE | user_id u64 LE | authenticator_id u64 LE | authenticator_type u32 BE | timestamp u64 BE | hmac[32]
 inline std::array<uint8_t, kHwAuthTokenSize> hatToBytes(const aidl::android::hardware::keymaster::HardwareAuthToken& t) {
     std::array<uint8_t, kHwAuthTokenSize> out{};
     uint64_t v64; uint32_t v32;
@@ -41,4 +39,4 @@ inline bool bytesToHat(const uint8_t* p, size_t len, aidl::android::hardware::ke
     return true;
 }
 
-}  // namespace mindone
+}

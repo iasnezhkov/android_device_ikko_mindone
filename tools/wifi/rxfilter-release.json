@@ -5,19 +5,67 @@
   "size": 698052,
   "crc32": 4113082154,
   "sources": {
-    "tools/wifi/rxfilter-policy.c": "0a2f47eb717ece587afd7b2ae7186e3a2f1326e85167368d6e9f21ee0fa3ccce",
-    "tools/wifi/rxfilter-policy.h": "2b5c56b6bec7ae48487cf85fe22023676f71bddd17086942e0e8f59087659ea8",
-    "tools/wifi/rxfilter-query.c": "204c81e8ffef956373720c2aa7a7982ce06e2722763e90359156ead240df4db0",
-    "tools/wifi/rxfilter-query.h": "bc8e4b7a90e7d7cd7039ce27f46b2886e9f2a1f678ba89a88acad0a2bce05d82",
-    "tools/wifi/rxfilter-firmware.c": "1d13502ef853955530104d730482ef582518b5985e58811b399c8eff82e6adc0",
-    "tools/wifi/rxfilter-firmware.h": "f15ed97bfecc291e0d32ff5c2fedc8878a1cb288da033d6193c39fd6e7cc15cd",
-    "tools/wifi/rxfilter-legacy.c": "fdbe2febbaa67b383b739b5dd3166e3ea3e7e7fe5a0477447bbf15a36c4230e7",
-    "tools/wifi/rxfilter-legacy.h": "3f971fc480b2127979fdb7d71c5252cc53f1ecb2ce7fb30062d0731eae5a720e",
-    "tools/wifi/rxfilter-mcast.c": "86b3833cc243309c37d0402ed7b123d4423235f0014863216ee8a58c9e44fb08",
-    "tools/wifi/rxfilter-mcast.h": "67db65d148d0e9b46404ec5e420312d1a0fe614324b4e7c119f4552ec7a6b9e6",
-    "tools/wifi/rxfilter-table.c": "46f917642bee428e064b91c4501a6d3559e5aa59191583af521e844f991af4f3",
-    "tools/wifi/rxfilter-table.h": "5cdbc9ff6a60e297f9078326d062efea5a51d799eacaff7a10e714daf57dad7a",
-    "tools/wifi/rxfilter-config.c": "0b74872aa5d118dd7b76f32be02c40221316128716903dc0e15a23ee5b9fe091",
-    "tools/wifi/rxfilter-config.h": "9f4113adc364fa63896814ea7b1b6af9191d89196f2faa3049a2d737cfe2fc3a"
-  }
+    "tools/wifi/rxfilter-policy.c": "1d74ef149355984ee602309a0e141d3ed8fd51e90d30484ef0b69ac288d059b9",
+    "tools/wifi/rxfilter-policy.h": "a2ca03b0b3445994e405cd3bb48eef3d802de08630730aa15d24fc88a2172c9f",
+    "tools/wifi/rxfilter-query.c": "9b39e7e64fd77362f9e4df0e4a82d08681993dcd5e984e5ce5bc374155faa84a",
+    "tools/wifi/rxfilter-query.h": "d68db54170053d015f7a72da0d2a769311e33fe7c597d8a571c69e5224148762",
+    "tools/wifi/rxfilter-firmware.c": "8dfdf423c5555d7884d405adf363712a7e4378363bafc50d5fd013e5048de256",
+    "tools/wifi/rxfilter-firmware.h": "5645c72f83fdf5461e9f15f2886e3ba0d979d277f7e9a4dfb4cbabe9a672620c",
+    "tools/wifi/rxfilter-legacy.c": "e1fe53041f269e692d1956bcc15330db04353a43631adf538e73f20cdfae4710",
+    "tools/wifi/rxfilter-legacy.h": "b52f2370f4512eada9673560b6fef5f4f7eee8a43cd52660c2b5adb7a6903c2f",
+    "tools/wifi/rxfilter-mcast.c": "d868a85ba9fd2198e9b17fc2ce5dafb55a722c5c54620ec7fa737375f81d772b",
+    "tools/wifi/rxfilter-mcast.h": "8b6af1224414af9239284f05b77b6656066c92367e49d2126c00b4d90fd3b49d",
+    "tools/wifi/rxfilter-table.c": "32ad611d08244f04ceadefa2ddba78b3d72e8610351c6c3f3977ac63ddc342b2",
+    "tools/wifi/rxfilter-table.h": "355b5adde3180d30b61ac96ce78d938fa12865e796c6f33fb949aa8deb9de9b9",
+    "tools/wifi/rxfilter-config.c": "b0d7c65381249714c52f6ab5adc0c8e143b119ae1f86ee7055271f0bac5a1ffa",
+    "tools/wifi/rxfilter-config.h": "90d145ea7e3de44ce584ab29b04dc410f367f67672416325831ad54c58422be7"
+  },
+  "source_rebinds": [
+    {
+      "old_revision": "ea9092b5~1",
+      "old_sources": {
+        "tools/wifi/rxfilter-policy.c": "0a2f47eb717ece587afd7b2ae7186e3a2f1326e85167368d6e9f21ee0fa3ccce",
+        "tools/wifi/rxfilter-policy.h": "2b5c56b6bec7ae48487cf85fe22023676f71bddd17086942e0e8f59087659ea8",
+        "tools/wifi/rxfilter-query.c": "204c81e8ffef956373720c2aa7a7982ce06e2722763e90359156ead240df4db0",
+        "tools/wifi/rxfilter-query.h": "bc8e4b7a90e7d7cd7039ce27f46b2886e9f2a1f678ba89a88acad0a2bce05d82",
+        "tools/wifi/rxfilter-firmware.c": "1d13502ef853955530104d730482ef582518b5985e58811b399c8eff82e6adc0",
+        "tools/wifi/rxfilter-firmware.h": "f15ed97bfecc291e0d32ff5c2fedc8878a1cb288da033d6193c39fd6e7cc15cd",
+        "tools/wifi/rxfilter-legacy.c": "fdbe2febbaa67b383b739b5dd3166e3ea3e7e7fe5a0477447bbf15a36c4230e7",
+        "tools/wifi/rxfilter-legacy.h": "3f971fc480b2127979fdb7d71c5252cc53f1ecb2ce7fb30062d0731eae5a720e",
+        "tools/wifi/rxfilter-mcast.c": "86b3833cc243309c37d0402ed7b123d4423235f0014863216ee8a58c9e44fb08",
+        "tools/wifi/rxfilter-mcast.h": "67db65d148d0e9b46404ec5e420312d1a0fe614324b4e7c119f4552ec7a6b9e6",
+        "tools/wifi/rxfilter-table.c": "46f917642bee428e064b91c4501a6d3559e5aa59191583af521e844f991af4f3",
+        "tools/wifi/rxfilter-table.h": "5cdbc9ff6a60e297f9078326d062efea5a51d799eacaff7a10e714daf57dad7a",
+        "tools/wifi/rxfilter-config.c": "0b74872aa5d118dd7b76f32be02c40221316128716903dc0e15a23ee5b9fe091",
+        "tools/wifi/rxfilter-config.h": "9f4113adc364fa63896814ea7b1b6af9191d89196f2faa3049a2d737cfe2fc3a"
+      },
+      "new_sources": {
+        "tools/wifi/rxfilter-policy.c": "1d74ef149355984ee602309a0e141d3ed8fd51e90d30484ef0b69ac288d059b9",
+        "tools/wifi/rxfilter-policy.h": "a2ca03b0b3445994e405cd3bb48eef3d802de08630730aa15d24fc88a2172c9f",
+        "tools/wifi/rxfilter-query.c": "9b39e7e64fd77362f9e4df0e4a82d08681993dcd5e984e5ce5bc374155faa84a",
+        "tools/wifi/rxfilter-query.h": "d68db54170053d015f7a72da0d2a769311e33fe7c597d8a571c69e5224148762",
+        "tools/wifi/rxfilter-firmware.c": "8dfdf423c5555d7884d405adf363712a7e4378363bafc50d5fd013e5048de256",
+        "tools/wifi/rxfilter-firmware.h": "5645c72f83fdf5461e9f15f2886e3ba0d979d277f7e9a4dfb4cbabe9a672620c",
+        "tools/wifi/rxfilter-legacy.c": "e1fe53041f269e692d1956bcc15330db04353a43631adf538e73f20cdfae4710",
+        "tools/wifi/rxfilter-legacy.h": "b52f2370f4512eada9673560b6fef5f4f7eee8a43cd52660c2b5adb7a6903c2f",
+        "tools/wifi/rxfilter-mcast.c": "d868a85ba9fd2198e9b17fc2ce5dafb55a722c5c54620ec7fa737375f81d772b",
+        "tools/wifi/rxfilter-mcast.h": "8b6af1224414af9239284f05b77b6656066c92367e49d2126c00b4d90fd3b49d",
+        "tools/wifi/rxfilter-table.c": "32ad611d08244f04ceadefa2ddba78b3d72e8610351c6c3f3977ac63ddc342b2",
+        "tools/wifi/rxfilter-table.h": "355b5adde3180d30b61ac96ce78d938fa12865e796c6f33fb949aa8deb9de9b9",
+        "tools/wifi/rxfilter-config.c": "b0d7c65381249714c52f6ab5adc0c8e143b119ae1f86ee7055271f0bac5a1ffa",
+        "tools/wifi/rxfilter-config.h": "90d145ea7e3de44ce584ab29b04dc410f367f67672416325831ad54c58422be7"
+      },
+      "token_stream_sha256": {
+        "rxfilter-policy.c": "ff14a18759dde8efd3276880caf4f1d9f441a1b0e89883de93aedc25ee829caa",
+        "rxfilter-query.c": "5111f1cc0023470df4f1c7f758be82e962543082e29039ba57f91c817ee8b183",
+        "rxfilter-firmware.c": "c0962bb72109c95dab1e34411184acf1a389851674d24f227838ed96172e8a3f",
+        "rxfilter-legacy.c": "6cef74266bee6599cc94dd256468715089511bc47c92826f77113dfcf155de7c",
+        "rxfilter-mcast.c": "a0ba3ded7e7c5dce1a49862d0531cb153419d8f0d31c2990730d623e2d71c9ac",
+        "rxfilter-table.c": "99da553885c20cb0de93f847f908bb2717ccc1ce45fdb93fb14181a1ff09f1a3",
+        "rxfilter-config.c": "4156fa9153dbb84c8c249cf39f087335512c021dd17c272eacd9cea29802d5d0"
+      },
+      "clang": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+      "basis": "Equal post-preprocessor token streams for every translation unit; the build compiles exactly these units with fixed flags and no __LINE__, __FILE__ or __COUNTER__ use, so the firmware is unchanged"
+    }
+  ]
 }

@@ -1,31 +1,7 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: The LineageOS Project
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 #
-# Speech tuning applied on top of the device's own extracted audio_param blobs.
-#
-# The stock Speech_AudioParam.xml is ~600 KB of MediaTek speech tuning tables and
-# belongs to MediaTek, so it is not carried in this repository -- it is extracted
-# from your own device like every other proprietary file. What is ours is three
-# values in it, and they live here rather than in a copy of the vendor file.
-#
-# What is changed and why:
-#
-#   1. Speech_AudioParam.xml, the first "speech_mode_para" of ParamUnit 0 and 12
-#      (the handset paths, media and voice). Fields 32..42 and 44..47 carry the
-#      uplink DRC block, which the stock tables leave at zero -- the compressor
-#      is present in the firmware but switched off. With it off, the handset
-#      uplink clips on loud talkers well before the far end hears a normal level.
-#      Turning it on with a moderate curve costs nothing and removes the clipping.
-#
-#   2. SpeechVol_AudioParam.xml, "ul_gain" 23 -> 17. The stock uplink gain drives
-#      the same path into limiting on its own; the DRC above only shapes what
-#      survives that. Backing the gain off six steps is what actually stops it,
-#      and the DRC then handles the peaks that remain.
-#
-# Only our values appear below. The fields we do not touch are left exactly as
-# the device's own file has them, so this stays correct across firmware
-# revisions instead of pinning a whole table to one of them.
 
 from __future__ import annotations
 
@@ -33,9 +9,6 @@ import re
 import sys
 from pathlib import Path
 
-# ParamUnit param_id -> {field index: our value}, applied to the FIRST
-# speech_mode_para of that unit. Index 43 is deliberately absent: it is zero in
-# the stock tables and stays zero.
 SPEECH_MODE_PARA_TUNING: dict[str, dict[int, str]] = {
     "0": {
         32: "0x95",
@@ -51,8 +24,6 @@ SPEECH_MODE_PARA_TUNING: dict[str, dict[int, str]] = {
 
 SPEECH_MODE_PARA_FIELDS = 64
 
-# ParamUnit param_id -> our uplink gain. Only the handset path is touched; the
-# other units in this file are other routes and keep the device's own values.
 UL_GAIN_TUNING: dict[str, str] = {"0": "17"}
 
 _UNIT_RE = re.compile(r'<ParamUnit\s+param_id="(\d+)"')
@@ -89,8 +60,6 @@ def tune_speech_audio_param(path: str | Path) -> int:
 
         fields = [f.strip() for f in value_match.group(2).split(",")]
         if len(fields) != SPEECH_MODE_PARA_FIELDS:
-            # A firmware revision that reshaped this table is not one these
-            # field indices describe. Refuse rather than write into the wrong slot.
             raise ValueError(
                 f"{path}: speech_mode_para of unit {unit} has {len(fields)} fields, "
                 f"expected {SPEECH_MODE_PARA_FIELDS} -- refusing to patch"

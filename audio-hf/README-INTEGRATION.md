@@ -2,17 +2,13 @@
 
 ## Installed configuration
 
-The source lives in `device/ikko/mindone/audio-hf/`. `device.mk` already packages
-`audio.primary.mindone` and installs `mixer_paths.xml` at `/vendor/etc/mixer_paths.xml`.
-`ro.hardware.audio.primary=mindone` selects this module.
+The source lives in `device/ikko/mindone/audio-hf/`. `device.mk` packages
+`android.hardware.audio.service.mindone` and installs `mixer_paths.xml` at
+`/vendor/etc/mixer_paths.xml`. The 64-bit AIDL service links `libmindone_audio_backend`
+and calls the typed interface in `AudioBackend.h`. The device manifest declares the
+AIDL core and effect services. There is no legacy primary module or selector property.
 
-The running audio service is 64-bit, selected by `android_hardware_audio.run_64bit=true`
-in `BoardConfig.mk`. `Android.bp` builds both library ABIs; the accepted installation loads
-`/vendor/lib64/hw/audio.primary.mindone.so`. The device manifest exposes the HIDL 7.0
-`IDevicesFactory/default` interface. This HAL is not an AIDL audio service.
-
-The stock primary HAL is excluded from `proprietary-files.txt`. Changing the selection property
-alone is therefore not a stock-HAL rollback on a normal build. Proprietary speech-parser
+The stock primary HAL is excluded from `proprietary-files.txt`. Proprietary speech-parser
 libraries and audio parameters are still required and must be extracted from the device;
 see [BLOBS.md](../docs/BLOBS.md).
 
@@ -44,6 +40,9 @@ alone does not establish working call audio.
 
 ## Validation on 11 October 2026
 
+This historical installation predates the current AIDL service and typed backend. Its results
+do not establish acceptance of the current service.
+
 The owner confirmed the cellular microphone, followed by both receive paths while switching
 earpiece → speaker → earpiece. The accepted call logged successful SetMode, SpeechOn and
 SpeechOff acknowledgements, no PCM startup failures and no CCCI timeouts. The kernel still
@@ -63,14 +62,14 @@ cellular call and are not evidence of working BLE call audio.
 
 ## Diagnostic controls
 
-Two optional `set_parameters` keys remain available for controlled diagnosis:
+Two typed backend calls are available for controlled diagnosis:
 
-- `mindone_speech_dl_gain` accepts an integer from -255 through 0 and sends a modem downlink
+- `mindone_audio_speech_gain` accepts an integer from -255 through 0 and sends a modem downlink
   gain command only during an active speech session.
-- `mindone_speech_rx_pump=1` performs a bounded drain of pending modem messages and validates
+- `mindone_audio_speech_pump` performs a bounded drain of pending modem messages and validates
   the specific codec request before acknowledging it.
 
-Neither key runs automatically or is required by the accepted call configuration. Sending a
+Neither call runs automatically or is required by the accepted call configuration. Sending a
 command successfully does not prove its acoustic effect. Normal routing and gain behavior
 should be tested separately from these controls.
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "RadioImpl.h"
@@ -29,24 +29,16 @@ using ::android::hardware::Void;
 using ::android::hardware::hidl_string;
 using ::android::hardware::hidl_vec;
 
-// --------------------------------------------------------------------------------------------
-// small local AT-line parsing helpers (built on the ported at_tok.{c,h}, see AtChannel.h)
-// --------------------------------------------------------------------------------------------
 namespace {
 
-// Runs at_tok_start + at_tok_nextint over a mutable copy of `line`, returns -1 on any parse
-// failure without touching *out.
 bool tokNextInt(char** cur, int* out) { return at_tok_nextint(cur, out) == 0; }
 
 std::string cmeErrorNote(const AtResult& r) {
     return r.cmeError >= 0 ? (" (+CME ERROR " + std::to_string(r.cmeError) + ")") : "";
 }
 
-}  // namespace
+}
 
-// --------------------------------------------------------------------------------------------
-// helpers declared in RadioImpl.h
-// --------------------------------------------------------------------------------------------
 
 V1_0::RadioResponseInfo MindoneRadio::mkInfo(int32_t serial, V1_0::RadioError error) {
     return V1_0::RadioResponseInfo{V1_0::RadioResponseType::SOLICITED, serial, error};
@@ -79,9 +71,6 @@ bool MindoneRadio::openAtChannels(const std::string& cmdDevicePath,
     }
 
     auto onCmdChannelUrc = [](const std::string& line, const std::string& pdu) {
-        // Should be rare (see AtChannel.h "one deliberate adaptation") -- the mux is supposed to
-        // keep URCs off the command channels, but log rather than drop if the stock mux ever
-        // interleaves one here (e.g. during channel setup before the mux is fully steady).
         ALOGW("URC on command channel (unexpected): %s", line.c_str());
         (void)pdu;
     };
@@ -90,8 +79,8 @@ bool MindoneRadio::openAtChannels(const std::string& cmdDevicePath,
     };
     auto onClosed = [] { ALOGE("AT channel closed unexpectedly"); };
 
-    if (!mCmdChannel.open(cmdFd, /*urcMode=*/false, onCmdChannelUrc, onClosed)) return false;
-    if (!mNotiChannel.open(notiFd, /*urcMode=*/true, onNotiUrc, onClosed)) return false;
+    if (!mCmdChannel.open(cmdFd, false, onCmdChannelUrc, onClosed)) return false;
+    if (!mNotiChannel.open(notiFd, true, onNotiUrc, onClosed)) return false;
     return true;
 }
 
@@ -114,11 +103,6 @@ bool MindoneRadio::openAtChannels(const std::string& cmdDevicePath,
 }
 
 ::android::hardware::Return<void> MindoneRadio::responseAcknowledgement() {
-    // The framework only calls this after we set RadioResponseInfo.type ==
-    // SOLICITED_ACK_EXP, which this skeleton never does (see RadioImpl.h) -- present only
-    // because IRadio requires every pure virtual overridden. Real bodies belong in phase 2 if a
-    // request ever needs flow-controlled acking (long-running SIM I/O, per the HIDL doc comment
-    // on this method).
     ALOGV("responseAcknowledgement (unexpected on this skeleton -- SOLICITED_ACK_EXP unused)");
     return Void();
 }
@@ -126,16 +110,16 @@ bool MindoneRadio::openAtChannels(const std::string& cmdDevicePath,
 void MindoneRadio::runBootHandshake() {
     struct Step {
         const char* cmd;
-        bool required;  // false: log-and-continue on failure/timeout, true: abort the rest
+        bool required;
     };
     static const Step kSteps[] = {
         {"AT+EBOOT=1", false},
-        {"AT+CMEE=1", false},           // verbose +CME ERROR: N instead of bare ERROR
-        {"AT+CMER=1,0,0,2,0", false},   // enable unsolicited mobile-equipment-event reporting
-        {"AT+ESIMS=1", false},          // SIM-state URCs on (confirmed real, task's one correct guess)
-        {"AT+CSCS=\"UCS2\"", false},    // SMS/phonebook character set
-        {"AT+EDSDA=1", false},          // dual-SIM-dual-active mode announce (harmless single-SIM)
-        {"AT+ESLOTSINFO=1", false},     // slot-info URCs on
+        {"AT+CMEE=1", false},
+        {"AT+CMER=1,0,0,2,0", false},
+        {"AT+ESIMS=1", false},
+        {"AT+CSCS=\"UCS2\"", false},
+        {"AT+EDSDA=1", false},
+        {"AT+ESLOTSINFO=1", false},
     };
     for (const auto& step : kSteps) {
         AtResult r = mCmdChannel.sendCommand(step.cmd, AtCommandType::kNoResult, "",
@@ -146,19 +130,9 @@ void MindoneRadio::runBootHandshake() {
             if (step.required) return;
         }
     }
-    // AT+ICCID=1 and AT+EFUN=0 (radio starts powered off, matching the real RIL's lifecycle --
-    // the framework brings it up explicitly via setRadioPower(true)) are deliberately NOT sent
-    // here: AT+ICCID=1's exact URC-vs-response shape and AT+EFUN's argument semantics were not
-    // instruction-by-instruction verified (unlike AT+ESIMS/CMER/CSCS, which are plain 3GPP/ETSI
-    // commands with well-known semantics) -- sending an unverified proprietary command during
-    // an unattended connect is exactly the kind of one-shot risk the fact log's method
-    // discipline section warns against. Left for phase 2 once a live AT trace confirms them.
     ALOGI("boot handshake done");
 }
 
-// --------------------------------------------------------------------------------------------
-// getIccCardStatus
-// --------------------------------------------------------------------------------------------
 ::android::hardware::Return<void> MindoneRadio::getIccCardStatus(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
     AtResult r = mCmdChannel.sendCommand("AT+CPIN?", AtCommandType::kSingleLine, "+CPIN");
@@ -177,7 +151,7 @@ void MindoneRadio::runBootHandshake() {
         char* cur = const_cast<char*>(line.c_str());
         char* pinState = nullptr;
         V1_0::AppStatus app{};
-        app.appType = V1_0::AppType::UNKNOWN;  // AT+CPIN? does not distinguish SIM vs USIM
+        app.appType = V1_0::AppType::UNKNOWN;
         app.pin1 = V1_0::PinState::UNKNOWN;
         app.pin2 = V1_0::PinState::UNKNOWN;
         if (at_tok_start(&cur) == 0 && at_tok_nextstr(&cur, &pinState) == 0 && pinState) {
@@ -215,9 +189,6 @@ void MindoneRadio::runBootHandshake() {
     return Void();
 }
 
-// --------------------------------------------------------------------------------------------
-// getSignalStrength / getSignalStrength_1_6
-// --------------------------------------------------------------------------------------------
 namespace {
 constexpr uint32_t kInvalidU = 0x7fffffff;
 constexpr int32_t kInvalidI = 0x7fffffff;
@@ -226,9 +197,6 @@ V1_0::GsmSignalStrength invalidGsm() { return {kInvalidU, kInvalidU, kInvalidI};
 V1_0::CdmaSignalStrength invalidCdma() { return {kInvalidU, kInvalidU}; }
 V1_0::EvdoSignalStrength invalidEvdo() { return {kInvalidU, kInvalidU, kInvalidU}; }
 
-// Parses "+CSQ: <rssi>,<ber>" and converts to the 3GPP TS 27.007 asu scale GsmSignalStrength
-// expects (0-31, 99 = unknown) -- AT+CSQ already reports on that exact scale, no conversion
-// needed beyond the token split.
 bool parseCsq(const std::string& line, V1_0::GsmSignalStrength* out) {
     char* cur = const_cast<char*>(line.c_str());
     int rssi, ber;
@@ -240,7 +208,7 @@ bool parseCsq(const std::string& line, V1_0::GsmSignalStrength* out) {
     out->timingAdvance = kInvalidI;
     return true;
 }
-}  // namespace
+}
 
 ::android::hardware::Return<void> MindoneRadio::getSignalStrength(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
@@ -271,7 +239,7 @@ bool parseCsq(const std::string& line, V1_0::GsmSignalStrength* out) {
     ss.gsm = invalidGsm();
     ss.cdma = invalidCdma();
     ss.evdo = invalidEvdo();
-    ss.lte = V1_6::LteSignalStrength{};  // {} = every field 0; real "invalid" values are phase 2
+    ss.lte = V1_6::LteSignalStrength{};
     ss.tdscdma = V1_2::TdscdmaSignalStrength{};
     ss.wcdma = V1_2::WcdmaSignalStrength{};
     ss.nr = V1_6::NrSignalStrength{};
@@ -287,9 +255,6 @@ bool parseCsq(const std::string& line, V1_0::GsmSignalStrength* out) {
     return Void();
 }
 
-// --------------------------------------------------------------------------------------------
-// getVoiceRegistrationState[_1_6] / getDataRegistrationState[_1_6]
-// --------------------------------------------------------------------------------------------
 MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
     const char* cmd = isData ? "AT+CGREG?" : "AT+CREG?";
     const char* prefix = isData ? "+CGREG" : "+CREG";
@@ -299,17 +264,16 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
     char* cur = const_cast<char*>(r.intermediates.front().c_str());
     int n, stat;
     if (at_tok_start(&cur) != 0) return out;
-    if (!tokNextInt(&cur, &n)) return out;   // <n> = unsolicited-result-code mode, ignored here
+    if (!tokNextInt(&cur, &n)) return out;
     if (!tokNextInt(&cur, &stat)) return out;
-    out.regState = stat;  // +CREG/+CGREG <stat> values line up 1:1 with V1_0::RegState's own
-                           // NOT_REG_MT_NOT_SEARCHING_OP(0)..REG_DENIED(3)/UNKNOWN(4)/ROAMING(5)
-    out.rat = 0;  // RadioTechnology::UNKNOWN -- +CREG/+CGREG don't carry a RAT id; the MTK
+    out.regState = stat;
+    out.rat = 0;
     return out;
 }
 
 ::android::hardware::Return<void> MindoneRadio::getVoiceRegistrationState(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
-    RegState rs = queryRegState(/*isData=*/false);
+    RegState rs = queryRegState(false);
     V1_0::VoiceRegStateResult out{};
     out.regState = static_cast<V1_0::RegState>(rs.regState);
     out.rat = rs.rat;
@@ -329,14 +293,11 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
 
 ::android::hardware::Return<void> MindoneRadio::getVoiceRegistrationState_1_6(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
-    RegState rs = queryRegState(/*isData=*/false);
+    RegState rs = queryRegState(false);
     V1_6::RegStateResult out{};
     out.regState = static_cast<V1_0::RegState>(rs.regState);
     out.rat = static_cast<V1_4::RadioTechnology>(rs.rat);
     out.reasonForDenial = V1_5::RegistrationFailCause::NONE;
-    // cellIdentity, registeredPlmn, accessTechnologySpecificInfo: left HIDL-default (empty
-    // string / "noinit" safe-union variant) -- not yet parsed from AT+CREG's optional
-    // <lac>,<ci>,<AcT> tail. Spec-legal; phase 2 should fill these in.
     if (mResponseV1_6) {
         const auto info = mkInfo16(serial, V1_6::RadioError::NONE);
         mResponseV1_6->getVoiceRegistrationStateResponse_1_6(info, out);
@@ -348,7 +309,7 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
 
 ::android::hardware::Return<void> MindoneRadio::getDataRegistrationState(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
-    RegState rs = queryRegState(/*isData=*/true);
+    RegState rs = queryRegState(true);
     V1_0::DataRegStateResult out{};
     out.regState = static_cast<V1_0::RegState>(rs.regState);
     out.rat = rs.rat;
@@ -365,7 +326,7 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
 
 ::android::hardware::Return<void> MindoneRadio::getDataRegistrationState_1_6(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
-    RegState rs = queryRegState(/*isData=*/true);
+    RegState rs = queryRegState(true);
     V1_6::RegStateResult out{};
     out.regState = static_cast<V1_0::RegState>(rs.regState);
     out.rat = static_cast<V1_4::RadioTechnology>(rs.rat);
@@ -379,9 +340,6 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
     return Void();
 }
 
-// --------------------------------------------------------------------------------------------
-// getOperator
-// --------------------------------------------------------------------------------------------
 ::android::hardware::Return<void> MindoneRadio::getOperator(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
     AtResult r = mCmdChannel.sendCommand("AT+COPS?", AtCommandType::kSingleLine, "+COPS");
@@ -395,7 +353,6 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
             name = oper;
         }
     }
-    // Same string for long/short/numeric -- see file header "scope".
     const auto info = mkInfo(serial, V1_0::RadioError::NONE);
     if (mResponseV1_6) {
         mResponseV1_6->getOperatorResponse(info, name, name, name);
@@ -405,9 +362,6 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
     return Void();
 }
 
-// --------------------------------------------------------------------------------------------
-// dial / hangup / getCurrentCalls[_1_6] / acceptCall
-// --------------------------------------------------------------------------------------------
 ::android::hardware::Return<void> MindoneRadio::dial(int32_t serial, const V1_0::Dial& dialInfo) {
     std::lock_guard<std::mutex> lk(mAtLock);
     std::string cmd = "ATD" + std::string(dialInfo.address) + ";";
@@ -424,8 +378,6 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
 
 ::android::hardware::Return<void> MindoneRadio::hangup(int32_t serial, int32_t gsmIndex) {
     std::lock_guard<std::mutex> lk(mAtLock);
-    // 3GPP TS 27.007 +CHLD=1X releases a specific active call X and accepts any other
-    // held/waiting call -- the closest standard primitive to "hang up call #gsmIndex".
     std::string cmd = "AT+CHLD=1" + std::to_string(gsmIndex);
     AtResult r = mCmdChannel.sendCommand(cmd, AtCommandType::kNoResult);
     const auto info =
@@ -439,8 +391,6 @@ MindoneRadio::RegState MindoneRadio::queryRegState(bool isData) {
 }
 
 namespace {
-// Parses one "+CLCC: <id>,<dir>,<stat>,<mode>,<mpty>[,<number>,<type>[,<alpha>]]" line into a
-// V1_0::Call. 3GPP TS 27.007 7.18.
 bool parseClccLine(const std::string& line, V1_0::Call* out) {
     char* cur = const_cast<char*>(line.c_str());
     int id, dir, stat, mode, mpty;
@@ -451,7 +401,7 @@ bool parseClccLine(const std::string& line, V1_0::Call* out) {
     if (!tokNextInt(&cur, &mode)) return false;
     if (!tokNextInt(&cur, &mpty)) return false;
     out->index = id;
-    out->state = static_cast<V1_0::CallState>(stat);  // 3GPP stat values line up with CallState
+    out->state = static_cast<V1_0::CallState>(stat);
     out->isMpty = mpty != 0;
     out->isMT = dir != 0;
     out->isVoice = (mode == 0);
@@ -466,7 +416,7 @@ bool parseClccLine(const std::string& line, V1_0::Call* out) {
     }
     return true;
 }
-}  // namespace
+}
 
 ::android::hardware::Return<void> MindoneRadio::getCurrentCalls(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
@@ -519,16 +469,9 @@ bool parseClccLine(const std::string& line, V1_0::Call* out) {
     return Void();
 }
 
-// --------------------------------------------------------------------------------------------
-// sendSms
-// --------------------------------------------------------------------------------------------
 ::android::hardware::Return<void> MindoneRadio::sendSms(int32_t serial,
                                                           const V1_0::GsmSmsMessage& message) {
     std::lock_guard<std::mutex> lk(mAtLock);
-    // TP-layer length in octets, per 3GPP TS 27.005 4.3 -- the PDU minus the SMSC prefix, which
-    // is either absent (single "00" byte meaning "use stored SMSC") or the smscPdu field; we
-    // always send "00" (use stored SMSC), matching most reference-ril-derived implementations'
-    // simplest path, and note the length is (pdu.size()/2 - 1) octets (the leading "00").
     const std::string& pdu = message.pdu;
     int pduLenOctets = static_cast<int>(pdu.size() / 2) - 1;
     std::string cmd = "AT+CMGS=" + std::to_string(pduLenOctets);
@@ -552,12 +495,8 @@ bool parseClccLine(const std::string& line, V1_0::Call* out) {
     return Void();
 }
 
-// --------------------------------------------------------------------------------------------
-// setupDataCall[_1_2/_1_4/_1_5/_1_6] / deactivateDataCall[_1_2]
-// --------------------------------------------------------------------------------------------
 V1_6::SetupDataCallResult MindoneRadio::doSetupDataCall(int32_t cid, const std::string& apn,
                                                           const std::string& protocol) {
-    // See file header "scope": fixed cid, IPv4 default bearer, no auth, best-effort ifname.
     std::string cgdcont =
         "AT+CGDCONT=" + std::to_string(cid) + ",\"" + protocol + "\",\"" + apn + "\"";
     AtResult r1 = mCmdChannel.sendCommand(cgdcont, AtCommandType::kNoResult);
@@ -569,12 +508,11 @@ V1_6::SetupDataCallResult MindoneRadio::doSetupDataCall(int32_t cid, const std::
     out.suggestedRetryTime = -1;
     out.mtuV4 = 1500;
     out.mtuV6 = 1500;
-    (void)protocol;  // fixed to IP for this phase-1 skeleton, see file header "scope"
+    (void)protocol;
     if (r1.ok && r2.ok) {
         out.cause = V1_6::DataCallFailCause::NONE;
         out.active = V1_4::DataConnActiveStatus::ACTIVE;
         out.type = V1_4::PdpProtocolType::IP;
-        // Best-effort placeholder -- NOT confirmed against a live data call, see file header.
         out.ifname = "ccmni0";
     } else {
         out.cause = V1_6::DataCallFailCause::ERROR_UNSPECIFIED;
@@ -592,10 +530,6 @@ bool MindoneRadio::doDeactivateDataCall(int32_t cid) {
 }
 
 namespace {
-// V1_6::SetupDataCallResult.type/active are enums (V1_4::PdpProtocolType/DataConnActiveStatus);
-// V1_0::SetupDataCallResult.type is a plain hidl_string and its mtu is a single field (mtuV4/V6
-// only exist from 1.5 on) -- hence the fixed "IP" literal and the mtuV4 source below, not a
-// direct field copy.
 V1_0::SetupDataCallResult downcastToV0(const V1_6::SetupDataCallResult& r6) {
     V1_0::SetupDataCallResult r0{};
     r0.status = static_cast<V1_0::DataCallFailCause>(static_cast<int32_t>(r6.cause));
@@ -604,8 +538,6 @@ V1_0::SetupDataCallResult downcastToV0(const V1_6::SetupDataCallResult& r6) {
     r0.active = static_cast<int32_t>(r6.active);
     r0.type = "IP";
     r0.ifname = r6.ifname;
-    // addresses/dnses/gateways/pcscf are comma-joined strings pre-1.4; left empty here since
-    // this skeleton does not yet run DHCP/parse +CGCONTRDP for the assigned address (phase 2).
     r0.mtu = r6.mtuV4;
     return r0;
 }
@@ -632,12 +564,12 @@ V1_5::SetupDataCallResult toV5(const V1_6::SetupDataCallResult& r6) {
     r5.mtuV6 = r6.mtuV6;
     return r5;
 }
-}  // namespace
+}
 
 ::android::hardware::Return<void> MindoneRadio::setupDataCall(
-    int32_t serial, V1_0::RadioTechnology /*radioTechnology*/,
-    const V1_0::DataProfileInfo& dataProfileInfo, bool /*modemCognitive*/,
-    bool /*roamingAllowed*/, bool /*isRoaming*/) {
+    int32_t serial, V1_0::RadioTechnology ,
+    const V1_0::DataProfileInfo& dataProfileInfo, bool ,
+    bool , bool ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     V1_6::SetupDataCallResult r6 = doSetupDataCall(1, dataProfileInfo.apn, "IP");
     const auto info = mkInfo(serial, r6.cause == V1_6::DataCallFailCause::NONE
@@ -653,10 +585,10 @@ V1_5::SetupDataCallResult toV5(const V1_6::SetupDataCallResult& r6) {
 }
 
 ::android::hardware::Return<void> MindoneRadio::setupDataCall_1_2(
-    int32_t serial, V1_2::AccessNetwork /*accessNetwork*/,
-    const V1_0::DataProfileInfo& dataProfileInfo, bool /*modemCognitive*/, bool /*roamingAllowed*/,
-    bool /*isRoaming*/, V1_2::DataRequestReason /*reason*/,
-    const hidl_vec<hidl_string>& /*addresses*/, const hidl_vec<hidl_string>& /*dnses*/) {
+    int32_t serial, V1_2::AccessNetwork ,
+    const V1_0::DataProfileInfo& dataProfileInfo, bool , bool ,
+    bool , V1_2::DataRequestReason ,
+    const hidl_vec<hidl_string>& , const hidl_vec<hidl_string>& ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     V1_6::SetupDataCallResult r6 = doSetupDataCall(1, dataProfileInfo.apn, "IP");
     const auto info = mkInfo(serial, r6.cause == V1_6::DataCallFailCause::NONE
@@ -672,15 +604,12 @@ V1_5::SetupDataCallResult toV5(const V1_6::SetupDataCallResult& r6) {
 }
 
 ::android::hardware::Return<void> MindoneRadio::setupDataCall_1_4(
-    int32_t serial, V1_4::AccessNetwork /*accessNetwork*/,
-    const V1_4::DataProfileInfo& dataProfileInfo, bool /*roamingAllowed*/,
-    V1_2::DataRequestReason /*reason*/, const hidl_vec<hidl_string>& /*addresses*/,
-    const hidl_vec<hidl_string>& /*dnses*/) {
+    int32_t serial, V1_4::AccessNetwork ,
+    const V1_4::DataProfileInfo& dataProfileInfo, bool ,
+    V1_2::DataRequestReason , const hidl_vec<hidl_string>& ,
+    const hidl_vec<hidl_string>& ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     V1_6::SetupDataCallResult r6 = doSetupDataCall(1, dataProfileInfo.apn, "IP");
-    // setupDataCallResponse_1_4 is declared starting at IRadioResponse@1.4 -- only reachable via
-    // mResponseV1_6 (our only cached pointer above 1.0), never a plain V1_0 fallback (confirmed
-    // by synchk-ril.sh: calling it through mResponseV1_0 does not compile).
     if (mResponseV1_6) {
         const auto info = mkInfo(serial, r6.cause == V1_6::DataCallFailCause::NONE
                                               ? V1_0::RadioError::NONE
@@ -693,14 +622,12 @@ V1_5::SetupDataCallResult toV5(const V1_6::SetupDataCallResult& r6) {
 }
 
 ::android::hardware::Return<void> MindoneRadio::setupDataCall_1_5(
-    int32_t serial, V1_5::AccessNetwork /*accessNetwork*/,
-    const V1_5::DataProfileInfo& dataProfileInfo, bool /*roamingAllowed*/,
-    V1_2::DataRequestReason /*reason*/, const hidl_vec<V1_5::LinkAddress>& /*addresses*/,
-    const hidl_vec<hidl_string>& /*dnses*/) {
+    int32_t serial, V1_5::AccessNetwork ,
+    const V1_5::DataProfileInfo& dataProfileInfo, bool ,
+    V1_2::DataRequestReason , const hidl_vec<V1_5::LinkAddress>& ,
+    const hidl_vec<hidl_string>& ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     V1_6::SetupDataCallResult r6 = doSetupDataCall(1, dataProfileInfo.apn, "IP");
-    // setupDataCallResponse_1_5 is declared starting at IRadioResponse@1.5 -- V1_6-pointer only,
-    // same reasoning as setupDataCall_1_4 above.
     if (mResponseV1_6) {
         const auto info = mkInfo(serial, r6.cause == V1_6::DataCallFailCause::NONE
                                               ? V1_0::RadioError::NONE
@@ -713,12 +640,12 @@ V1_5::SetupDataCallResult toV5(const V1_6::SetupDataCallResult& r6) {
 }
 
 ::android::hardware::Return<void> MindoneRadio::setupDataCall_1_6(
-    int32_t serial, V1_5::AccessNetwork /*accessNetwork*/,
-    const V1_5::DataProfileInfo& dataProfileInfo, bool /*roamingAllowed*/,
-    V1_2::DataRequestReason /*reason*/, const hidl_vec<V1_5::LinkAddress>& /*addresses*/,
-    const hidl_vec<hidl_string>& /*dnses*/, int32_t /*pduSessionId*/,
-    const V1_6::OptionalSliceInfo& /*sliceInfo*/,
-    const V1_6::OptionalTrafficDescriptor& /*trafficDescriptor*/, bool /*matchAllRuleAllowed*/) {
+    int32_t serial, V1_5::AccessNetwork ,
+    const V1_5::DataProfileInfo& dataProfileInfo, bool ,
+    V1_2::DataRequestReason , const hidl_vec<V1_5::LinkAddress>& ,
+    const hidl_vec<hidl_string>& , int32_t ,
+    const V1_6::OptionalSliceInfo& ,
+    const V1_6::OptionalTrafficDescriptor& , bool ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     V1_6::SetupDataCallResult r6 = doSetupDataCall(1, dataProfileInfo.apn, "IP");
     if (mResponseV1_6) {
@@ -733,7 +660,7 @@ V1_5::SetupDataCallResult toV5(const V1_6::SetupDataCallResult& r6) {
 }
 
 ::android::hardware::Return<void> MindoneRadio::deactivateDataCall(int32_t serial, int32_t cid,
-                                                                     bool /*reasonRadioShutDown*/) {
+                                                                     bool ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     bool ok = doDeactivateDataCall(cid);
     const auto info = mkInfo(serial, ok ? V1_0::RadioError::NONE : V1_0::RadioError::MODEM_ERR);
@@ -746,7 +673,7 @@ V1_5::SetupDataCallResult toV5(const V1_6::SetupDataCallResult& r6) {
 }
 
 ::android::hardware::Return<void> MindoneRadio::deactivateDataCall_1_2(
-    int32_t serial, int32_t cid, V1_2::DataRequestReason /*reason*/) {
+    int32_t serial, int32_t cid, V1_2::DataRequestReason ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     bool ok = doDeactivateDataCall(cid);
     const auto info = mkInfo(serial, ok ? V1_0::RadioError::NONE : V1_0::RadioError::MODEM_ERR);
@@ -810,12 +737,11 @@ void MindoneRadio::applyPowerSavingProfileLocked() {
 }
 
 ::android::hardware::Return<void> MindoneRadio::setRadioPower_1_5(
-    int32_t serial, bool powerOn, bool /*forEmergencyCall*/, bool /*preferredForEmergencyCall*/) {
+    int32_t serial, bool powerOn, bool , bool ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     AtResult r = mCmdChannel.sendCommand(powerOn ? "AT+CFUN=1" : "AT+CFUN=0",
                                           AtCommandType::kNoResult, "", AtChannel::kBootTimeoutMs);
     if (r.ok) mRadioPowerOn = powerOn;
-    // setRadioPowerResponse_1_5 is declared starting at IRadioResponse@1.5 -- V1_6-pointer only.
     if (mResponseV1_6) {
         const auto info =
             mkInfo(serial, r.ok ? V1_0::RadioError::NONE : V1_0::RadioError::MODEM_ERR);
@@ -827,7 +753,7 @@ void MindoneRadio::applyPowerSavingProfileLocked() {
 }
 
 ::android::hardware::Return<void> MindoneRadio::setRadioPower_1_6(
-    int32_t serial, bool powerOn, bool /*forEmergencyCall*/, bool /*preferredForEmergencyCall*/) {
+    int32_t serial, bool powerOn, bool , bool ) {
     std::lock_guard<std::mutex> lk(mAtLock);
     AtResult r = mCmdChannel.sendCommand(powerOn ? "AT+CFUN=1" : "AT+CFUN=0",
                                           AtCommandType::kNoResult, "", AtChannel::kBootTimeoutMs);
@@ -842,15 +768,8 @@ void MindoneRadio::applyPowerSavingProfileLocked() {
     return Void();
 }
 
-// --------------------------------------------------------------------------------------------
-// getDeviceIdentity
-// --------------------------------------------------------------------------------------------
 ::android::hardware::Return<void> MindoneRadio::getDeviceIdentity(int32_t serial) {
     std::lock_guard<std::mutex> lk(mAtLock);
-    // Plain AT+CGSN, matching what RmcOemRequestHandler::requestGetImei() itself sends (recon
-    // finding, see modem/ril/AT-MAP-NOTES.md "surprises" -- the class mixes this
-    // standard command with the proprietary AT+EGMR family for other identity fields, not used
-    // here). IMEISV/ESN/MEID are left empty -- see file header "scope".
     AtResult r = mCmdChannel.sendCommand("AT+CGSN", AtCommandType::kNumeric);
     hidl_string imei;
     if (r.ok && !r.intermediates.empty()) imei = r.intermediates.front();
@@ -863,4 +782,4 @@ void MindoneRadio::applyPowerSavingProfileLocked() {
     return Void();
 }
 
-}  // namespace mindone::ril
+}

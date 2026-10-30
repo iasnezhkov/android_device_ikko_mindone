@@ -1,16 +1,25 @@
+/*
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #include <android/log.h>
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/eventfd.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 #define LOG_TAG "[WFCA] "
@@ -81,12 +90,18 @@ enum {
 
 typedef struct {
     int in_use;
-    int fd;
-    sa_family_t family;
     uint32_t req_id;
-    struct sockaddr_storage peer;
-    socklen_t peer_len;
+    uint8_t body[IMSA_BODY_FILTER_REGISTER];
+    int socket_id;
 } filter_slot_t;
+
+typedef struct {
+    int in_use;
+    int fd;
+    int filter_id;
+    struct sockaddr_storage local;
+    socklen_t local_len;
+} socket_slot_t;
 
 typedef struct {
     uint8_t status;
@@ -126,8 +141,12 @@ typedef struct {
 
 static pthread_mutex_t g_filters_lock = PTHREAD_MUTEX_INITIALIZER;
 static filter_slot_t g_filters[MAX_FILTERS];
+static socket_slot_t g_sockets[MAX_FILTERS];
+static int g_filters_event_fd = -1;
 
 static pthread_mutex_t g_pdn_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_pdn_changed;
+static struct timespec g_pdn_gc_deadline;
 static pdn_slot_t g_pdn[MAX_PDN];
 
 static imsa_ctx_t g_imsa = {.fd = -1, .lock = PTHREAD_MUTEX_INITIALIZER};
@@ -139,6 +158,36 @@ static int g_wake_lock_fd = -1;
 static int g_wake_unlock_fd = -1;
 static pthread_mutex_t g_wake_lock_init = PTHREAD_MUTEX_INITIALIZER;
 static int g_wake_lock_ready;
+
+static void filters_changed_locked(void)
+{
+    uint64_t value = 1;
+    ssize_t n;
+
+    do {
+        n = write(g_filters_event_fd, &value, sizeof(value));
+    } while (n < 0 && errno == EINTR);
+    if (n < 0 && errno != EAGAIN)
+        LOGE("filter notification fail:%s", strerror(errno));
+}
+
+static void pdn_gc_advance_locked(const struct timespec *now)
+{
+    if (now->tv_sec > g_pdn_gc_deadline.tv_sec ||
+        (now->tv_sec == g_pdn_gc_deadline.tv_sec &&
+         now->tv_nsec >= g_pdn_gc_deadline.tv_nsec)) {
+        for (int i = 0; i < MAX_PDN; i++) {
+            if (g_pdn[i].status == RDS_STATUS_FRESH) {
+                g_pdn[i].status = RDS_STATUS_STALE;
+                LOGD("clear pdn_id:%d status", i);
+            }
+        }
+        time_t elapsed = now->tv_sec - g_pdn_gc_deadline.tv_sec;
+        if (now->tv_nsec < g_pdn_gc_deadline.tv_nsec)
+            elapsed--;
+        g_pdn_gc_deadline.tv_sec += (elapsed / 50 + 1) * 50;
+    }
+}
 
 static void wake_lock_open(void)
 {
@@ -180,6 +229,8 @@ static ssize_t read_full(int fd, void *buf, size_t want)
 
     while (got < want) {
         ssize_t n = read(fd, p + got, want - got);
+        if (n < 0 && errno == EINTR)
+            continue;
         if (n < 0)
             return -2;
         if (n == 0)
@@ -196,6 +247,8 @@ static ssize_t write_full(int fd, const void *buf, size_t want)
 
     while (done < want) {
         ssize_t n = write(fd, p + done, want - done);
+        if (n < 0 && errno == EINTR)
+            continue;
         if (n < 0)
             return -2;
         if (n == 0) {
@@ -286,7 +339,8 @@ static void relay_queue_push(relay_queue_t *q, uint8_t dir_uplink, const uint8_t
     rec->data[2] = (uint8_t)(len & 0xFF);
     rec->data[3] = (uint8_t)((len >> 8) & 0xFF);
     memcpy(rec->data + 4, payload, len);
-    rec->len = 4 + len;
+    memset(rec->data + 4 + len, 0, RELAY_MAX_PAYLOAD - len);
+    rec->len = RELAY_RECORD_LEN;
     q->count++;
     pthread_mutex_unlock(&q->lock);
 }
@@ -353,18 +407,146 @@ static ssize_t imsa_body_size_for(uint8_t type, const uint8_t *hdr4)
 
 static int filter_find_by_id(uint32_t id)
 {
-    for (int i = 0; i < MAX_FILTERS; i++)
+    for (int n = 0; n < MAX_FILTERS; n++) {
+        int i = (id + n) % MAX_FILTERS;
         if (g_filters[i].in_use && g_filters[i].req_id == id)
             return i;
+    }
     return -1;
 }
 
-static int filter_find_free(void)
+static int filter_find_free(uint32_t id)
 {
-    for (int i = 0; i < MAX_FILTERS; i++)
+    for (int n = 0; n < MAX_FILTERS; n++) {
+        int i = (id + n) % MAX_FILTERS;
         if (!g_filters[i].in_use)
             return i;
+    }
     return -1;
+}
+
+static int filter_addr(uint8_t version, const uint8_t *ip, const uint8_t *port,
+                       struct sockaddr_storage *addr, socklen_t *addr_len)
+{
+    uint16_t value;
+
+    memcpy(&value, port, sizeof(value));
+    memset(addr, 0, sizeof(*addr));
+    if (version == 1) {
+        struct sockaddr_in *v4 = (struct sockaddr_in *)addr;
+        v4->sin_family = AF_INET;
+        v4->sin_port = htons(value);
+        memcpy(&v4->sin_addr, ip, sizeof(v4->sin_addr));
+        *addr_len = sizeof(*v4);
+    } else if (version == 2) {
+        struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)addr;
+        v6->sin6_family = AF_INET6;
+        v6->sin6_port = htons(value);
+        memcpy(&v6->sin6_addr, ip, sizeof(v6->sin6_addr));
+        *addr_len = sizeof(*v6);
+    } else {
+        return -1;
+    }
+    return 0;
+}
+
+static int socket_find(const struct sockaddr_storage *addr)
+{
+    const struct sockaddr_in *v4 = (const struct sockaddr_in *)addr;
+    uint16_t port = ntohs(v4->sin_port);
+
+    for (int n = 0; n < MAX_FILTERS; n++) {
+        int i = (port + n) % MAX_FILTERS;
+        const struct sockaddr_storage *local = &g_sockets[i].local;
+        if (!g_sockets[i].in_use || local->ss_family != addr->ss_family)
+            continue;
+        if (addr->ss_family == AF_INET) {
+            const struct sockaddr_in *a = (const struct sockaddr_in *)addr;
+            const struct sockaddr_in *b = (const struct sockaddr_in *)local;
+            if (a->sin_port == b->sin_port &&
+                (a->sin_addr.s_addr == INADDR_ANY || b->sin_addr.s_addr == INADDR_ANY ||
+                 a->sin_addr.s_addr == b->sin_addr.s_addr))
+                return i;
+        } else if (addr->ss_family == AF_INET6) {
+            const struct sockaddr_in6 *a = (const struct sockaddr_in6 *)addr;
+            const struct sockaddr_in6 *b = (const struct sockaddr_in6 *)local;
+            if (a->sin6_port == b->sin6_port &&
+                (IN6_IS_ADDR_UNSPECIFIED(&a->sin6_addr) ||
+                 IN6_IS_ADDR_UNSPECIFIED(&b->sin6_addr) ||
+                 memcmp(&a->sin6_addr, &b->sin6_addr, sizeof(a->sin6_addr)) == 0))
+                return i;
+        }
+    }
+    return -1;
+}
+
+static int socket_find_free(const struct sockaddr_storage *addr)
+{
+    const struct sockaddr_in *v4 = (const struct sockaddr_in *)addr;
+    uint16_t port = ntohs(v4->sin_port);
+
+    for (int n = 0; n < MAX_FILTERS; n++) {
+        int i = (port + n) % MAX_FILTERS;
+        if (!g_sockets[i].in_use)
+            return i;
+    }
+    return -1;
+}
+
+static void socket_configure(int sid, const uint8_t *body)
+{
+    int fd = g_sockets[sid].fd;
+    uint32_t mark;
+    int tos = body[46] << 2;
+    int priority = body[47];
+
+    memcpy(&mark, body + 48, sizeof(mark));
+    mark |= 0xF0000;
+    setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
+    if (body[9] == 1)
+        setsockopt(fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
+    else
+        setsockopt(fd, IPPROTO_IPV6, IPV6_TCLASS, &tos, sizeof(tos));
+    setsockopt(fd, SOL_SOCKET, SO_PRIORITY, &priority, sizeof(priority));
+}
+
+static int filter_bind_socket(int slot, const uint8_t *body)
+{
+    struct sockaddr_storage local;
+    socklen_t local_len;
+
+    if (filter_addr(body[9], body + 10, body + 42, &local, &local_len) < 0)
+        return -1;
+    int sid = socket_find(&local);
+    if (sid < 0) {
+        sid = socket_find_free(&local);
+        if (sid < 0)
+            return -1;
+        int fd = socket(local.ss_family, SOCK_DGRAM, IPPROTO_UDP);
+        if (fd < 0)
+            return -1;
+        if (bind(fd, (struct sockaddr *)&local, local_len) < 0)
+            LOGE("bind fail, error:%s", strerror(errno));
+        g_sockets[sid].in_use = 1;
+        g_sockets[sid].fd = fd;
+        g_sockets[sid].local = local;
+        g_sockets[sid].local_len = local_len;
+    }
+    g_sockets[sid].filter_id = slot;
+    g_filters[slot].socket_id = sid;
+    memcpy(g_filters[slot].body, body, sizeof(g_filters[slot].body));
+    socket_configure(sid, body);
+    return 0;
+}
+
+static void socket_release(int sid)
+{
+    if (sid < 0 || sid >= MAX_FILTERS || !g_sockets[sid].in_use)
+        return;
+    close(g_sockets[sid].fd);
+    memset(&g_sockets[sid], 0, sizeof(g_sockets[sid]));
+    g_sockets[sid].fd = -1;
+    g_sockets[sid].filter_id = -1;
 }
 
 static void handle_imsa_filter_register(const uint8_t *body, size_t len)
@@ -374,16 +556,20 @@ static void handle_imsa_filter_register(const uint8_t *body, size_t len)
 
     memcpy(&id, body, sizeof(id));
     pthread_mutex_lock(&g_filters_lock);
-    int slot = filter_find_by_id(id);
-    if (slot < 0)
-        slot = filter_find_free();
+    int slot = filter_find_free(id);
     if (slot < 0) {
+        pthread_mutex_unlock(&g_filters_lock);
+        LOGE("filter_allocate error");
+        return;
+    }
+    if (filter_bind_socket(slot, body) < 0) {
         pthread_mutex_unlock(&g_filters_lock);
         LOGE("filter_allocate error");
         return;
     }
     g_filters[slot].in_use = 1;
     g_filters[slot].req_id = id;
+    filters_changed_locked();
     pthread_mutex_unlock(&g_filters_lock);
 
     LOGD("Register wfc downlink filter\n");
@@ -402,6 +588,12 @@ static void handle_imsa_filter_update(const uint8_t *body, size_t len)
     memcpy(&id, body, sizeof(id));
     pthread_mutex_lock(&g_filters_lock);
     int slot = filter_find_by_id(id);
+    if (slot < 0 || filter_bind_socket(slot, body) < 0) {
+        pthread_mutex_unlock(&g_filters_lock);
+        LOGE("filter_allocate error");
+        return;
+    }
+    filters_changed_locked();
     pthread_mutex_unlock(&g_filters_lock);
 
     LOGD("Update wfc downlink filter \n");
@@ -421,10 +613,10 @@ static void handle_imsa_filter_deregister(const uint8_t *body, size_t len)
     pthread_mutex_lock(&g_filters_lock);
     int slot = filter_find_by_id(id);
     if (slot >= 0) {
-        if (g_filters[slot].fd >= 0)
-            close(g_filters[slot].fd);
+        socket_release(g_filters[slot].socket_id);
         memset(&g_filters[slot], 0, sizeof(g_filters[slot]));
-        g_filters[slot].fd = -1;
+        g_filters[slot].socket_id = -1;
+        filters_changed_locked();
     }
     pthread_mutex_unlock(&g_filters_lock);
 
@@ -440,11 +632,11 @@ static void handle_imsa_reset(void)
 {
     pthread_mutex_lock(&g_filters_lock);
     for (int i = 0; i < MAX_FILTERS; i++) {
-        if (g_filters[i].in_use && g_filters[i].fd >= 0)
-            close(g_filters[i].fd);
+        socket_release(i);
         memset(&g_filters[i], 0, sizeof(g_filters[i]));
-        g_filters[i].fd = -1;
+        g_filters[i].socket_id = -1;
     }
+    filters_changed_locked();
     pthread_mutex_unlock(&g_filters_lock);
     LOGD("WFCA Reset success");
     imsa_send(IMSA_MSG_RESET_ACK, NULL, 0);
@@ -463,11 +655,15 @@ static void handle_imsa_pkt_loss_rpt(const uint8_t *body, size_t len)
     LOGD("PKT_LOSS_RPT version:%u", version);
 
     pthread_mutex_lock(&g_pdn_lock);
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    pdn_gc_advance_locked(&now);
     pdn_slot_t *slot = &g_pdn[pdn_id];
     slot->pdn_id = pdn_id;
     slot->status = RDS_STATUS_FRESH;
     slot->body_len = len < sizeof(slot->body) ? len : sizeof(slot->body);
     memcpy(slot->body, body, slot->body_len);
+    pthread_cond_signal(&g_pdn_changed);
     pthread_mutex_unlock(&g_pdn_lock);
 }
 
@@ -488,11 +684,14 @@ static void handle_imsa_send(const uint8_t *body, size_t len)
 
     pthread_mutex_lock(&g_filters_lock);
     int slot = filter_find_by_id(id);
-    filter_slot_t local;
+    socket_slot_t local;
     int have = 0;
-    if (slot >= 0 && g_filters[slot].fd >= 0) {
-        local = g_filters[slot];
-        have = 1;
+    if (slot >= 0) {
+        int sid = g_filters[slot].socket_id;
+        if (sid >= 0 && sid < MAX_FILTERS && g_sockets[sid].in_use) {
+            local = g_sockets[sid];
+            have = 1;
+        }
     }
     pthread_mutex_unlock(&g_filters_lock);
 
@@ -505,91 +704,277 @@ static void handle_imsa_send(const uint8_t *body, size_t len)
         LOGE("IPver is wrong\n");
         return;
     }
+    struct sockaddr_storage peer;
+    socklen_t peer_len;
+    if (filter_addr(ip_ver, body + 26, body + 44, &peer, &peer_len) < 0)
+        return;
     sendto(local.fd, body + IMSA_BODY_SEND_HDR, payload_len, 0,
-           (struct sockaddr *)&local.peer, local.peer_len);
+           (struct sockaddr *)&peer, peer_len);
+}
+
+typedef struct {
+    uint8_t request[IMSA_BODY_PING_PCSCF];
+    uint8_t filter[IMSA_BODY_FILTER_REGISTER];
+} ping_job_t;
+
+static uint16_t ping_checksum(const uint8_t *data, size_t len)
+{
+    uint32_t sum = 0;
+    while (len > 1) {
+        sum += ((uint32_t)data[0] << 8) | data[1];
+        data += 2;
+        len -= 2;
+    }
+    if (len)
+        sum += (uint32_t)data[0] << 8;
+    while (sum >> 16)
+        sum = (sum & 0xffff) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
+static int64_t ping_millis(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+        return -1;
+    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static int ping_probe(const ping_job_t *job)
+{
+    struct sockaddr_storage local, peer;
+    socklen_t local_len, peer_len;
+    const uint8_t zero_port[2] = {0};
+    uint8_t version = job->filter[9];
+    uint32_t mark;
+    int received = 0;
+
+    if (filter_addr(version, job->filter + 10, zero_port, &local, &local_len) < 0 ||
+        filter_addr(version, job->request + 4, zero_port, &peer, &peer_len) < 0)
+        return -1;
+    int protocol = version == 1 ? IPPROTO_ICMP : IPPROTO_ICMPV6;
+    int fd = socket(local.ss_family, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, protocol);
+    if (fd < 0)
+        return -1;
+    memcpy(&mark, job->filter + 48, sizeof(mark));
+    mark |= 0xf0000;
+    if (setsockopt(fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) < 0 ||
+        bind(fd, (struct sockaddr *)&local, local_len) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    uint16_t ident = htons((uint16_t)getpid());
+    for (uint16_t seq = 1; seq <= 5; seq++) {
+        uint8_t request[42] = {0};
+        uint16_t sequence = htons(seq);
+        request[0] = version == 1 ? 8 : 128;
+        memcpy(request + 4, &ident, sizeof(ident));
+        memcpy(request + 6, &sequence, sizeof(sequence));
+        if (version == 1) {
+            uint16_t checksum = htons(ping_checksum(request, sizeof(request)));
+            memcpy(request + 2, &checksum, sizeof(checksum));
+        }
+        if (sendto(fd, request, sizeof(request), 0,
+                   (struct sockaddr *)&peer, peer_len) != (ssize_t)sizeof(request)) {
+            received = -1;
+            break;
+        }
+        int64_t start = ping_millis();
+        if (start < 0) {
+            received = -1;
+            break;
+        }
+        int64_t deadline = start + 1000;
+        int matched = 0;
+        for (;;) {
+            int64_t now = ping_millis();
+            if (now < 0 || now >= deadline)
+                break;
+            struct pollfd pfd = {.fd = fd, .events = POLLIN};
+            int ready = poll(&pfd, 1, (int)(deadline - now));
+            if (ready < 0 && errno == EINTR)
+                continue;
+            if (ready <= 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)))
+                break;
+            uint8_t reply[2048];
+            struct sockaddr_storage from;
+            socklen_t from_len = sizeof(from);
+            ssize_t n = recvfrom(fd, reply, sizeof(reply), 0,
+                                 (struct sockaddr *)&from, &from_len);
+            if (n < 0) {
+                if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                    continue;
+                break;
+            }
+            size_t offset = 0;
+            if (version == 1) {
+                if (n < 20 || (reply[0] >> 4) != 4 || reply[9] != IPPROTO_ICMP)
+                    continue;
+                offset = (reply[0] & 15u) * 4u;
+                if (offset < 20)
+                    continue;
+            }
+            if ((size_t)n < offset + 8 || reply[offset] != (version == 1 ? 0 : 129) ||
+                reply[offset + 1] != 0 || memcmp(reply + offset + 4, &ident, 2) ||
+                memcmp(reply + offset + 6, &sequence, 2))
+                continue;
+            if (from.ss_family != peer.ss_family)
+                continue;
+            if (version == 1) {
+                if (((struct sockaddr_in *)&from)->sin_addr.s_addr !=
+                    ((struct sockaddr_in *)&peer)->sin_addr.s_addr)
+                    continue;
+            } else if (memcmp(&((struct sockaddr_in6 *)&from)->sin6_addr,
+                              &((struct sockaddr_in6 *)&peer)->sin6_addr,
+                              sizeof(struct in6_addr))) {
+                continue;
+            }
+            if (!matched) {
+                received++;
+                matched = 1;
+            }
+        }
+    }
+    close(fd);
+    return received;
+}
+
+static void *ping_thread(void *arg)
+{
+    ping_job_t *job = arg;
+    int result = ping_probe(job);
+    LOGD("P-CSCF probe result:%d", result);
+    imsa_send(IMSA_MSG_PING_PCSCF_TRIGGER, job->request, sizeof(job->request));
+    free(job);
+    return NULL;
+}
+
+static void handle_imsa_ping(const uint8_t *body, size_t len)
+{
+    uint32_t id;
+    pthread_t tid;
+    if (len != IMSA_BODY_PING_PCSCF)
+        return;
+    memcpy(&id, body, sizeof(id));
+    ping_job_t *job = malloc(sizeof(*job));
+    if (!job)
+        return;
+    pthread_mutex_lock(&g_filters_lock);
+    int slot = filter_find_by_id(id);
+    if (slot >= 0)
+        memcpy(job->filter, g_filters[slot].body, sizeof(job->filter));
+    pthread_mutex_unlock(&g_filters_lock);
+    if (slot < 0) {
+        free(job);
+        return;
+    }
+    memcpy(job->request, body, sizeof(job->request));
+    int error = pthread_create(&tid, NULL, ping_thread, job);
+    if (error) {
+        LOGE("P-CSCF thread: %s", strerror(error));
+        free(job);
+        return;
+    }
+    pthread_detach(tid);
 }
 
 static void imsa_reader_drain(void)
 {
-    uint8_t hdr[IMSA_HDR_LEN];
-    uint8_t body[IMSA_MSG_MAX];
+    static uint8_t frame[IMSA_MSG_MAX];
+    static size_t have;
+    static size_t need = IMSA_HDR_LEN;
+    static int stage;
+    static uint32_t discard;
 
     for (;;) {
-        ssize_t n = read(g_imsa.fd, hdr, IMSA_HDR_LEN);
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-                return;
-            LOGE("read:%d, %s, remain:%d", errno, strerror(errno), IMSA_HDR_LEN);
+        uint8_t scratch[512];
+        void *dst = discard ? scratch : frame + have;
+        size_t want = discard ? (discard < sizeof(scratch) ? discard : sizeof(scratch)) :
+                                need - have;
+        ssize_t n = read(g_imsa.fd, dst, want);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return;
+        if (n <= 0) {
+            have = 0;
+            need = IMSA_HDR_LEN;
+            stage = 0;
+            discard = 0;
             return;
         }
-        if (n == 0)
-            return;
-        if (n != IMSA_HDR_LEN) {
-            ssize_t rest = read_full(g_imsa.fd, hdr + n, IMSA_HDR_LEN - n);
-            if (rest < 0)
-                return;
-        }
-
-        uint8_t type = hdr[0];
-        ssize_t body_len = imsa_body_size_for(type, hdr);
-        size_t to_read;
-
-        if (body_len == -10) {
-            if (read_full(g_imsa.fd, body, IMSA_BODY_PKT_LOSS_RPT_BASE) != IMSA_BODY_PKT_LOSS_RPT_BASE)
-                return;
-            uint32_t version;
-            memcpy(&version, body, sizeof(version));
-            to_read = IMSA_BODY_PKT_LOSS_RPT_BASE;
-            if (version == 1) {
-                if (read_full(g_imsa.fd, body + IMSA_BODY_PKT_LOSS_RPT_BASE,
-                               IMSA_BODY_PKT_LOSS_RPT_EXT) != IMSA_BODY_PKT_LOSS_RPT_EXT)
-                    return;
-                LOGD("ext body size:%d\n", IMSA_BODY_PKT_LOSS_RPT_EXT);
-                to_read += IMSA_BODY_PKT_LOSS_RPT_EXT;
+        if (discard) {
+            discard -= (uint32_t)n;
+            if (!discard) {
+                have = 0;
+                need = IMSA_HDR_LEN;
+                stage = 0;
             }
-            handle_imsa_pkt_loss_rpt(body, to_read);
             continue;
         }
-        if (body_len == -128) {
-            if (read_full(g_imsa.fd, body, IMSA_BODY_SEND_HDR) != IMSA_BODY_SEND_HDR)
+        have += (size_t)n;
+        if (have != need)
+            continue;
+        uint8_t type = frame[0];
+        uint8_t *body = frame + IMSA_HDR_LEN;
+        if (stage == 0) {
+            ssize_t size = imsa_body_size_for(type, frame);
+            if (size == -10)
+                size = IMSA_BODY_PKT_LOSS_RPT_BASE;
+            else if (size == -128)
+                size = IMSA_BODY_SEND_HDR;
+            if (size < 0) {
+                LOGE("Unknown size Message ID: %x", type);
+                have = 0;
                 return;
+            }
+            need += (size_t)size;
+            stage = 1;
+            if (have != need)
+                continue;
+        }
+        if (stage == 1 && (type == IMSA_MSG_SEND || type == IMSA_MSG_PKT_LOSS_RPT)) {
             uint32_t extra;
-            memcpy(&extra, body + 52, sizeof(extra));
-            if (extra > sizeof(body) - IMSA_BODY_SEND_HDR)
-                extra = sizeof(body) - IMSA_BODY_SEND_HDR;
-            if (extra && read_full(g_imsa.fd, body + IMSA_BODY_SEND_HDR, extra) != (ssize_t)extra)
-                return;
-            handle_imsa_send(body, IMSA_BODY_SEND_HDR + extra);
-            continue;
+            memcpy(&extra, body + (type == IMSA_MSG_SEND ? 52 : 0), sizeof(extra));
+            if (type == IMSA_MSG_PKT_LOSS_RPT)
+                extra = extra == 1 ? IMSA_BODY_PKT_LOSS_RPT_EXT : 0;
+            stage = 2;
+            if (extra > sizeof(frame) - need) {
+                discard = extra;
+                continue;
+            }
+            need += extra;
+            if (have != need)
+                continue;
         }
-        if (body_len < 0) {
-            LOGE("Unknown size Message ID: %x\n", type);
-            return;
-        }
-        to_read = (size_t)body_len;
-        if (to_read && read_full(g_imsa.fd, body, to_read) != (ssize_t)to_read)
-            return;
-
+        size_t len = have - IMSA_HDR_LEN;
         switch (type) {
         case IMSA_MSG_FILTER_REGISTER_REQ:
-            handle_imsa_filter_register(body, to_read);
+            handle_imsa_filter_register(body, len);
             break;
         case IMSA_MSG_FILTER_DEREGISTER_REQ:
-            handle_imsa_filter_deregister(body, to_read);
+            handle_imsa_filter_deregister(body, len);
             break;
         case IMSA_MSG_FILTER_UPDATE_REQ:
-            handle_imsa_filter_update(body, to_read);
+            handle_imsa_filter_update(body, len);
             break;
         case IMSA_MSG_RESET_REQ:
             handle_imsa_reset();
             break;
         case IMSA_MSG_PING_PCSCF_TRIGGER:
-            LOGD("trigger ping pcscf success\n");
+            handle_imsa_ping(body, len);
             break;
-        default:
-            LOGD("unknown message id");
+        case IMSA_MSG_PKT_LOSS_RPT:
+            handle_imsa_pkt_loss_rpt(body, len);
+            break;
+        case IMSA_MSG_SEND:
+            handle_imsa_send(body, len);
             break;
         }
+        have = 0;
+        need = IMSA_HDR_LEN;
+        stage = 0;
     }
 }
 
@@ -597,7 +982,7 @@ static void *imsa_reader_thread(void *arg)
 {
     for (;;) {
         struct pollfd pfd = {.fd = g_imsa.fd, .events = POLLIN};
-        int r = poll(&pfd, 1, 300 * 1000);
+        int r = poll(&pfd, 1, -1);
 
         if (r < 0) {
             if (errno == EINTR)
@@ -624,20 +1009,21 @@ static int ccci_imsa_open_and_wait_ready(void)
         LOGE("open imsx failed: %s", CCCI_IMSA_DEV);
         exit(1);
     }
-    ioctl(fd, CCCI_IMSA_IOC_REGISTER, -1);
+    ioctl(fd, CCCI_IMSA_IOC_REGISTER);
     int flags = fcntl(fd, F_GETFL, 0);
-    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    int status = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    if (status < 0)
         LOGE("imsx open set fd nonblock:%s", strerror(errno));
 
     for (;;) {
-        int status = 0;
-        if (ioctl(fd, CCCI_IMSA_IOC_QUERY_STATUS, &status) < 0) {
+        ioctl(fd, CCCI_IMSA_IOC_QUERY_STATUS, &status);
+        if (status < 0) {
             LOGE("ccci query md status error:%s", strerror(errno));
             return fd;
         }
         if (status == CCCI_MD_STATUS_READY)
             break;
-        usleep(100 * 1000);
+        usleep(1000 * 1000);
     }
     LOGD("CCCI status:MD ready");
     return fd;
@@ -648,32 +1034,48 @@ static int wfc_ipc_recv_fd(int conn_fd)
     struct msghdr msg;
     struct iovec iov;
     uint8_t iobuf;
-    char cmsgbuf[CMSG_SPACE(sizeof(int))];
+    union {
+        struct cmsghdr align;
+        char bytes[CMSG_SPACE(MAX_FILTERS * sizeof(int))];
+    } control;
 
     memset(&msg, 0, sizeof(msg));
     iov.iov_base = &iobuf;
     iov.iov_len = 1;
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
-    msg.msg_control = cmsgbuf;
-    msg.msg_controllen = sizeof(cmsgbuf);
+    msg.msg_control = control.bytes;
+    msg.msg_controllen = sizeof(control.bytes);
 
     if (recvmsg(conn_fd, &msg, 0) != 1) {
         LOGE("recvmsg %s", strerror(errno));
         LOGE("%s:fail", "wfc_ipc_recv_fd");
         return -1;
     }
-    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-    if (!cmsg || msg.msg_controllen < sizeof(struct cmsghdr)) {
-        LOGE("pass msg fail %s", strerror(errno));
-        LOGE("%s:fail", "wfc_ipc_recv_fd");
+    int fd = -1;
+    int count = 0;
+    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg); cmsg;
+         cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS ||
+            cmsg->cmsg_len < CMSG_LEN(0))
+            continue;
+        size_t bytes = cmsg->cmsg_len - CMSG_LEN(0);
+        for (size_t offset = 0; offset + sizeof(int) <= bytes; offset += sizeof(int)) {
+            int received;
+            memcpy(&received, (uint8_t *)CMSG_DATA(cmsg) + offset, sizeof(received));
+            if (count++ == 0)
+                fd = received;
+            else
+                close(received);
+        }
+    }
+    if (count != 1 || (msg.msg_flags & (MSG_CTRUNC | MSG_TRUNC))) {
+        if (fd >= 0)
+            close(fd);
         return -1;
     }
-    int fd;
-    memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
-    if (fd == -1) {
-        LOGE("no passed fd %s", strerror(errno));
-        LOGE("%s:fail", "wfc_ipc_recv_fd");
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
+        close(fd);
         return -1;
     }
     return fd;
@@ -683,7 +1085,6 @@ static int filter_insert_socket(int sock_fd)
 {
     struct sockaddr_storage local;
     socklen_t local_len = sizeof(local);
-    int mark;
 
     if (getsockname(sock_fd, (struct sockaddr *)&local, &local_len) < 0) {
         LOGE("get local socket %s", strerror(errno));
@@ -693,43 +1094,31 @@ static int filter_insert_socket(int sock_fd)
     }
 
     pthread_mutex_lock(&g_filters_lock);
-    int slot = -1;
-    for (int i = 0; i < MAX_FILTERS; i++) {
-        if (g_filters[i].in_use && g_filters[i].peer_len == local_len &&
-            memcmp(&g_filters[i].peer, &local, local_len) == 0) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot >= 0) {
+    int sid = socket_find(&local);
+    if (sid >= 0) {
         LOGD("[ua] find existed socket");
-        if (g_filters[slot].fd >= 0)
-            close(g_filters[slot].fd);
-        g_filters[slot].fd = sock_fd;
+        close(g_sockets[sid].fd);
+        g_sockets[sid].fd = sock_fd;
+        int slot = g_sockets[sid].filter_id;
+        if (slot >= 0 && slot < MAX_FILTERS && g_filters[slot].in_use)
+            socket_configure(sid, g_filters[slot].body);
     } else {
-        slot = filter_find_free();
-        if (slot < 0) {
+        sid = socket_find_free(&local);
+        if (sid < 0) {
             pthread_mutex_unlock(&g_filters_lock);
             close(sock_fd);
             LOGE("[%s]:fail", "wfc_socket_insert");
             return -1;
         }
-        g_filters[slot].in_use = 1;
-        g_filters[slot].fd = sock_fd;
-        g_filters[slot].peer_len = local_len;
-        memcpy(&g_filters[slot].peer, &local, local_len);
-        g_filters[slot].family = local.ss_family;
+        g_sockets[sid].in_use = 1;
+        g_sockets[sid].fd = sock_fd;
+        g_sockets[sid].filter_id = -1;
+        g_sockets[sid].local_len = local_len;
+        g_sockets[sid].local = local;
     }
+    filters_changed_locked();
     pthread_mutex_unlock(&g_filters_lock);
 
-    mark = 0xF0000;
-    if (setsockopt(sock_fd, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) >= 0)
-        LOGD("[ua] setsockopt recv udp socket SO_MARK success, id:0x%x", mark);
-    else
-        LOGE("[ua] setsockopt recv udp socket SO_MARK fail:%s, id:%x", strerror(errno), mark);
-
-    int tos = 0xB8;
-    setsockopt(sock_fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
     return 0;
 }
 
@@ -796,7 +1185,7 @@ static void *rds_listener_thread(void *arg)
         }
 
         uint8_t reply[IMSA_BODY_PKT_LOSS_RPT_BASE + IMSA_BODY_PKT_LOSS_RPT_EXT];
-        size_t reply_len = has_ext ? sizeof(reply) : IMSA_BODY_PKT_LOSS_RPT_BASE;
+        size_t reply_len = hdr[1] ? sizeof(reply) : IMSA_BODY_PKT_LOSS_RPT_BASE;
         memset(reply, 0, sizeof(reply));
 
         if (cmd == 1) {
@@ -814,11 +1203,12 @@ static void *rds_listener_thread(void *arg)
                 memcpy(fwd + sizeof(hdr) - sizeof(hdr[0]), ext, sizeof(ext));
             imsa_send(IMSA_MSG_RDS_CONFIG_FWD, fwd, sizeof(fwd));
 
-            memcpy(reply, hdr, sizeof(hdr));
         } else if (cmd == 2) {
             LOGD("[rds query]pdn_id:%u", pdn_id);
             pthread_mutex_lock(&g_pdn_lock);
-            memcpy(reply, &g_pdn[pdn_id], IMSA_BODY_PKT_LOSS_RPT_BASE);
+            memcpy(reply, g_pdn[pdn_id].body, IMSA_BODY_PKT_LOSS_RPT_BASE);
+            uint32_t status = g_pdn[pdn_id].status;
+            memcpy(reply + 4, &status, sizeof(status));
             if (has_ext && g_pdn[pdn_id].body_len > IMSA_BODY_PKT_LOSS_RPT_BASE)
                 memcpy(reply + IMSA_BODY_PKT_LOSS_RPT_BASE,
                        g_pdn[pdn_id].body + IMSA_BODY_PKT_LOSS_RPT_BASE,
@@ -838,6 +1228,7 @@ static void *rds_listener_thread(void *arg)
             pthread_mutex_lock(&g_pdn_lock);
             if (g_pdn[pdn_id].status != RDS_STATUS_EMPTY)
                 g_pdn[pdn_id].status = RDS_STATUS_STALE;
+            pthread_cond_signal(&g_pdn_changed);
             pthread_mutex_unlock(&g_pdn_lock);
         }
         close(conn);
@@ -847,16 +1238,20 @@ static void *rds_listener_thread(void *arg)
 
 static void *rds_gc_thread(void *arg)
 {
+    pthread_mutex_lock(&g_pdn_lock);
     for (;;) {
-        sleep(50);
-        pthread_mutex_lock(&g_pdn_lock);
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        pdn_gc_advance_locked(&now);
+        int fresh = 0;
         for (int i = 0; i < MAX_PDN; i++) {
-            if (g_pdn[i].status == RDS_STATUS_FRESH) {
-                g_pdn[i].status = RDS_STATUS_STALE;
-                LOGD("clear pdn_id:%d status", i);
-            }
+            if (g_pdn[i].status == RDS_STATUS_FRESH)
+                fresh = 1;
         }
-        pthread_mutex_unlock(&g_pdn_lock);
+        if (!fresh)
+            pthread_cond_wait(&g_pdn_changed, &g_pdn_lock);
+        else
+            pthread_cond_timedwait(&g_pdn_changed, &g_pdn_lock, &g_pdn_gc_deadline);
     }
     (void)arg;
     return NULL;
@@ -872,6 +1267,15 @@ static void *mdm_data_thread(void *arg)
 {
     LOGD("MDM data thread created");
     for (;;) {
+        pthread_mutex_lock(&g_mdm.lock);
+        int stop = g_mdm.data_thread_stop_req;
+        if (stop) {
+            g_mdm.data_thread_running = 0;
+            g_mdm.data_thread_stop_req = 0;
+        }
+        pthread_mutex_unlock(&g_mdm.lock);
+        if (stop)
+            return NULL;
         int fd = socket(AF_UNIX, SOCK_STREAM, 0);
         struct sockaddr_un addr;
 
@@ -1013,29 +1417,41 @@ static void *mdm_ctrl_listener_thread(void *arg)
 
 static void *wfc_filter_poll_thread(void *arg)
 {
+    struct pollfd pfds[MAX_FILTERS + 1];
+    int idx_map[MAX_FILTERS];
+    int nfds = 0;
+    int rebuild = 1;
+
     for (;;) {
-        struct pollfd pfds[MAX_FILTERS];
-        int idx_map[MAX_FILTERS];
-        int nfds = 0;
+        if (rebuild) {
+            uint64_t value;
+            ssize_t n;
 
-        pthread_mutex_lock(&g_filters_lock);
-        for (int i = 0; i < MAX_FILTERS; i++) {
-            if (g_filters[i].in_use && g_filters[i].fd >= 0) {
-                pfds[nfds].fd = g_filters[i].fd;
-                pfds[nfds].events = POLLIN;
-                idx_map[nfds] = i;
-                nfds++;
+            pthread_mutex_lock(&g_filters_lock);
+            do {
+                n = read(g_filters_event_fd, &value, sizeof(value));
+            } while (n >= 0 || errno == EINTR);
+            nfds = 0;
+            for (int i = 0; i < MAX_FILTERS; i++) {
+                if (g_sockets[i].in_use && g_sockets[i].filter_id >= 0) {
+                    pfds[nfds].fd = g_sockets[i].fd;
+                    pfds[nfds].events = POLLIN;
+                    idx_map[nfds] = i;
+                    nfds++;
+                }
             }
+            pthread_mutex_unlock(&g_filters_lock);
+            pfds[nfds].fd = g_filters_event_fd;
+            pfds[nfds].events = POLLIN;
+            rebuild = 0;
         }
-        pthread_mutex_unlock(&g_filters_lock);
-
-        if (nfds == 0) {
-            usleep(200 * 1000);
-            continue;
-        }
-        int r = poll(pfds, nfds, 1000);
+        int r = poll(pfds, nfds + 1, -1);
         if (r <= 0)
             continue;
+        if (pfds[nfds].revents) {
+            rebuild = 1;
+            continue;
+        }
 
         for (int i = 0; i < nfds; i++) {
             if (!(pfds[i].revents & POLLIN))
@@ -1050,7 +1466,12 @@ static void *wfc_filter_poll_thread(void *arg)
 
             uint32_t id;
             pthread_mutex_lock(&g_filters_lock);
-            id = g_filters[idx_map[i]].req_id;
+            int slot = g_sockets[idx_map[i]].filter_id;
+            if (slot < 0 || slot >= MAX_FILTERS || !g_filters[slot].in_use) {
+                pthread_mutex_unlock(&g_filters_lock);
+                continue;
+            }
+            id = g_filters[slot].req_id;
             pthread_mutex_unlock(&g_filters_lock);
 
             uint8_t msg_type;
@@ -1085,8 +1506,28 @@ int main(void)
     sa.sa_flags = SA_NOCLDWAIT;
     sigaction(SIGCHLD, &sa, NULL);
 
-    for (int i = 0; i < MAX_FILTERS; i++)
-        g_filters[i].fd = -1;
+    g_filters_event_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (g_filters_event_fd < 0) {
+        LOGE("filter eventfd fail:%s", strerror(errno));
+        return 1;
+    }
+    pthread_condattr_t attr;
+    int error = pthread_condattr_init(&attr);
+    if (!error) {
+        error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+        if (!error)
+            error = pthread_cond_init(&g_pdn_changed, &attr);
+        pthread_condattr_destroy(&attr);
+    }
+    if (error) {
+        LOGE("PDN condition init fail:%s", strerror(error));
+        return 1;
+    }
+    for (int i = 0; i < MAX_FILTERS; i++) {
+        g_filters[i].socket_id = -1;
+        g_sockets[i].fd = -1;
+        g_sockets[i].filter_id = -1;
+    }
     for (int i = 0; i < MAX_PDN; i++)
         g_pdn[i].status = RDS_STATUS_EMPTY;
     g_imsa.fd = -1;
@@ -1107,6 +1548,8 @@ int main(void)
         pthread_detach(tid);
 
     static int rds_fd_store;
+    clock_gettime(CLOCK_MONOTONIC, &g_pdn_gc_deadline);
+    g_pdn_gc_deadline.tv_sec += 50;
     int rds_fd = open_ipc_endpoint(WFCA_RDS_SOCK_NAME);
     if (rds_fd >= 0) {
         rds_fd_store = rds_fd;
@@ -1136,6 +1579,6 @@ int main(void)
         pthread_detach(tid);
 
     for (;;)
-        sleep(3600);
+        pause();
     return 0;
 }

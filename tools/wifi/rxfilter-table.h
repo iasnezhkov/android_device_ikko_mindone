@@ -1,3 +1,7 @@
+/*
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #ifndef RXFILTER_TABLE_H
 #define RXFILTER_TABLE_H
 

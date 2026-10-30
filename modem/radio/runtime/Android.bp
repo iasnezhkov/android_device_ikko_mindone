@@ -1,0 +1,22 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ */
+
+rust_library_rlib {
+    name: "libmindone_radio_runtime",
+    crate_name: "mindone_radio_runtime",
+    srcs: ["lib.rs"],
+    edition: "2021",
+    vendor: true,
+    lints: "none",
+    flags: ["-Dwarnings", "-Cpanic=unwind"],
+    rustlibs: ["libmindone_radio_core"],
+}
+
+cc_library_static {
+    name: "libmindone_radio_posix",
+    vendor: true,
+    srcs: ["posix.c"],
+    cflags: ["-Wall", "-Wextra", "-Werror"],
+}

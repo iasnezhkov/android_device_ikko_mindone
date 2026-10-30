@@ -1,10 +1,14 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #define LOG_TAG "mindone.sensors.hf"
 
 #include "HfManagerClient.h"
+
+#if defined(MINDONE_HF_RUST_WIRE)
+#include "HfRustCore.h"
+#endif
 
 #include <fcntl.h>
 #include <poll.h>
@@ -23,7 +27,7 @@ namespace {
 
 constexpr const char* kDevPath = "/dev/hf_manager";
 constexpr int kOpenRetries = 20;
-constexpr int kOpenRetryDelayMs = 100;  // 20 x 100ms = 2s max wait for the node
+constexpr int kOpenRetryDelayMs = 100;
 
 int64_t nowMs() {
     struct timespec ts;
@@ -31,7 +35,7 @@ int64_t nowMs() {
     return static_cast<int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
 }
 
-}  // namespace
+}
 
 HfManagerClient::~HfManagerClient() {
     if (fd_ >= 0) ::close(fd_);
@@ -59,7 +63,7 @@ bool HfManagerClient::open() {
 
 bool HfManagerClient::queryReady() {
     ioctl_packet packet{};
-    packet.sensor_type = SENSOR_TYPE_INVALID;  // unused by this ioctl, must be < SENSOR_TYPE_SENSOR_MAX
+    packet.sensor_type = SENSOR_TYPE_INVALID;
     if (::ioctl(fd_, HF_MANAGER_REQUEST_READY_STATUS, &packet) < 0) {
         ALOGE("HF_MANAGER_REQUEST_READY_STATUS failed: %s", strerror(errno));
         return false;
@@ -77,17 +81,30 @@ bool HfManagerClient::queryRegistered(uint8_t sensorType) {
 }
 
 bool HfManagerClient::querySensorInfo(uint8_t sensorType, sensor_info* out) {
+#if defined(MINDONE_HF_RUST_WIRE)
+    if (out == nullptr) return false;
+#endif
     ioctl_packet packet{};
     packet.sensor_type = sensorType;
     if (::ioctl(fd_, HF_MANAGER_REQUEST_SENSOR_INFO, &packet) < 0) {
-        // Expected/frequent: -EINVAL for any sensor_type not yet (or never)
-        // registered. Not logged as an error to avoid spamming during the
-        // readiness poll and during enumeration of unsupported type IDs.
         return false;
     }
     static_assert(sizeof(sensor_info) <= sizeof(packet.byte),
                   "sensor_info must fit in ioctl_packet.byte[64]");
+#if defined(MINDONE_HF_RUST_WIRE)
+    mindone_hf_decoded_info decoded{};
+    const int32_t status = mindone_hf_decode_info(reinterpret_cast<const uint8_t*>(packet.byte),
+                                                sizeof(sensor_info), &decoded);
+    if (status != 0 || decoded.sensor_type != sensorType) return false;
+    sensor_info result{};
+    result.sensor_type = static_cast<uint8_t>(decoded.sensor_type);
+    result.gain = decoded.gain;
+    memcpy(result.name, decoded.name, sizeof(result.name));
+    memcpy(result.vendor, decoded.vendor, sizeof(result.vendor));
+    *out = result;
+#else
     memcpy(out, packet.byte, sizeof(sensor_info));
+#endif
     return true;
 }
 
@@ -132,15 +149,19 @@ bool HfManagerClient::waitUntilReady(int timeoutMs, int pollIntervalMs) {
 bool HfManagerClient::setEnable(uint8_t sensorType, bool enabled, int64_t delayNs,
                                  int64_t latencyNs) {
     hf_manager_cmd cmd{};
+#if defined(MINDONE_HF_RUST_WIRE)
+    const int32_t encoded = mindone_hf_enable_command(sensorType, enabled ? 1 : 0, delayNs,
+                                                     latencyNs, reinterpret_cast<uint8_t*>(&cmd),
+                                                     sizeof(cmd));
+    if (encoded != 0) return false;
+#else
     cmd.sensor_type = sensorType;
     cmd.action = enabled ? HF_MANAGER_SENSOR_ENABLE : HF_MANAGER_SENSOR_DISABLE;
     cmd.down_sample = 0;
     hf_manager_batch batch{delayNs, latencyNs};
     cmd.length = sizeof(batch);
     memcpy(cmd.data, &batch, sizeof(batch));
-    // hf_manager_write() (hf_manager.c) returns hf_manager_drive_device()'s result, i.e. 0 on
-    // success and a negative errno on failure - not the byte count. Only n < 0 is a failure, and
-    // errno is meaningful only then.
+#endif
     ssize_t n = ::write(fd_, &cmd, sizeof(cmd));
     if (n < 0) {
         ALOGE("hf_manager write(ENABLE type=%u en=%d) failed: %s", sensorType, enabled,
@@ -152,11 +173,17 @@ bool HfManagerClient::setEnable(uint8_t sensorType, bool enabled, int64_t delayN
 
 bool HfManagerClient::requestFlush(uint8_t sensorType) {
     hf_manager_cmd cmd{};
+#if defined(MINDONE_HF_RUST_WIRE)
+    const int32_t encoded = mindone_hf_flush_command(sensorType, reinterpret_cast<uint8_t*>(&cmd),
+                                                    sizeof(cmd));
+    if (encoded != 0) return false;
+#else
     cmd.sensor_type = sensorType;
     cmd.action = HF_MANAGER_SENSOR_FLUSH;
     cmd.down_sample = 0;
     cmd.length = 0;
-    ssize_t n = ::write(fd_, &cmd, sizeof(cmd));  // 0 on success, see setEnable()
+#endif
+    ssize_t n = ::write(fd_, &cmd, sizeof(cmd));
     if (n < 0) {
         ALOGE("hf_manager write(FLUSH type=%u) failed: %s", sensorType, strerror(errno));
         return false;
@@ -171,12 +198,20 @@ bool HfManagerClient::configCalibration(uint8_t sensorType, const void* data, ui
               sensorType, length, sizeof(cmd.data));
         return false;
     }
+#if defined(MINDONE_HF_RUST_WIRE)
+    const int32_t encoded = mindone_hf_calibration_command(sensorType,
+                                                          static_cast<const uint8_t*>(data),
+                                                          length, reinterpret_cast<uint8_t*>(&cmd),
+                                                          sizeof(cmd));
+    if (encoded != 0) return false;
+#else
     cmd.sensor_type = sensorType;
     cmd.action = HF_MANAGER_SENSOR_CONFIG_CALI;
     cmd.down_sample = 0;
     cmd.length = length;
     if (length > 0) memcpy(cmd.data, data, length);
-    ssize_t n = ::write(fd_, &cmd, sizeof(cmd));  // 0 on success, see setEnable()
+#endif
+    ssize_t n = ::write(fd_, &cmd, sizeof(cmd));
     if (n < 0) {
         ALOGE("hf_manager write(CONFIG_CALI type=%u length=%u) failed: %s", sensorType, length,
               strerror(errno));
@@ -198,7 +233,7 @@ bool requestCaliData(int fd, unsigned int ioctlCmd, uint8_t sensorType, bool ena
     }
     return true;
 }
-}  // namespace
+}
 
 bool HfManagerClient::requestBiasReports(uint8_t sensorType, bool enable) {
     return requestCaliData(fd_, HF_MANAGER_REQUEST_BIAS_DATA, sensorType, enable,
@@ -222,37 +257,66 @@ bool HfManagerClient::waitAndReadEvents(int timeoutMs, std::vector<hf_manager_ev
     pfd.events = POLLIN;
     int r = ::poll(&pfd, 1, timeoutMs);
     if (r < 0) {
-        if (errno == EINTR) return true;  // benign, caller loops again
+        if (errno == EINTR) return true;
         ALOGE("poll(hf_manager) failed: %s", strerror(errno));
         return false;
     }
-    if (r == 0) return true;  // timeout, nothing pending
+    if (r == 0) return true;
     if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
         ALOGE("poll(hf_manager) returned error revents=0x%x", pfd.revents);
         return false;
     }
     if (!(pfd.revents & POLLIN)) return true;
 
-    // hf_manager_read() always returns a whole number of records (or 0);
-    // drain everything currently queued before returning to the caller so
-    // we don't fall behind the kernel FIFO (HF_CLIENT_FIFO_SIZE=128,
-    // hf_manager.h:27) under load.
     constexpr size_t kBatch = 64;
+    constexpr size_t kMaxEvents = 128;
+    constexpr size_t kMaxReads = 16;
     std::vector<hf_manager_event> buf(kBatch);
-    for (;;) {
-        ssize_t n = ::read(fd_, buf.data(), buf.size() * sizeof(hf_manager_event));
+    for (size_t reads = 0; reads < kMaxReads && out->size() < kMaxEvents; ++reads) {
+        size_t capacity = kMaxEvents - out->size();
+        if (capacity > kBatch) capacity = kBatch;
+        const size_t bytes = capacity * sizeof(hf_manager_event);
+        ssize_t n = ::read(fd_, buf.data(), bytes);
         if (n < 0) {
             if (errno == EINTR) continue;
             ALOGE("read(hf_manager) failed: %s", strerror(errno));
+            out->clear();
             return false;
         }
-        if (n == 0) break;  // fifo drained
+        if (n == 0) break;
+        if (static_cast<size_t>(n) > bytes ||
+            static_cast<size_t>(n) % sizeof(hf_manager_event) != 0) {
+            ALOGE("read(hf_manager) returned invalid record bytes: %zd", n);
+            out->clear();
+            return false;
+        }
         size_t count = static_cast<size_t>(n) / sizeof(hf_manager_event);
+#if defined(MINDONE_HF_RUST_WIRE)
+        for (size_t index = 0; index < count; ++index) {
+            mindone_hf_decoded_event decoded{};
+            const int32_t status = mindone_hf_decode_event(
+                    reinterpret_cast<const uint8_t*>(&buf[index]), sizeof(hf_manager_event),
+                    &decoded);
+            if (status != 0) {
+                ALOGE("hf_manager returned an invalid event: %d", status);
+                out->clear();
+                return false;
+            }
+            hf_manager_event event{};
+            event.timestamp = decoded.timestamp_ns;
+            event.sensor_type = static_cast<uint8_t>(decoded.sensor_type);
+            event.accurancy = static_cast<uint8_t>(decoded.accuracy);
+            event.action = static_cast<uint8_t>(decoded.action);
+            for (size_t word = 0; word < 16; ++word) event.word[word] = decoded.words[word];
+            out->push_back(event);
+        }
+#else
         out->insert(out->end(), buf.begin(), buf.begin() + count);
-        if (count < kBatch) break;  // short read == fifo drained this round
+#endif
+        if (count < capacity) break;
     }
     return true;
 }
 
-}  // namespace hf
-}  // namespace mindone
+}
+}

@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+set_prop(hal_dumpstate_default, vendor_dumpstate_prop)
+
+allow hal_dumpstate_default vendor_shell_exec:file rx_file_perms;
+allow hal_dumpstate_default vendor_toolbox_exec:file rx_file_perms;
+
+allow hal_dumpstate_default proc_modules:file { getattr open read };
+allow hal_dumpstate_default proc_gpufreqv2:dir search;
+allow hal_dumpstate_default proc_gpufreqv2:file { getattr open read };
+allow hal_dumpstate_default proc_ged:dir { getattr open read search };
+allow hal_dumpstate_default proc_ged:file { getattr open read };
+
+allow hal_dumpstate_default sysfs_therm:dir { getattr open read search };
+allow hal_dumpstate_default sysfs_therm:lnk_file read;
+allow hal_dumpstate_default sysfs_therm:file { getattr open read };
+allow hal_dumpstate_default sysfs_batteryinfo:dir { getattr open read search };
+allow hal_dumpstate_default sysfs_batteryinfo:file { getattr open read };
+allow hal_dumpstate_default sysfs_ccci:dir { getattr open read search };
+allow hal_dumpstate_default sysfs_ccci:file { getattr open read };
+
+allow hal_dumpstate_default pstorefs:dir { getattr open read search };
+allow hal_dumpstate_default pstorefs:file getattr;

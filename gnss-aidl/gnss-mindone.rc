@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+service vendor.gnss-aidl-mindone /vendor/bin/hw/android.hardware.gnss-service.mindone
+    class hal
+    user system
+    capabilities WAKE_ALARM
+    group system gps

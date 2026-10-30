@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+on post-fs-data
+    mkdir /data/vendor/mindone_gauge 0770 system system
+
+service vendor.mindone_gauged /vendor/bin/hw/mindone_gauged
+    class late_start
+    user system
+    group system

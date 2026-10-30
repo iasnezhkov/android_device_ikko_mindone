@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ */
+
 #include <android/log.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -55,6 +60,9 @@
 #define TX_RETRY_MS 10
 #define CHAT_TIMEOUT_MS 5000
 #define SETUP_TIMEOUT_MS 30000
+#define REOPEN_RETRY_MS 1000
+#define REOPEN_ATTEMPTS 3
+#define RECOVERY_ESCALATION_MS 300000
 #define CLOSE_WAIT_MS 2000
 #define EXIT_FLUSH_MS 500
 #define RESTART_DELAY_MS 5000
@@ -84,6 +92,8 @@ struct chan {
 	bool refused_logged;
 	bool peer_fc;
 	bool local_fc;
+	unsigned reopen_attempts;
+	int64_t reopen_deadline;
 	uint8_t *pending;
 	size_t pending_len;
 };
@@ -127,6 +137,7 @@ static int unresolved;
 static bool setup_done;
 static bool ril_started;
 static int64_t setup_deadline;
+static int64_t recovery_escalation_after;
 static volatile sig_atomic_t term_signal;
 
 static int64_t now_ms(void)
@@ -416,6 +427,8 @@ static void close_all_ptys(void)
 		chans[i].disc_sent = false;
 		chans[i].refused = false;
 		chans[i].refused_logged = false;
+		chans[i].reopen_attempts = 0;
+		chans[i].reopen_deadline = 0;
 	}
 	ctl.open = false;
 	ctl.sabm_sent = false;
@@ -707,13 +720,17 @@ static void setup_complete(void)
 {
 	int refused = 0;
 
+	if (setup_done)
+		return;
 	for (int i = 0; i < nchans; i++)
 		refused += chans[i].refused;
 	setup_done = true;
 	state = ST_RUN;
 	LOGI("mux channel setup finished: %d channels, %d refused by the modem", nchans, refused);
-	if (ril_started)
+	if (ril_started) {
+		prop_set("vendor.ril.mtk.restart", "1");
 		return;
+	}
 	ril_started = true;
 	prop_set("vendor.ril.mux.start", "1");
 	prop_set("vendor.ril.mtk", "1");
@@ -754,6 +771,56 @@ static void chan_reopen(struct chan *c)
 		send_msc(c, false);
 	if (chan_open_pty(c))
 		report_and_exit("cannot recreate a channel pty");
+}
+
+static void chan_recover(struct chan *c)
+{
+	if (state == ST_CLOSING || state == ST_PEER_CLOSING)
+		return;
+	c->pending_len = 0;
+	c->peer_fc = false;
+	c->local_fc = false;
+	c->refused = false;
+	c->sabm_sent = false;
+	c->disc_sent = false;
+	if (!c->reopen_deadline)
+		c->reopen_deadline = now_ms() + REOPEN_RETRY_MS;
+}
+
+static int recovery_timeout(int timeout)
+{
+	int64_t now = now_ms();
+
+	for (int i = 0; i < nchans; i++) {
+		struct chan *c = &chans[i];
+		int64_t left;
+
+		if (!c->reopen_deadline)
+			continue;
+		if (now >= c->reopen_deadline) {
+			if (c->reopen_attempts == REOPEN_ATTEMPTS) {
+				c->sabm_sent = false;
+				if (now >= recovery_escalation_after) {
+					recovery_escalation_after = now + RECOVERY_ESCALATION_MS;
+					LOGE("%s: dlci %u recovery exhausted, recreating mux session", c->name, c->dlci);
+					state = ST_CLOSING;
+					return 0;
+				}
+				c->reopen_deadline = recovery_escalation_after;
+			} else {
+				c->reopen_attempts++;
+				if (txq_room() >= FRAME_OVERHEAD &&
+				    tx_frame(c->dlci, CTRL_SABM | CTRL_PF, NULL, 0)) {
+					c->sabm_sent = true;
+				}
+				c->reopen_deadline = now + REOPEN_RETRY_MS;
+			}
+		}
+		left = c->reopen_deadline - now;
+		if (timeout < 0 || left < timeout)
+			timeout = (int)left;
+	}
+	return timeout;
 }
 
 static void chan_drain(struct chan *c)
@@ -915,8 +982,10 @@ static void on_ua(struct chan *c)
 	if (c->sabm_sent) {
 		c->sabm_sent = false;
 		c->open = true;
+		c->reopen_deadline = 0;
 		LOGD("%s: dlci %u open", c->name, c->dlci);
-		resolve();
+		if (!c->reopen_attempts)
+			resolve();
 		return;
 	}
 	c->disc_sent = false;
@@ -931,7 +1000,7 @@ static void on_dm(struct chan *c)
 		if (c == &ctl)
 			state = ST_PEER_CLOSING;
 		else
-			chan_close_pty(c);
+			chan_recover(c);
 		return;
 	}
 	if (c == &ctl) {
@@ -942,6 +1011,8 @@ static void on_dm(struct chan *c)
 	if (!c->sabm_sent)
 		return;
 	c->sabm_sent = false;
+	if (c->reopen_attempts)
+		return;
 	c->refused = true;
 	LOGE("%s: modem refused dlci %u", c->name, c->dlci);
 	if (c->atci)
@@ -962,7 +1033,7 @@ static void on_disc(uint8_t dlci, struct chan *c)
 		state = ST_PEER_CLOSING;
 	} else {
 		LOGI("%s: modem disconnected dlci %u", c->name, dlci);
-		chan_close_pty(c);
+		chan_recover(c);
 	}
 }
 
@@ -970,6 +1041,11 @@ static void handle_frame(uint8_t dlci, uint8_t ctrl, const uint8_t *data, size_t
 {
 	struct chan *c = by_dlci[dlci];
 
+	if (state == ST_CLOSING || state == ST_PEER_CLOSING) {
+		if ((ctrl & ~CTRL_PF) == CTRL_UA && c && c->disc_sent)
+			on_ua(c);
+		return;
+	}
 	LOGD("rx dlci %u ctrl 0x%02x len %zu", dlci, ctrl, len);
 	switch (ctrl & ~CTRL_PF) {
 	case CTRL_UIH:
@@ -978,7 +1054,7 @@ static void handle_frame(uint8_t dlci, uint8_t ctrl, const uint8_t *data, size_t
 			pf_echo = true;
 		if (!dlci)
 			control_command(data, len);
-		else if (c)
+		else if (c && c->open)
 			deliver(c, data, len);
 		else
 			LOGW("%zu bytes on unknown dlci %u, dropped", len, dlci);
@@ -1000,9 +1076,11 @@ static void handle_frame(uint8_t dlci, uint8_t ctrl, const uint8_t *data, size_t
 		c->disc_sent = false;
 		c->refused = false;
 		c->refused_logged = false;
+		c->reopen_deadline = 0;
 		if (c->sabm_sent) {
 			c->sabm_sent = false;
-			resolve();
+			if (!c->reopen_attempts)
+				resolve();
 		}
 		tx_frame(dlci, CTRL_UA | CTRL_PF, NULL, 0);
 		break;
@@ -1167,13 +1245,17 @@ static void run(void)
 			graceful_exit();
 		if (state == ST_CLOSING || state == ST_PEER_CLOSING)
 			return;
+		timeout = recovery_timeout(timeout);
+		if (state == ST_CLOSING)
+			return;
 		pfd[n].fd = serial_fd;
 		pfd[n].events = POLLIN | (txq_len && !tx_blocked ? POLLOUT : 0);
 		pc[n++] = NULL;
 		for (int i = 0; i < nchans; i++) {
 			struct chan *c = &chans[i];
 
-			if (c->fd < 0)
+			if (c->fd < 0 || (!c->open && !c->refused && c->reopen_attempts) ||
+			    c->reopen_deadline)
 				continue;
 			pfd[n].fd = c->fd;
 			pfd[n].events = 0;
@@ -1183,7 +1265,7 @@ static void run(void)
 				pfd[n].events |= POLLOUT;
 			pc[n++] = c;
 		}
-		if (txq_len)
+		if (txq_len && (timeout < 0 || TX_RETRY_MS < timeout))
 			timeout = TX_RETRY_MS;
 		if (!setup_done) {
 			int64_t left = setup_deadline - now_ms();
@@ -1206,11 +1288,14 @@ static void run(void)
 			if (!got && !(pfd[0].revents & POLLIN))
 				report_and_exit("the modem port reports an error");
 		}
+		if (state == ST_CLOSING || state == ST_PEER_CLOSING)
+			return;
 		for (int k = 1; r > 0 && k < n; k++) {
 			struct chan *c = pc[k];
 			short ev = pfd[k].revents;
 
-			if (c->fd != pfd[k].fd || !ev)
+			if (c->fd != pfd[k].fd || !ev || c->reopen_deadline ||
+			    (!c->open && !c->refused && c->reopen_attempts))
 				continue;
 			if (ev & POLLOUT)
 				chan_drain(c);

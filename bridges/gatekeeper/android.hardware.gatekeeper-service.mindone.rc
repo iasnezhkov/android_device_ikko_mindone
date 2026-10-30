@@ -1,6 +1,7 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
-
 service vendor.gatekeeper-mindone /vendor/bin/hw/android.hardware.gatekeeper-service.mindone
-    class early_hal
+    class hal
     user system
     group system
+    onrestart restart gatekeeperd

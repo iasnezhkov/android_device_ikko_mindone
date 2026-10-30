@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 
 # mindone_rpcd init service -- identical to the existing stock
 # init.cccirpcd.rc stanza (build environment: vendor/etc/init/init.cccirpcd.rc),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -23,13 +23,6 @@ class MindoneRadio : public ::android::hardware::radio::V1_6::IRadio {
     MindoneRadio();
     ~MindoneRadio() override;
 
-    // Opens the two AT channels (command + notification, see AtChannel.h) against the given
-    // device paths. Must be called before registerAsService(); returns false if either open()
-    // fails (e.g. gsm0710muxd hasn't created the pty yet -- caller should retry, see
-    // service.cpp). Does NOT itself fire the boot handshake (see RadioImpl_core.cpp
-    // "connect-time probe" comment) -- that only happens once the framework actually binds via
-    // setResponseFunctions(), matching the stock RIL's own lifecycle (a HIDL server with no
-    // bound response callback has nowhere to deliver responses/indications to).
     bool openAtChannels(const std::string& cmdDevicePath, const std::string& notiDevicePath);
 
     ::android::hardware::Return<void> setResponseFunctions(const ::android::sp<::android::hardware::radio::V1_0::IRadioResponse>& radioResponse, const ::android::sp<::android::hardware::radio::V1_0::IRadioIndication>& radioIndication) override;
@@ -234,7 +227,6 @@ class MindoneRadio : public ::android::hardware::radio::V1_6::IRadio {
     ::android::hardware::Return<void> getSimPhonebookCapacity(int32_t serial) override;
     ::android::hardware::Return<void> updateSimPhonebookRecords(int32_t serial, const ::android::hardware::radio::V1_6::PhonebookRecordInfo& recordInfo) override;
   private:
-    // --- helpers shared by RadioImpl_core.cpp and RadioImpl_stubs.cpp ---
     static ::android::hardware::radio::V1_0::RadioResponseInfo mkInfo(
         int32_t serial, ::android::hardware::radio::V1_0::RadioError error);
     static ::android::hardware::radio::V1_6::RadioResponseInfo mkInfo16(
@@ -243,29 +235,19 @@ class MindoneRadio : public ::android::hardware::radio::V1_6::IRadio {
 
     void runBootHandshake();
 
-    // Shared implementation for the five setupDataCall generations (1.0/1.2/1.4/1.5/1.6) and
-    // the two deactivateDataCall generations (1.0/1.2) -- see RadioImpl_core.cpp. Only a
-    // single-APN, single-PDN default-bearer case is implemented; anything else (multiple
-    // simultaneous PDNs, non-IP protocol, non-default DataRequestReason) answers
-    // RadioError::REQUEST_NOT_SUPPORTED, logged loudly rather than guessed at.
     ::android::hardware::radio::V1_6::SetupDataCallResult doSetupDataCall(
         int32_t cid, const std::string& apn, const std::string& protocol);
     bool doDeactivateDataCall(int32_t cid);
 
-    // Shared implementation for getVoiceRegistrationState[_1_6]/getDataRegistrationState[_1_6]
-    // -- see RadioImpl_core.cpp.
     struct RegState {
-        int32_t regState = 0;   // V1_0::RegState numeric value
-        int32_t rat = 0;        // V1_0::RadioTechnology numeric value, best-effort from +CREG/+CGREG
+        int32_t regState = 0;
+        int32_t rat = 0;
     };
     RegState queryRegState(bool isData);
 
     AtChannel mCmdChannel;
     AtChannel mNotiChannel;
-    std::mutex mAtLock;  // serializes AtChannel::sendCommand across concurrent IRadio callers
-                          // (the framework may call from more than one binder thread; a real AT
-                          // tty is one physical command queue, matching AtChannel's own
-                          // single-command-in-flight design, see AtChannel.h)
+    std::mutex mAtLock;
 
     ::android::sp<::android::hardware::radio::V1_0::IRadioResponse> mResponseV1_0;
     ::android::sp<::android::hardware::radio::V1_6::IRadioResponse> mResponseV1_6;
@@ -279,4 +261,4 @@ class MindoneRadio : public ::android::hardware::radio::V1_6::IRadio {
     bool mPowerSavingApplied = false;
 };
 
-}  // namespace mindone::ril
+}

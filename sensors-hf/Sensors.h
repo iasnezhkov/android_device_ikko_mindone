@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,7 +42,6 @@ class Sensors : public BnSensors {
     Sensors();
     ~Sensors() override;
 
-    // ISensors
     ::ndk::ScopedAStatus activate(int32_t in_sensorHandle, bool in_enabled) override;
     ::ndk::ScopedAStatus batch(int32_t in_sensorHandle, int64_t in_samplingPeriodNs,
                                 int64_t in_maxReportLatencyNs) override;
@@ -66,30 +65,18 @@ class Sensors : public BnSensors {
   private:
     struct SensorState {
         bool active = false;
-        int64_t samplingPeriodNs = 200000000;  // 200ms default until batch() sets one
+        int64_t samplingPeriodNs = 200000000;
         int64_t maxReportLatencyNs = 0;
     };
 
-    // Opens /dev/hf_manager (if not already) and, on the FIRST call only,
-    // runs HfManagerClient::waitUntilReady() (bounded, ~40s) followed by
-    // enumeration over every kernel sensor_type via
-    // HF_MANAGER_REQUEST_SENSOR_INFO, building sensorList_/gainByHandle_.
-    // Safe to call from both getSensorsList() and initialize() - whichever
-    // runs first pays the wait, the other is then a no-op. See plan doc
-    // for why both entry points are guarded rather than trusting a single
-    // assumed call order from the framework.
     void ensureEnumerated();
 
-    // Body of ensureEnumerated(), caller must hold mutex_.
     void ensureEnumeratedLocked();
 
     void startReaderLocked();
     void stopReaderLocked();
     void readerLoop();
 
-    // Translates one raw kernel event into zero or one AIDL Event. Returns
-    // nullopt for: unmapped MTK-only sensor_type, and kernel actions with
-    // no v1 AIDL surface (BIAS/CALI/TEMP/TEST/RAW_ACTION).
     std::optional<Event> translateEvent(const ::mindone::hf::hf_manager_event& ke);
     void postEvents(const std::vector<Event>& events);
 
@@ -100,10 +87,6 @@ class Sensors : public BnSensors {
     std::mutex mutex_;
     bool enumerated_ = false;
     std::vector<SensorInfo> sensorList_;
-    // handle == kernel sensor_type in this implementation (both already
-    // unique, positive, and stable for the process lifetime), so this map
-    // only needs to carry what SensorInfo itself doesn't: the raw->physical
-    // scale factor and per-handle activation/batch state.
     std::unordered_map<int32_t, uint32_t> gainByHandle_;
     std::unordered_map<int32_t, SensorState> state_;
     ISensors::OperationMode mode_ = ISensors::OperationMode::NORMAL;
@@ -117,13 +100,8 @@ class Sensors : public BnSensors {
     std::thread readerThread_;
     std::atomic<bool> stopReader_{false};
 
-    // Wake-up sensor protocol (android.hardware.sensors ISensors contract): while WAKE_UP events
-    // written to the event FMQ have not been acknowledged by the framework through the wake-lock
-    // FMQ, the HAL holds a partial wake lock; it is released when the outstanding count returns to
-    // zero or after WAKE_LOCK_TIMEOUT_SECONDS without acknowledgements (auto-release safety net).
-    // Same shape as the AOSP reference HAL (hardware/interfaces/sensors/aidl/default).
     static constexpr const char* kWakeLockName = "SensorsHAL_WAKEUP";
-    std::unordered_map<int32_t, bool> wakeUpByHandle_;  // from SensorInfo.flags WAKE_UP bit
+    std::unordered_map<int32_t, bool> wakeUpByHandle_;
     std::thread wakeLockThread_;
     std::atomic<bool> readWakeLockQueueRun_{false};
     std::mutex wakeLockLock_;
@@ -137,7 +115,7 @@ class Sensors : public BnSensors {
     void updateWakeLockLocked(int32_t eventsWritten, int32_t eventsHandled);
 };
 
-}  // namespace sensors
-}  // namespace mindone
+}
+}
 
-#endif  // MINDONE_SENSORS_H_
+#endif

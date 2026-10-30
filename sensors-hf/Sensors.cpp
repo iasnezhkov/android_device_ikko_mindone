@@ -1,10 +1,14 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #define LOG_TAG "mindone.sensors"
 
 #include "Sensors.h"
+
+#if defined(MINDONE_HF_RUST_WIRE)
+#include "HfRustCore.h"
+#endif
 
 #include <android/binder_status.h>
 #include <log/log.h>
@@ -12,6 +16,8 @@
 
 #include <unistd.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cerrno>
 #include <cstring>
 
@@ -27,16 +33,11 @@ namespace {
 
 constexpr int kReadyTimeoutMs = 40000;
 
-// EventFlag wake bit used by frameworks/native's FMQ-based sensors event
-// reader to know a write happened. NOT independently re-derived here -
-// copied from the value used across every AOSP sensors HAL generation
-// (HIDL 2.x and AIDL). VERIFY against the actual framework build this ROM
-// links (see plan doc, open risk "FMQ vs poll event delivery"): a mismatch
-// degrades to the framework's own timeout-poll fallback rather than a
-// crash, but should still be confirmed with a working accelerometer test.
 constexpr uint32_t kEventQueueFlagBitsReadAndProcess = 1;
+constexpr uint32_t kEventQueueFlagBitsEventsRead =
+        static_cast<uint32_t>(ISensors::EVENT_QUEUE_FLAG_BITS_EVENTS_READ);
 
-}  // namespace
+}
 
 Sensors::Sensors() {
     if (!hf_.open()) {
@@ -57,7 +58,7 @@ void Sensors::ensureEnumerated() {
 void Sensors::ensureEnumeratedLocked() {
     if (enumerated_) return;
     if (!hf_.isOpen()) {
-        enumerated_ = true;  // nothing more we can do; leave sensorList_ empty
+        enumerated_ = true;
         return;
     }
 
@@ -69,13 +70,13 @@ void Sensors::ensureEnumeratedLocked() {
 
     for (int t = 1; t < ::mindone::hf::SENSOR_TYPE_SENSOR_MAX; ++t) {
         auto typeInfo = ::mindone::hf::lookupSensorTypeInfo(static_cast<uint8_t>(t));
-        if (!typeInfo) continue;  // MTK-only type or framework-synthesized meta type
+        if (!typeInfo) continue;
 
         ::mindone::hf::sensor_info raw{};
-        if (!hf_.querySensorInfo(static_cast<uint8_t>(t), &raw)) continue;  // not registered
+        if (!hf_.querySensorInfo(static_cast<uint8_t>(t), &raw)) continue;
 
         SensorInfo info{};
-        info.sensorHandle = t;  // handle == kernel sensor_type, see Sensors.h
+        info.sensorHandle = t;
         info.name = std::string(raw.name, strnlen(raw.name, sizeof(raw.name)));
         info.vendor = std::string(raw.vendor, strnlen(raw.vendor, sizeof(raw.vendor)));
         info.version = 1;
@@ -92,7 +93,7 @@ void Sensors::ensureEnumeratedLocked() {
         info.flags = typeInfo->flags;
 
         sensorList_.push_back(info);
-        gainByHandle_[t] = raw.gain ? raw.gain : 1;  // gain==0 would be a kernel bug; guard div-by-0
+        gainByHandle_[t] = raw.gain ? raw.gain : 1;
         wakeUpByHandle_[t] = (typeInfo->flags & ::mindone::hf::kFlagWakeUp) != 0;
         if (!typeInfo->verified) {
             ALOGW("sensor %s (type=%d handle=%d): SensorInfo numeric fields are "
@@ -116,6 +117,7 @@ void Sensors::startReaderLocked() {
 
 void Sensors::stopReaderLocked() {
     stopReader_.store(true);
+    if (eventQueueFlag_) eventQueueFlag_->wake(kEventQueueFlagBitsEventsRead);
     if (readerThread_.joinable()) readerThread_.join();
     stopWakeLockThreadLocked();
     if (eventQueueFlag_)
@@ -125,11 +127,6 @@ void Sensors::stopReaderLocked() {
 void Sensors::readerLoop() {
     std::vector<hf_manager_event> kevents;
     while (!stopReader_.load()) {
-        /* The timeout exists only so this loop notices stopReader_; events themselves arrive
-         * through the poll inside waitAndReadEvents and are not delayed by it. At 500 ms the
-         * thread woke twice a second for the life of the HAL even with every sensor disabled,
-         * which on a 1960 mAh device is pure cost. Five seconds keeps shutdown bounded and
-         * costs a tenth of the wake-ups. */
         if (!hf_.waitAndReadEvents(5000, &kevents)) {
             ALOGE("hf_manager event stream broken - reader thread exiting");
             return;
@@ -151,11 +148,6 @@ std::optional<Event> Sensors::translateEvent(const hf_manager_event& ke) {
     if (!typeInfo) return std::nullopt;
 
     Event e{};
-    // ASSUMPTION (verify on-device): SCP timestamps reach userspace already
-    // translated to AP CLOCK_BOOTTIME by the kernel's timesync module
-    // (sensorhub/timesync.c), matching what Event.timestamp documents
-    // (elapsedRealtimeNano timebase). If accel/gyro fusion looks jittery or
-    // SensorService logs timestamp-in-the-past warnings, re-check this.
     e.timestamp = ke.timestamp;
     e.sensorHandle = ke.sensor_type;
     e.sensorType = typeInfo->aidlType;
@@ -177,9 +169,6 @@ std::optional<Event> Sensors::translateEvent(const hf_manager_event& ke) {
                                 ? static_cast<float>(gainIt->second)
                                 : 1.0f;
     auto scaled = [&](int idx) { return static_cast<float>(ke.word[idx]) / gain; };
-    // SensorStatus is referenced here as a top-level android.hardware.sensors
-    // type; if this AIDL version instead nests it under
-    // Event::EventPayload::Vec3::SensorStatus, this is a one-line fix.
     auto status = static_cast<::aidl::android::hardware::sensors::SensorStatus>(ke.accurancy);
 
     switch (typeInfo->aidlType) {
@@ -222,8 +211,6 @@ std::optional<Event> Sensors::translateEvent(const hf_manager_event& ke) {
         case SensorType::ROTATION_VECTOR:
         case SensorType::GEOMAGNETIC_ROTATION_VECTOR: {
             EventPayload::Data data{};
-            // x, y, z, w, estimated_accuracy_radians (historical 5-value
-            // rotation vector layout); Data.values is float[16], rest 0.
             for (int i = 0; i < 5; ++i) data.values[i] = scaled(i);
             e.payload.set<EventPayload::data>(data);
             break;
@@ -232,10 +219,6 @@ std::optional<Event> Sensors::translateEvent(const hf_manager_event& ke) {
             e.payload.set<EventPayload::stepCount>(static_cast<int64_t>(ke.word[0]));
             break;
         default:
-            // LIGHT, PRESSURE, PROXIMITY, TEMPERATURE, AMBIENT_TEMPERATURE,
-            // RELATIVE_HUMIDITY, DEVICE_ORIENTATION, and every one-shot/
-            // special-reporting gesture/detector: single scalar payload
-            // per Event.aidl doc comments.
             e.payload.set<EventPayload::scalar>(scaled(0));
             break;
     }
@@ -243,32 +226,48 @@ std::optional<Event> Sensors::translateEvent(const hf_manager_event& ke) {
 }
 
 void Sensors::postEvents(const std::vector<Event>& events) {
-    std::lock_guard<std::mutex> lock(writeLock_);
-    if (!eventQueue_ || !eventQueueFlag_) return;
-    int32_t wakeUp = 0;
-    for (const auto& e : events) {
-        auto it = wakeUpByHandle_.find(e.sensorHandle);
-        if (it != wakeUpByHandle_.end() && it->second) ++wakeUp;
-    }
-    std::lock_guard<std::mutex> wakeLock(wakeLockLock_);
-    const int64_t previousDeadline = autoReleaseWakeLockTime_;
-    if (wakeUp > 0) {
-        updateWakeLockLocked(wakeUp, 0);
-        if (!hasWakeLock_) {
-            autoReleaseWakeLockTime_ = previousDeadline;
-            updateWakeLockLocked(0, wakeUp);
-            ALOGE("hf_manager->AIDL: could not acquire wake lock for %d events", wakeUp);
-            return;
+    constexpr int64_t kSpaceWaitNs = 5000LL * 1000 * 1000;
+    size_t offset = 0;
+    while (offset < events.size() && !stopReader_.load()) {
+        bool retryDelay = false;
+        {
+            std::lock_guard<std::mutex> lock(writeLock_);
+            if (!eventQueue_ || !eventQueueFlag_) return;
+            const size_t count = std::min(events.size() - offset, eventQueue_->availableToWrite());
+            if (count > 0) {
+                int32_t wakeUp = 0;
+                for (size_t i = offset; i < offset + count; ++i) {
+                    auto it = wakeUpByHandle_.find(events[i].sensorHandle);
+                    if (it != wakeUpByHandle_.end() && it->second) ++wakeUp;
+                }
+                std::lock_guard<std::mutex> wakeLock(wakeLockLock_);
+                const int64_t previousDeadline = autoReleaseWakeLockTime_;
+                if (wakeUp > 0) updateWakeLockLocked(wakeUp, 0);
+                if ((wakeUp == 0 || hasWakeLock_) &&
+                        eventQueue_->write(events.data() + offset, count)) {
+                    eventQueueFlag_->wake(kEventQueueFlagBitsReadAndProcess);
+                    offset += count;
+                    continue;
+                }
+                if (wakeUp > 0) {
+                    autoReleaseWakeLockTime_ = previousDeadline;
+                    updateWakeLockLocked(0, wakeUp);
+                }
+                retryDelay = true;
+            }
         }
-    }
-    if (eventQueue_->write(events.data(), events.size())) {
-        eventQueueFlag_->wake(kEventQueueFlagBitsReadAndProcess);
-    } else {
-        if (wakeUp > 0) {
-            autoReleaseWakeLockTime_ = previousDeadline;
-            updateWakeLockLocked(0, wakeUp);
+        if (stopReader_.load()) break;
+        if (retryDelay) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
         }
-        ALOGE("hf_manager->AIDL: dropped %zu events, event FMQ full", events.size());
+        uint32_t state = 0;
+        const auto status = eventQueueFlag_->wait(kEventQueueFlagBitsEventsRead, &state,
+                                                  kSpaceWaitNs, true);
+        if (status != ::android::OK && status != ::android::TIMED_OUT) {
+            ALOGE("hf_manager->AIDL: event FMQ wait failed: %d", status);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
     }
 }
 
@@ -287,13 +286,8 @@ void Sensors::stopWakeLockThreadLocked() {
 }
 
 void Sensors::readWakeLockFMQ() {
-    /* The short timeout is what bounds how quickly a held wake lock is auto-released, so it is
-     * only worth paying while one is actually held. With nothing held there is nothing to
-     * release and the wake-up buys nothing - it just woke the CPU twice a second forever. Poll
-     * fast only when it matters; a framework write to the queue still returns immediately either
-     * way, because readBlocking wakes on the data-written flag rather than on the timeout. */
-    constexpr int64_t kHeldTimeoutNs = 500LL * 1000 * 1000;   // 500 ms while a lock is held
-    constexpr int64_t kIdleTimeoutNs = 5000LL * 1000 * 1000;  // 5 s when there is nothing to release
+    constexpr int64_t kHeldTimeoutNs = 500LL * 1000 * 1000;
+    constexpr int64_t kIdleTimeoutNs = 5000LL * 1000 * 1000;
 
     while (readWakeLockQueueRun_.load()) {
         int64_t timeoutNs;
@@ -304,13 +298,13 @@ void Sensors::readWakeLockFMQ() {
         int32_t eventsHandled = 0;
         if (wakeLockQueue_) {
             wakeLockQueue_->readBlocking(
-                    &eventsHandled, 1 /* count */, 0 /* readNotification */,
+                    &eventsHandled, 1 , 0 ,
                     static_cast<uint32_t>(ISensors::WAKE_LOCK_QUEUE_FLAG_BITS_DATA_WRITTEN),
                     timeoutNs);
         } else {
             usleep(static_cast<useconds_t>(timeoutNs / 1000));
         }
-        updateWakeLock(0 /* eventsWritten */, eventsHandled);
+        updateWakeLock(0 , eventsHandled);
     }
 }
 
@@ -342,9 +336,6 @@ void Sensors::updateWakeLockLocked(int32_t eventsWritten, int32_t eventsHandled)
     }
 }
 
-// ---------------------------------------------------------------------
-// ISensors
-// ---------------------------------------------------------------------
 
 ::ndk::ScopedAStatus Sensors::getSensorsList(std::vector<SensorInfo>* _aidl_return) {
     ensureEnumerated();
@@ -375,8 +366,6 @@ void Sensors::updateWakeLockLocked(int32_t eventsWritten, int32_t eventsHandled)
     }
     callback_ = in_sensorsCallback;
 
-    // Defensive: also gate here in case a future framework build calls
-    // initialize() before getSensorsList(). See ensureEnumeratedLocked().
     ensureEnumeratedLocked();
 
     startWakeLockThreadLocked();
@@ -390,12 +379,30 @@ void Sensors::updateWakeLockLocked(int32_t eventsWritten, int32_t eventsHandled)
     if (gainByHandle_.find(in_sensorHandle) == gainByHandle_.end()) {
         return ::ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
     }
+#if defined(MINDONE_HF_RUST_WIRE)
+    const auto found = state_.find(in_sensorHandle);
+    const SensorState st = found == state_.end() ? SensorState{} : found->second;
+    const mindone_hf_state current{st.samplingPeriodNs, st.maxReportLatencyNs,
+                                   st.active ? 1u : 0u, 0};
+    mindone_hf_state_transition transition{};
+    if (mindone_hf_state_activate(&current, in_sensorHandle, in_enabled ? 1u : 0u,
+                                  &transition) != 0) {
+        return ::ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    }
+    if (!hf_.setEnable(static_cast<uint8_t>(in_sensorHandle), transition.next.active != 0,
+                        transition.next.period_ns, transition.next.latency_ns)) {
+        return ::ndk::ScopedAStatus::fromServiceSpecificError(EIO);
+    }
+    state_[in_sensorHandle] = {transition.next.active != 0, transition.next.period_ns,
+                               transition.next.latency_ns};
+#else
     SensorState& st = state_[in_sensorHandle];
     if (!hf_.setEnable(static_cast<uint8_t>(in_sensorHandle), in_enabled, st.samplingPeriodNs,
                         st.maxReportLatencyNs)) {
         return ::ndk::ScopedAStatus::fromServiceSpecificError(EIO);
     }
     st.active = in_enabled;
+#endif
     return ::ndk::ScopedAStatus::ok();
 }
 
@@ -405,27 +412,64 @@ void Sensors::updateWakeLockLocked(int32_t eventsWritten, int32_t eventsHandled)
     if (gainByHandle_.find(in_sensorHandle) == gainByHandle_.end()) {
         return ::ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
     }
+#if defined(MINDONE_HF_RUST_WIRE)
+    const auto found = state_.find(in_sensorHandle);
+    const SensorState st = found == state_.end() ? SensorState{} : found->second;
+    const mindone_hf_state current{st.samplingPeriodNs, st.maxReportLatencyNs,
+                                   st.active ? 1u : 0u, 0};
+    mindone_hf_state_transition transition{};
+    if (mindone_hf_state_batch(&current, in_sensorHandle, in_samplingPeriodNs,
+                               in_maxReportLatencyNs, &transition) != 0) {
+        return ::ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    }
+    if (transition.command == MINDONE_HF_STATE_ENABLE &&
+        !hf_.setEnable(static_cast<uint8_t>(in_sensorHandle), transition.next.active != 0,
+                        transition.next.period_ns, transition.next.latency_ns)) {
+        return ::ndk::ScopedAStatus::fromServiceSpecificError(EIO);
+    }
+    state_[in_sensorHandle] = {transition.next.active != 0, transition.next.period_ns,
+                               transition.next.latency_ns};
+#else
     SensorState& st = state_[in_sensorHandle];
-    st.samplingPeriodNs = in_samplingPeriodNs;
-    st.maxReportLatencyNs = in_maxReportLatencyNs;
     if (st.active) {
-        // hf_manager has no separate "change batch params while active"
-        // primitive: action==ENABLE always carries the current delay/
-        // latency and the kernel treats re-sending it as an update
-        // (hf_manager_save_update_enable(), hf_manager.c:652-689). So
-        // applying a new batch to an already-active sensor means
-        // re-issuing ENABLE, not a distinct ioctl.
-        if (!hf_.setEnable(static_cast<uint8_t>(in_sensorHandle), true, st.samplingPeriodNs,
-                            st.maxReportLatencyNs)) {
+        if (!hf_.setEnable(static_cast<uint8_t>(in_sensorHandle), true, in_samplingPeriodNs,
+                            in_maxReportLatencyNs)) {
             return ::ndk::ScopedAStatus::fromServiceSpecificError(EIO);
         }
     }
+    st.samplingPeriodNs = in_samplingPeriodNs;
+    st.maxReportLatencyNs = in_maxReportLatencyNs;
+#endif
     return ::ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus Sensors::flush(int32_t in_sensorHandle) {
-    // ISensors.aidl: flush() on a one-shot sensor must fail with EX_ILLEGAL_ARGUMENT (the framework
-    // already filters this, a direct HAL client is not protected otherwise).
+#if defined(MINDONE_HF_RUST_WIRE)
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = state_.find(in_sensorHandle);
+    if (gainByHandle_.find(in_sensorHandle) == gainByHandle_.end() || it == state_.end()) {
+        return ::ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    }
+    bool oneShot = false;
+    for (const auto& si : sensorList_) {
+        if (si.sensorHandle == in_sensorHandle) {
+            oneShot = (si.flags & SensorInfo::SENSOR_FLAG_BITS_MASK_REPORTING_MODE) ==
+                    SensorInfo::SENSOR_FLAG_BITS_ONE_SHOT_MODE;
+            break;
+        }
+    }
+    const SensorState& st = it->second;
+    const mindone_hf_state current{st.samplingPeriodNs, st.maxReportLatencyNs,
+                                   st.active ? 1u : 0u, 0};
+    mindone_hf_state_transition transition{};
+    if (mindone_hf_state_flush(&current, in_sensorHandle, oneShot ? 1u : 0u, &transition) != 0) {
+        return ::ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    }
+    if (!hf_.requestFlush(static_cast<uint8_t>(in_sensorHandle))) {
+        return ::ndk::ScopedAStatus::fromServiceSpecificError(EIO);
+    }
+    return ::ndk::ScopedAStatus::ok();
+#else
     {
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& si : sensorList_) {
@@ -445,43 +489,40 @@ void Sensors::updateWakeLockLocked(int32_t eventsWritten, int32_t eventsHandled)
     if (!hf_.requestFlush(static_cast<uint8_t>(in_sensorHandle))) {
         return ::ndk::ScopedAStatus::fromServiceSpecificError(EIO);
     }
-    // Completion arrives asynchronously as a META_DATA/META_DATA_FLUSH_
-    // COMPLETE event on the FMQ once the kernel replays a FLUSH_ACTION
-    // record for this sensor_type - see translateEvent().
     return ::ndk::ScopedAStatus::ok();
+#endif
 }
 
 ::ndk::ScopedAStatus Sensors::setOperationMode(ISensors::OperationMode in_mode) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (in_mode != ISensors::OperationMode::NORMAL) {
-        // DATA_INJECTION unsupported in v1 - see plan doc.
         return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
     }
     mode_ = in_mode;
     return ::ndk::ScopedAStatus::ok();
 }
 
-::ndk::ScopedAStatus Sensors::injectSensorData(const Event& /*in_event*/) {
+::ndk::ScopedAStatus Sensors::injectSensorData(const Event& ) {
     return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
-::ndk::ScopedAStatus Sensors::registerDirectChannel(const ISensors::SharedMemInfo& /*in_mem*/,
+::ndk::ScopedAStatus Sensors::registerDirectChannel(const ISensors::SharedMemInfo& ,
                                                      int32_t* _aidl_return) {
     *_aidl_return = -1;
     return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
-::ndk::ScopedAStatus Sensors::unregisterDirectChannel(int32_t /*in_channelHandle*/) {
+::ndk::ScopedAStatus Sensors::unregisterDirectChannel(int32_t ) {
     return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
-::ndk::ScopedAStatus Sensors::configDirectReport(int32_t /*in_sensorHandle*/,
-                                                  int32_t /*in_channelHandle*/,
-                                                  ISensors::RateLevel /*in_rate*/,
+::ndk::ScopedAStatus Sensors::configDirectReport(int32_t ,
+                                                  int32_t ,
+                                                  ISensors::RateLevel ,
                                                   int32_t* _aidl_return) {
     *_aidl_return = -1;
     return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
-}  // namespace sensors
-}  // namespace mindone
+}
+}

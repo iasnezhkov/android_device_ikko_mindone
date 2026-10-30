@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+service vendor.livedisplay-mindone /vendor/bin/hw/vendor.lineage.livedisplay-service.mindone
+    class hal
+    interface aidl vendor.lineage.livedisplay.IDisplayColorCalibration/default
+    user system
+    group graphics
+    capabilities
+    disabled
+
+on boot
+    start vendor.livedisplay-mindone

@@ -1,8 +1,9 @@
 /*
- * SPDX-FileCopyrightText: The LineageOS Project
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
+#include "LockoutTracker.h"
 #include "RemovalBatch.h"
 #include <aidl/android/hardware/biometrics/common/BnCancellationSignal.h>
 #include <aidl/android/hardware/biometrics/fingerprint/BnSession.h>
@@ -20,10 +21,14 @@ namespace hfp = ::android::hardware::biometrics::fingerprint::V2_1;
 
 class SessionBridge;
 
-// HIDL callback from the stock HAL -> AIDL ISessionCallback
 class HidlCallback : public hfp::IBiometricsFingerprintClientCallback {
   public:
-    explicit HidlCallback(std::shared_ptr<fp::ISessionCallback> cb) : cb_(std::move(cb)) {}
+    HidlCallback(std::shared_ptr<fp::ISessionCallback> cb,
+                 std::shared_ptr<LockoutTracker> lockout,
+                 ::android::sp<hfp::IBiometricsFingerprint> hidl)
+        : cb_(std::move(cb)), lockout_(std::move(lockout)), hidl_(std::move(hidl)) {}
+    bool beginAuthentication();
+    void beginEnrollment();
     ::android::hardware::Return<void> onEnrollResult(uint64_t deviceId, uint32_t fingerId, uint32_t groupId, uint32_t remaining) override;
     ::android::hardware::Return<void> onAcquired(uint64_t deviceId, hfp::FingerprintAcquiredInfo acquiredInfo, int32_t vendorCode) override;
     ::android::hardware::Return<void> onAuthenticated(uint64_t deviceId, uint32_t fingerId, uint32_t groupId, const ::android::hardware::hidl_vec<uint8_t>& token) override;
@@ -31,12 +36,9 @@ class HidlCallback : public hfp::IBiometricsFingerprintClientCallback {
     ::android::hardware::Return<void> onRemoved(uint64_t deviceId, uint32_t fingerId, uint32_t groupId, uint32_t remaining) override;
     ::android::hardware::Return<void> onEnumerate(uint64_t deviceId, uint32_t fingerId, uint32_t groupId, uint32_t remaining) override;
 
-    // Called once the session is closed or its HIDL HAL has died: further notify() callbacks from
-    // the stock HAL (a straggler already in flight, or a stale binder that has not yet noticed
-    // its peer is gone) are dropped instead of being delivered to a session the framework already
-    // believes is closed/dead.
     void deactivate() {
         active_.store(false, std::memory_order_relaxed);
+        lockout_->detach(cb_);
         removal_.cancel();
     }
     bool removeEnrollments(const std::vector<int32_t>& ids,
@@ -44,6 +46,11 @@ class HidlCallback : public hfp::IBiometricsFingerprintClientCallback {
 
   private:
     std::shared_ptr<fp::ISessionCallback> cb_;
+    std::shared_ptr<LockoutTracker> lockout_;
+    ::android::sp<hfp::IBiometricsFingerprint> hidl_;
+    std::mutex authenticationLock_;
+    bool authenticating_ = false;
+    bool lockedOut_ = false;
     std::atomic<bool> active_{true};
     std::mutex lock_;
     std::vector<int32_t> enumerated_;
@@ -55,15 +62,14 @@ class CancellationSignal : public ::aidl::android::hardware::biometrics::common:
     explicit CancellationSignal(::android::sp<hfp::IBiometricsFingerprint> hidl) : hidl_(std::move(hidl)) {}
     ndk::ScopedAStatus cancel() override;
   private:
-    ::android::sp<hfp::IBiometricsFingerprint> hidl_;  // may be nullptr - see cancel()
+    ::android::sp<hfp::IBiometricsFingerprint> hidl_;
 };
 
 class SessionBridge : public fp::BnSession {
   public:
-    SessionBridge(::android::sp<hfp::IBiometricsFingerprint> hidl, int32_t userId, std::shared_ptr<fp::ISessionCallback> cb);
+    SessionBridge(::android::sp<hfp::IBiometricsFingerprint> hidl, int32_t userId,
+                  std::shared_ptr<fp::ISessionCallback> cb, std::shared_ptr<LockoutTracker> lockout);
 
-    // Called by FingerprintBridge (from FingerprintHidlConn's background reconnect thread) when
-    // the stock HAL process backing this session has died. Idempotent.
     void onHidlDied();
 
     ndk::ScopedAStatus generateChallenge() override;
@@ -90,12 +96,13 @@ class SessionBridge : public fp::BnSession {
     ndk::ScopedAStatus setIgnoreDisplayTouches(bool shouldIgnore) override;
 
   private:
-    ::android::sp<hfp::IBiometricsFingerprint> hidl_;  // may be nullptr - see dead_
+    ::android::sp<hfp::IBiometricsFingerprint> hidl_;
     int32_t userId_;
     std::shared_ptr<fp::ISessionCallback> cb_;
+    std::shared_ptr<LockoutTracker> lockout_;
     ::android::sp<HidlCallback> hidlCb_;
-    std::atomic<bool> dead_{false};                  // hidl_ is null/stale - never touch it
-    std::atomic<bool> hwUnavailableNotified_{false};  // onHidlDied() fires onError() at most once
+    std::atomic<bool> dead_{false};
+    std::atomic<bool> hwUnavailableNotified_{false};
 };
 
-}  // namespace mindone
+}

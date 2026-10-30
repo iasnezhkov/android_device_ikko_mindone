@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 # MTK connectivity .rc configure
 
 on post-fs-data
@@ -19,7 +21,7 @@ service wmt_launcher /vendor/bin/wmt_launcher -p /vendor/firmware/ -o 1
     group system
 
 on property:ro.build.type=eng
-    write /sys/kernel/debug/tracing/tracing_on 1
+    write /sys/kernel/tracing/tracing_on 1
 
 on property:persist.vendor.connsys.coredump.mode=1
     start stp_dump

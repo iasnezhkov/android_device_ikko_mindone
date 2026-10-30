@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 set -uo pipefail
 usage() { echo "usage: apply-patches.sh check|apply [--root LINEAGE_ROOT] [--dry-run]" >&2; exit 2; }
 [ "${BASH_VERSINFO[0]}" -ge 4 ] || { echo "Bash 4 or newer is required" >&2; exit 2; }

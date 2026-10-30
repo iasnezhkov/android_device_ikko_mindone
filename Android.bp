@@ -20,3 +20,8 @@ prebuilt_etc {
         "manifest_media_c2_V1_2_default.xml",
     ],
 }
+
+filegroup {
+    name: "mindone_codec2_init_rc",
+    srcs: ["configs/media/android.hardware.media.c2-v4l2-mindone.rc"],
+}

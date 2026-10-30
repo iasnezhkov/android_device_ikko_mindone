@@ -26,8 +26,9 @@ Two things to know before relying on the overlay path:
   that references a library attribute (`layout_constraint*` from ConstraintLayout, and similar)
   fails to link. The ROM session hit exactly this on the camera app. Anything structural is a source
   patch, not an overlay.
-- `ro.control_privapp_permissions` is `log`, not `enforce`, so a missing allowlist entry shows up in
-  the log rather than as a boot failure. Do not read a quiet boot as proof the allowlist is right.
+- `ro.control_privapp_permissions` is `enforce`: a privileged permission the launcher requests
+  without an entry in its privapp-permissions XML stops system_server at boot. List every privileged
+  permission of a new launcher APK in that XML before it ships.
 
 ## Steps
 

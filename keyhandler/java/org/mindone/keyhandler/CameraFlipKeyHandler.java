@@ -20,13 +20,6 @@ public class CameraFlipKeyHandler implements DeviceKeyHandler {
 
     private static final int POSITION_FOR_KEYCODE_F2 = CameraFlipContract.POSITION_BACK;
 
-    /**
-     * Boot-time position exported by our mtk_kpd driver (the kernel module tree mtk_kpd.c, hall_position_show()):
-     * "1" = the KEY_F2 side, "0" = the KEY_F3 side, "-1" = hall switch not registered. The path
-     * is the keypad platform device from the DT (kp@10010000); it is a fixed path on purpose so
-     * that system_server needs read access to exactly one labelled sysfs file
-     * (sepolicy/vendor: sysfs_mindone_hall) and no directory walk over /sys/class/input.
-     */
     private static final String HALL_POSITION_PATH =
             "/sys/devices/platform/soc/10010000.kp/hall_position";
 
@@ -46,13 +39,9 @@ public class CameraFlipKeyHandler implements DeviceKeyHandler {
 
         final InputDevice device = event.getDevice();
         if (device == null || !CameraFlipContract.INPUT_DEVICE_NAME.equals(device.getName())) {
-            // A real F2/F3 from some other input source (e.g. a plugged-in keyboard) -- not
-            // ours, let the framework deliver it normally.
             return event;
         }
 
-        // The kernel emits a press *and* a release for every edge; apply the position change
-        // once, on the down event, and swallow both so apps never see F2/F3 at all.
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             final int position = (keyCode == KeyEvent.KEYCODE_F2)
                     ? POSITION_FOR_KEYCODE_F2
@@ -92,9 +81,6 @@ public class CameraFlipKeyHandler implements DeviceKeyHandler {
                 Log.d(TAG, "kernel hall position unavailable: " + value);
             }
         } catch (Exception e) {
-            // Attribute does not exist (older kernel module), or is not readable -- stay with
-            // whatever Settings.System already has from a previous boot, or unknown. Never crash
-            // system_server over a best-effort boot hint.
             Log.d(TAG, "no kernel boot-time hall position available", e);
         }
     }

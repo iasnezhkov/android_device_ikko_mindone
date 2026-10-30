@@ -1,3 +1,7 @@
+/*
+ * SPDX-FileCopyrightText: 2026 The LineageOS Project
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #include "rxfilter-policy.h"
 
 static uint16_t read_be16(const uint8_t* bytes) {

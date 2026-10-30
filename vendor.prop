@@ -1,23 +1,14 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
 
-ro.logd.size=64M
-ro.logd.size.main=64M
-ro.logd.size.system=32M
-ro.logd.size.events=16M
-ro.logd.size.kernel=16M
-ro.logd.size.crash=8M
-
-aaudio.mmap_exclusive_policy=2
-aaudio.mmap_policy=2
-ro.hardware.audio.primary=mindone
+aaudio.mmap_exclusive_policy=1
+aaudio.mmap_policy=1
 
 ro.vendor.mtk_audio_alac_support=1
 ro.vendor.mtk_audio_ape_support=1
 ro.vendor.mtk_audio_tuning_tool_ver=V1
-ro.vendor.mtk_audio_tuning_tool_ver=V1
-ro.vendor.mtk_hifiaudio_support=1
 ro.vendor.mtk_hifiaudio_support=1
 
-# Bluetooth
 bluetooth.profile.a2dp.source.enabled?=true
 bluetooth.profile.asha.central.enabled?=true
 bluetooth.profile.avrcp.target.enabled?=true
@@ -38,7 +29,6 @@ ro.bluetooth.a2dp_offload.supported=true
 ro.vendor.mtk.bt_sap_enable=true
 vendor.bluetooth.ldac.abr=true
 
-# Camera
 camera.disable_zsl_mode=1
 persist.vendor.camera3.pipeline.bufnum.base.imgo=4
 persist.vendor.camera3.pipeline.bufnum.base.lcso=4
@@ -65,7 +55,6 @@ vendor.camera.mdp.cz.enable=1
 vendor.camera.mdp.dre.enable=1
 vendor.mtk.camera.app.fd.video=1
 
-# Connectivity
 persist.vendor.connsys.chipid=-1
 persist.vendor.connsys.dynamic.dump=0
 persist.vendor.connsys.fm_chipid=mt6631_6635
@@ -80,23 +69,8 @@ ro.vendor.wlan.gen=gen4m_6789
 ro.vendor.wlan.standalone.log=y
 vendor.connsys.driver.ready=no
 
-# Display
 debug.mediatek.appgamepq_compress=1
 debug.mediatek.disp_decompress=1
-debug.sf.disable_backpressure=1
-# 🔴 The stock values here were 20.0 ms for the app, 27.6 ms for SurfaceFlinger and 23.0 ms as the
-# composer minimum. Those describe a 60 Hz pipeline: one vsync period is 16.7 ms there, so 27.6 ms
-# is under two periods. This panel runs at 96 Hz and a period is 10.4 ms, which made the composer's
-# declared work duration 2.65 periods -- it scheduled composition almost three frames ahead and its
-# deadlines stopped lining up. Measured consequence while walking through Settings: the composer
-# missed 18 frames a second, the app's frame could not finish because its buffer was not released
-# (up to 190 ms) and the next frame therefore started late (up to 175 ms). Input, layout, draw
-# recording and the GPU were all fast throughout; only the waiting was slow.
-# Sized to the real period instead. Measured on the device over the same navigation, with the
-# screen verified on and Settings verified in focus for both runs:
-#   90th percentile frame   150 ms -> 25 ms
-#   99th percentile frame   200 ms -> 105 ms
-#   composer misses         18/s   -> 4.25/s
 debug.sf.early.app.duration=10400000
 debug.sf.early.sf.duration=10400000
 debug.sf.earlyGl.app.duration=10400000
@@ -107,20 +81,9 @@ debug.sf.late.app.duration=10400000
 debug.sf.late.sf.duration=10400000
 debug.sf.use_phase_offsets_as_durations=1
 
-# RegionSampling is SurfaceFlinger taking a screenshot of a strip of the display and measuring
-# its luminance, so SystemUI can decide whether the status bar icons and the gesture handle
-# should be dark or light. It runs on the same RenderEngine thread as composition, and on this
-# device a single capture costs up to 88 ms of GPU time.
-#
-# Measured over 16.3 s of walking through Settings: 76 captures, 820 ms total -- 5% of wall
-# time -- and one of them lands inside the worst frame of the run, where the render thread is
-# already waiting 160 ms for a buffer and the GPU is 140 ms deep in a fence.
-#
-# AOSP's default period is 100 ms (RegionSamplingThread.cpp). Five times that keeps the feature
-# -- the handle still adapts to what is under it -- and takes the cost to about 1%. The icons
-# follow content half a second later than before, which is not noticeable at a glance but is
-# the reason this is a number and not an off switch.
 debug.sf.region_sampling_period_ns=500000000
+
+debug.hwui.initialize_gl_always=1
 
 debug.sf.prime_shader_cache.clipped_dimmed_image_layers=1
 debug.sf.prime_shader_cache.image_dimmed_layers=1
@@ -130,22 +93,16 @@ debug.sf.prime_shader_cache.solid_dimmed_layers=1
 debug.sf.prime_shader_cache.transparent_image_dimmed_layers=1
 ro.surface_flinger.force_hwc_copy_for_virtual_displays=true
 ro.surface_flinger.has_HDR_display=false
+ro.surface_flinger.enable_frame_rate_override=true
+ro.surface_flinger.set_idle_timer_ms=600
+ro.surface_flinger.set_touch_timer_ms=300
+ro.surface_flinger.use_content_detection_for_refresh_rate=true
 ro.surface_flinger.max_frame_buffer_acquired_buffers=3
 ro.surface_flinger.protected_contents=true
 ro.surface_flinger.primary_display_orientation=ORIENTATION_0
-ro.vendor.composer_version=2.1
-# MINDONE 11.09: DISABLED for testing (in the project issue registry).
-# This property does NOT exist in the stock vendor/build.prop - we added it. With blur
-# enabled, the compositor (pid 859) gets a blit failure 656 times per boot,
-# "DpAsyncBlitStream:: this platform unsupport compress format", and right next to it in the log
-# are BaseDepthController lines about applying blur to the launcher. In the same boot there are
-# 444 dropped frames flagged JANK_COMPOSER (one for apps), in the categories
-# LOCKSCREEN, NOTIFICATION_SHADE, LAUNCHER_APP - exactly where blur is applied.
-# Test: build without it, reboot, recount both numbers.
-# Restore the line if the correlation does not hold up.
-# ro.surface_flinger.supports_background_blur=1
+ro.vendor.composer_version=3.4
 ro.vendor.mtk_blulight_def_support=1
-ro.vendor.mtk_pq_color_mode=3
+ro.vendor.mtk_pq_color_mode=1
 ro.vendor.mtk_pq_support=0
 ro.vendor.pq.mtk_aal_support=0
 ro.vendor.pq.mtk_ai_scence_pq_support=0
@@ -174,82 +131,62 @@ ro.vendor.pq.mtk_ultra_dimming_support=0
 ro.vendor.pq.mtk_ultra_resolution_support=0
 ro.vendor.pq.mtk_video_transition=0
 
-# Factory
 persist.vendor.factory.GB2312=yes
 
-# Fuelgauge
 ro.vendor.mtk_fast_charging_support=1
 
-# Gatekeeper
 ro.hardware.gatekeeper=trustkernel
 
-# Graphics
 debug.renderengine.backend=skiaglthreaded
 ro.gfx.driver.0=com.mediatek.mt6789.gamedriver
 ro.hardware.egl=meow
-ro.hardware.gralloc=common
 ro.hardware.hwcomposer=mtk_common
 ro.hardware.vulkan=mali
 ro.opengles.version=196610
 ro.vendor.mtk_backlight_hwc_support=0
 ro.vendor.mtk_ovl_bringup=0
 
-# FRP
 ro.frp.pst=/dev/block/by-name/frp
 
-# FUSE passthrough
 persist.sys.fuse.passthrough.enable=true
 
-# GPS
 ro.vendor.mtk_agps_app=1
 ro.vendor.mtk_gps_support=1
 ro.vendor.mtk_log_hide_gps=1
 
-# Keymaster
 ro.hardware.kmsetkey=trustkernel
 
-# LMK
 ro.lmk.downgrade_pressure=60
 ro.lmk.psi_complete_stall_ms=150
 ro.lmk.swap_free_low_percentage=20
 ro.lmk.swap_util_max=90
 
-# Media
 media.c2.dmabuf.padding=3072
 ro.vendor.mtk.c2.vdec.fmt.support.level=1
 ro.vendor.mtk_mvpu_security_support=0
 ro.vendor.mtk_svp_on_mtee_support=2
 ro.vendor.mtk_video_hevc_enc_support=1
-vendor.media.heif.feature.off=1
-vendor.media.heif.highThreshold=20
 vendor.mtk.vdec.waitkeyframeforplay=9
 
-# Mediatek
 ro.vendor.mediatek.platform=MT6789
 ro.vendor.mediatek.version.branch=alps-mp-s0.mp1
 ro.vendor.mediatek.version.release=alps-mp-s0.mp1-V15.240
 ro.vendor.mgk_name=mgk_64_entry_level_k510
 ro.vendor.mgvi_name=mgvi_64_nfc_armv82
 
-# NFC
 ro.vendor.mtk_nfc_addon_support=1
 
-# Netflix
 ro.netflix.bsp_rev=MTK6789-35965-1
 
-# NeuralNetworks
 debug.mtk_tflite.target_nnapi=29
 ro.vendor.mtk_nn.option=A,B,C,D,E,F,G,Z
 ro.vendor.mtk_nn_baseline_support=1
 ro.vendor.mtk_nn_quant_preferred=1
 
-# OEM Unlocking
 ro.oem_unlock_supported=1
 
-# Perf
 ro.vendor.pref_scale_enable_cfg=1
 
-# RIL
 persist.radio.multisim.config=ss
 persist.vendor.ims_support=1
 persist.vendor.log.tel_log_ctrl=1
@@ -259,7 +196,6 @@ persist.vendor.mims_support=2
 persist.vendor.mtk.volte.enable=1
 persist.vendor.mtk_ct_volte_support=3
 persist.vendor.mtk_dynamic_ims_switch=1
-persist.vendor.mtk_sim_switch_policy=2
 persist.vendor.mtk_sim_switch_policy=2
 persist.vendor.mtk_wfc_support=1
 persist.vendor.radio.fd.counter=150
@@ -285,7 +221,6 @@ ro.vendor.md_auto_setup_ims=1
 ro.vendor.md_prop_ver=1
 ro.vendor.mtk_c2k_lte_mode=2
 ro.vendor.mtk_c2k_support=1
-ro.vendor.mtk_c2k_support=1
 ro.vendor.mtk_data_config=1
 ro.vendor.mtk_eccci_c2k=1
 ro.vendor.mtk_external_sim_only_slots=0
@@ -308,23 +243,17 @@ ro.vendor.sim_me_lock_mode=3
 telephony.active_modems.max_count=1
 telephony.lteOnCdmaDevice=1
 
-# Sensors
 ro.vendor.mtk.sensor.support=yes
 
-# Thermal
 ro.vendor.mtk_thermal_2_0=1
 
-# USB
 vendor.usb.controller=musb-hdrc
 
-# Wi-Fi
 ro.vendor.wifi.sap.concurrent.iface=ap1
 ro.vendor.wifi.sap.interface=ap0
 
-# Widevine
 ro.vendor.mtk_widevine_drm_l3_support=1
 
-log.tag.C2MtkBufferManager=SILENT
 log.tag.AT=I
 log.tag.RILC=I
 log.tag.RfxCloneMgr=I

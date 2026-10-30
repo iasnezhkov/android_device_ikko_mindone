@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 
 dontaudit surfaceflinger vendor_default_prop:file { read open getattr map };

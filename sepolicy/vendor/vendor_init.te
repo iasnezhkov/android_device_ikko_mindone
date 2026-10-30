@@ -1,5 +1,6 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 
 allow vendor_init mtk_radio_device:lnk_file unlink;
 
-allow vendor_init sysfs_batteryinfo:file setattr;
+allow vendor_init sysfs_mindone_gauge_learned:file setattr;

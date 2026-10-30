@@ -1,8 +1,6 @@
 bootprof.ko
-mrdump.ko
+dbgtop_drm.ko
 mtk_boot_common.ko
-aee_aed.ko
-aee_hangdet.ko
 mtk_printk_ctrl.ko
 log_store.ko
 nvmem_mtk_devinfo.ko
@@ -19,7 +17,6 @@ pinctrl-mt6789.ko
 8250_mtk.ko
 clk_mt6789_bus.ko
 clk_fmeter_mt6789.ko
-mtk_swpm_perf_arm_pmu.ko
 mtk_pmic_wrap.ko
 mt6397.ko
 mt6358_regulator.ko

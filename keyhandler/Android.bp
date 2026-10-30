@@ -19,8 +19,6 @@ android_app {
     },
 
     platform_apis: true,
-    // Must match packages/apps/Aperture's certificate (see the Aperture patch) so the
-    // "signature" permission gating the camera-flip broadcast is granted to it.
     certificate: "platform",
     system_ext_specific: true,
     privileged: true,
