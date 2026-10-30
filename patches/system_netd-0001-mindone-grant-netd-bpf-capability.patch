@@ -1,15 +1,29 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: iasnezhkov <iasnezhkov@gmail.com>
-Date: Sun, 25 Oct 2026 15:52:15 +0900
-Subject: [PATCH] Grant netd BPF capability for map initialization
+Date: Fri, 30 Oct 2026 15:55:00 +0900
+Subject: [PATCH] Grant netd and netd1shot BPF capability for map initialization
 
-Allow the existing netd ARRAY map initialization after unprivileged BPF is disabled. Keep SYS_ADMIN absent. Deploy together with loader enforcement and the corresponding SELinux capability permission.
+Allow netd's ARRAY map initialization after unprivileged BPF is disabled, in
+both the boot-time netd1shot self test and the netd service. The self test
+runs the same binary with reboot_on_failure, so it needs the same
+capability. Keep SYS_ADMIN absent. Deploy together with loader enforcement
+and the corresponding SELinux capability permission.
 
 diff --git a/server/netd.rc b/server/netd.rc
 --- a/server/netd.rc
 +++ b/server/netd.rc
-@@ -1,6 +1,6 @@
+@@ -3,7 +3,7 @@
+ service netd1shot /system/bin/netd oneshot
+     disabled # only started once bpf programs are loaded
+     class main
+-    capabilities CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER IPC_LOCK KILL NET_ADMIN NET_BIND_SERVICE NET_RAW SETUID SETGID
++    capabilities BPF CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER IPC_LOCK KILL NET_ADMIN NET_BIND_SERVICE NET_RAW SETUID SETGID
+     user root
+     group root net_admin
+     rlimit memlock 1073741824 1073741824
+@@ -16,7 +16,7 @@
  service netd /system/bin/netd
+     disabled # only started once bpf programs are loaded
      class main
 -    capabilities CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER IPC_LOCK KILL NET_ADMIN NET_BIND_SERVICE NET_RAW SETUID SETGID
 +    capabilities BPF CHOWN DAC_OVERRIDE DAC_READ_SEARCH FOWNER IPC_LOCK KILL NET_ADMIN NET_BIND_SERVICE NET_RAW SETUID SETGID
