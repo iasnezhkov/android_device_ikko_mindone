@@ -85,12 +85,6 @@ debug.sf.region_sampling_period_ns=500000000
 
 debug.hwui.initialize_gl_always=1
 
-debug.sf.prime_shader_cache.clipped_dimmed_image_layers=1
-debug.sf.prime_shader_cache.image_dimmed_layers=1
-debug.sf.prime_shader_cache.pip_image_layers=1
-debug.sf.prime_shader_cache.shadow_layers=1
-debug.sf.prime_shader_cache.solid_dimmed_layers=1
-debug.sf.prime_shader_cache.transparent_image_dimmed_layers=1
 ro.surface_flinger.force_hwc_copy_for_virtual_displays=true
 ro.surface_flinger.has_HDR_display=false
 ro.surface_flinger.enable_frame_rate_override=true
@@ -140,6 +134,7 @@ ro.hardware.gatekeeper=trustkernel
 debug.renderengine.backend=skiaglthreaded
 ro.gfx.driver.0=com.mediatek.mt6789.gamedriver
 ro.hardware.egl=meow
+ro.vendor.arm.egl.configs.r8_g8_b8_a8_32bit_fixed.recordable=true
 ro.hardware.hwcomposer=mtk_common
 ro.hardware.vulkan=mali
 ro.opengles.version=196610
@@ -156,7 +151,6 @@ ro.vendor.mtk_log_hide_gps=1
 
 ro.hardware.kmsetkey=trustkernel
 
-ro.lmk.downgrade_pressure=60
 ro.lmk.psi_complete_stall_ms=150
 ro.lmk.swap_free_low_percentage=20
 ro.lmk.swap_util_max=90

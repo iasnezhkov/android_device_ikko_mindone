@@ -20,6 +20,8 @@ while [ $# -gt 0 ]; do
 done
 export GIT_OPTIONAL_LOCKS=0
 cd "$SOURCE_ROOT" || exit 2
+BRANCH=$(git -C .repo/manifests config branch.default.merge) || { echo "ERROR: no manifest branch in $SOURCE_ROOT/.repo/manifests" >&2; exit 2; }
+BRANCH=${BRANCH#refs/heads/}
 PATCHDIR=$SCRIPT_DIR/patches
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -275,9 +277,9 @@ declare -A INSCOPE
 for proj in "${!PROJFILES_PATH[@]}"; do INSCOPE[$proj]=1; done
 
 if [ "$CMD" = check ]; then
-  if ! python3 .repo/repo/repo forall -c '
+  if ! BRANCH="$BRANCH" python3 .repo/repo/repo forall -c '
 u=""
-for c in m/lineage-23.2 origin/lineage-23.2 github/lineage-23.2; do
+for c in "m/$BRANCH" "origin/$BRANCH" "github/$BRANCH"; do
   git rev-parse --verify -q "$c" >/dev/null 2>&1 && { u=$c; break; }
 done
 ahead=0
@@ -320,11 +322,11 @@ evaluate_project() {
     fi
   done
   local upstream="" c
-  for c in m/lineage-23.2 origin/lineage-23.2 github/lineage-23.2; do
+  for c in "m/$BRANCH" "origin/$BRANCH" "github/$BRANCH"; do
     if git -C "$proj" rev-parse --verify -q "$c" >/dev/null 2>&1; then upstream=$c; break; fi
   done
   if [ -z "$upstream" ]; then
-    echo "  ERROR: no upstream ref (tried m/origin/github lineage-23.2)"
+    echo "  ERROR: no upstream ref (tried m/origin/github $BRANCH)"
     return
   fi
   EVAL_UPSTREAM=$upstream

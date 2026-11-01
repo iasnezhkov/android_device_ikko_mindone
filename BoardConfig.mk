@@ -190,4 +190,3 @@ WIFI_DRIVER_STATE_OFF := "0"
 include vendor/ikko/mindone/BoardConfigVendor.mk
 
 $(call soong_config_set,android_hardware_audio,run_64bit,true)
-BUILD_BROKEN_NINJA_USES_ENV_VARS += ROSETTA_DISABLE_AOT

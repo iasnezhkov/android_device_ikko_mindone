@@ -352,6 +352,7 @@ struct SoundTriggerMindone::Impl : std::enable_shared_from_this<Impl> {
             return status(-EINVAL);
         }
         if (phrases && (phrases->empty() || phrases->size() > SOUND_TRIGGER_MAX_PHRASES)) return status(-EINVAL);
+        if (!device) return status(-ENODEV);
         const size_t offset = phrases ? sizeof(sound_trigger_phrase_sound_model) : sizeof(sound_trigger_sound_model);
         std::unique_ptr<void, decltype(&std::free)> buffer(std::calloc(1, offset + model.dataSize), std::free);
         if (!buffer) return result(-ENOMEM);
@@ -448,16 +449,19 @@ bool SoundTriggerMindone::initialize() {
     int rc = hw_get_module(SOUND_TRIGGER_HARDWARE_MODULE_ID, &module);
     if (rc != 0) rc = hw_get_module_by_class(SOUND_TRIGGER_HARDWARE_MODULE_ID,
                                             SOUND_TRIGGER_HARDWARE_MODULE_ID_PRIMARY, &module);
-    if (rc != 0 || sound_trigger_hw_device_open(module, &s.device) != 0 || !s.device) return false;
-    if (s.device->common.version != SOUND_TRIGGER_DEVICE_API_VERSION_1_3 ||
-        !s.device->get_properties || !s.device->load_sound_model || !s.device->unload_sound_model ||
-        !s.device->stop_recognition || !s.device->start_recognition) {
-        sound_trigger_hw_device_close(s.device);
+    if (rc != 0 || sound_trigger_hw_device_open(module, &s.device) != 0 || !s.device) {
         s.device = nullptr;
         return false;
     }
     st::Properties properties;
-    if (!getProperties(&properties).isOk()) return false;
+    if (s.device->common.version != SOUND_TRIGGER_DEVICE_API_VERSION_1_3 ||
+        !s.device->get_properties || !s.device->load_sound_model || !s.device->unload_sound_model ||
+        !s.device->stop_recognition || !s.device->start_recognition ||
+        !getProperties(&properties).isOk()) {
+        sound_trigger_hw_device_close(s.device);
+        s.device = nullptr;
+        return false;
+    }
     s.properties = std::move(properties);
     s.dispatcher = std::thread([impl = mImpl] { impl->run(); });
     return true;
@@ -467,6 +471,7 @@ Status SoundTriggerMindone::getProperties(st::Properties* out) {
     auto& s = *mImpl;
     std::lock_guard operation(s.api);
     *out = {};
+    if (!s.device) return status(-ENODEV);
     sound_trigger_properties base = {};
     const sound_trigger_properties_extended_1_3* ext = nullptr;
     if (s.device->get_properties_extended) {
@@ -504,6 +509,7 @@ Status SoundTriggerMindone::registerGlobalCallback(const std::shared_ptr<ISoundT
     if (!callback) return status(-EINVAL);
     auto& s = *mImpl;
     std::lock_guard operation(s.api);
+    if (!s.device) return status(-ENODEV);
     {
         std::lock_guard lock(s.mutex);
         if (s.global) return Status::fromExceptionCode(EX_ILLEGAL_STATE);

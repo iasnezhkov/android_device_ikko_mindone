@@ -63,7 +63,7 @@ def fixup_halsensor_poweron(ctx, file, file_path, *args, **kwargs):
 
 
 def fixup_rxfilter_firmware(ctx, file, file_path, *args, **kwargs):
-    if os.environ.get('MINDONE_PERSONAL_BUILD', 'true') != 'true':
+    if os.environ.get('MINDONE_PERSONAL_BUILD', 'false') != 'true':
         return
     install_firmware(file_path)
     print(firmware_support(Path(file_path).read_bytes()))
@@ -216,8 +216,10 @@ blob_fixups: blob_fixups_user_type = {
         'vendor/lib64/libsysenv.so',
     ): blob_fixup()
         .add_needed('libbase_shim.so'),
+    'system_ext/lib64/libsink-mtk.so': blob_fixup()
+        .fix_soname()
+        .add_needed('libaudioclient_shim.so'),
     (
-        'system_ext/lib64/libsink-mtk.so',
         'vendor/lib/libspeech_enh_lib.so',
         'vendor/lib64/libspeech_enh_lib.so',
         'vendor/lib64/libwifi-hal-mtk.so',

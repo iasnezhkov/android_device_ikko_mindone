@@ -46,7 +46,7 @@ PRODUCT_PACKAGES += \
     otapreopt_script
 
 PRODUCT_AAPT_CONFIG := normal
-PRODUCT_AAPT_PREF_CONFIG := hdpi
+PRODUCT_AAPT_PREF_CONFIG := xxhdpi
 
 PRODUCT_PACKAGES += \
     android.hardware.audio.service.mindone \
@@ -111,11 +111,6 @@ PRODUCT_PACKAGES += \
 
 PRODUCT_PACKAGES += \
     android.hardware.gnss-service.mindone
-
-ifeq ($(WITH_GMS),true)
-GMS_MAKEFILE=gms_minimal.mk
-endif
-
 
 PRODUCT_PACKAGES += \
     android.hardware.health-service.mediatek \
@@ -298,7 +293,7 @@ endif
 PRODUCT_SHIPPING_API_LEVEL := 31
 PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS := true
 
-MINDONE_PERSONAL_BUILD ?= true
+MINDONE_PERSONAL_BUILD ?= false
 
 ifeq ($(MINDONE_PERSONAL_BUILD),true)
 PRODUCT_SYSTEM_PROPERTIES += persist.sys.usb.config=adb
@@ -308,8 +303,6 @@ PRODUCT_PACKAGES += \
 endif
 
 PRODUCT_SYSTEM_PROPERTIES += ro.telephony.sim.count=1
-
-PRODUCT_SYSTEM_PROPERTIES += service.sf.prime_shader_cache=1
 
 PRODUCT_SYSTEM_PROPERTIES += dalvik.vm.background-dex2oat-cpu-set=0,1,2,3,4,5
 PRODUCT_SYSTEM_PROPERTIES += dalvik.vm.background-dex2oat-threads=3
@@ -355,8 +348,6 @@ PRODUCT_COPY_FILES += \
 
 $(call inherit-product, vendor/ikko/mindone/mindone-vendor.mk)
 
-PRODUCT_PACKAGES := $(filter-out mtkfusionrild,$(PRODUCT_PACKAGES))
-
 PRODUCT_VENDOR_PROPERTIES += \
     ro.vendor.rc=/vendor/etc/init/hw/ \
     ro.vendor.init.sensor.rc=init.sensor_2_0.rc
@@ -366,7 +357,6 @@ PRODUCT_VENDOR_PROPERTIES += \
 
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/permissions/privapp-permissions-mediatek-ims.xml:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/permissions/privapp-permissions-mediatek-ims.xml \
-    $(LOCAL_PATH)/configs/permissions/privapp-permissions-mindone-gms.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/permissions/privapp-permissions-mindone-gms.xml \
     $(LOCAL_PATH)/configs/appcompat/compat_framework_overrides.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/appcompat/compat_framework_overrides.xml
 
 

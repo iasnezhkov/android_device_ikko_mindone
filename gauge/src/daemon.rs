@@ -159,7 +159,7 @@ fn configured_period() -> u64 {
     #[cfg(target_os = "android")]
     {
         if let Ok(Some(value)) =
-            rustutils::system_properties::read("ro.vendor.mindone.gauge.period_s")
+            rustutils::android::system_properties::read("ro.vendor.mindone.gauge.period_s")
         {
             return shadow::period_seconds(&value);
         }

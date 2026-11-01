@@ -2,38 +2,7 @@
 SPDX-FileCopyrightText: 2026 The LineageOS Project
 SPDX-License-Identifier: Apache-2.0
 -->
-<!--
-    Input:
-        manifest_sensor_hidl_v2.xml
-        manifest_audio.xml
-        manifest_ss.xml
-        manifest_radioconfig.xml
-        manifest_videotelephony.xml
-        manifest_secure_element_ss.xml
-        manifest_tee.xml
-        manifest_boot.xml
-        manifest_tetheroffloadservice.xml
-        manifest_pq.xml
-        manifest_mmservice.xml
-        manifest_mmagent.xml
-        manifest_dmc.xml
-        manifest_apmonitor.xml
-        manifest_composer.xml
-        manifest_skyroam_file.xml
-        manifest_skyroam_socket.xml
-        manifest_target_level_s.xml
-        manifest.xml
-        manifest.xml
--->
-<!-- 06.09 (K5/B12 audit, cross-checked against the stock rc files): removed HIDL entries with no service in the ROM: vendor.mediatek.hardware.atci, vendor.mediatek.hardware.keymaster_attestation, vendor.skyroam.hardware.file, vendor.skyroam.hardware.socket, vendor.mediatek.hardware.apmonitor, vendor.nxp.nxpese, vendor.nxp.nxpnfc -->
 <manifest version="4.0" type="device" target-level="202504">
-    <!-- 06.09: HIDL bluetooth@1.1 removed - the BT-HAL in the ROM is AIDL (android.hardware.bluetooth-service.mediatek, hardware/mediatek), an entry with no service = the same class as NFC (par. 3.1 audit). -->
-<!-- android.hardware.sensors: declared by the AIDL vintf_fragment of our own HAL
-     (device/ikko/mindone/sensors-hf/mindone-sensors.xml, ISensors/default V3); the HIDL
-     @2.0::ISensors/default entry of the stock multihal chain was removed 13.09. -->
-<!-- android.hardware.thermal: the stock HIDL @1.0/2.0 IThermal blob (thermal@2.0-service.mtk) was
-     replaced 13.09 by the open LineageOS AIDL HAL android.hardware.thermal-service.mediatek, which
-     installs its own vintf fragment (IThermal/default V3); config in configs/thermal/. -->
     <hal format="hidl">
         <name>vendor.mediatek.hardware.camera.atms</name>
         <transport>hwbinder</transport>
@@ -79,17 +48,4 @@ SPDX-License-Identifier: Apache-2.0
         <fqname>@1.2::IMtkPerf/default</fqname>
         <fqname>@1.2::IMtkPower/default</fqname>
     </hal>
-<!-- vendor.mediatek.hardware.pq@2.15 (picture-quality service): removed 13.09 — the service never ran on our ROM
-     (no pid, no init rc), display works without it; only the service binary + its -impl are dropped, the libpq
-     client libraries stay in case hwcomposer/gralloc dlopen them. -->
-<!-- vendor.mediatek.hardware.videotelephony@1.0 (vtservice_hidl / vtservice): removed 13.09 with the binaries —
-     VoLTE video calling only; stopping it live changed nothing else (probe of the optional services, 13.09). -->
-    <!-- sepolicy version intentionally NOT pinned here.
-         LineageOS 23 / Android 16 uses date-based sepolicy versions and passes the value
-         through BOARD_SEPOLICY_VERS (202504). assemble_vintf refuses to override a version
-         already present in the manifest and fails the build with
-         "Cannot override existing value 31.0 with BOARD_SEPOLICY_VERS". The 31.0 came from
-         the Android 12 vendor manifest this file was derived from.
-         NB: the build copies this repository into the LineageOS tree on every build, so the fix
-         only survives here - editing the copy inside the VM is wiped at the next run. -->
 </manifest>

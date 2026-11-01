@@ -114,15 +114,14 @@ int main() {
     auto soundTrigger = ndk::SharedRefBase::make<
             aidl::android::hardware::soundtrigger3::mindone::SoundTriggerMindone>();
     if (!soundTrigger->initialize()) {
-        LOG(ERROR) << "Legacy soundtrigger backend unavailable, ISoundTriggerHw not registered";
-    } else {
-        const std::string soundTriggerName =
-                std::string(aidl::android::hardware::soundtrigger3::ISoundTriggerHw::descriptor) +
-                "/default";
-        if (AServiceManager_addService(soundTrigger->asBinder().get(), soundTriggerName.c_str()) !=
-            STATUS_OK) {
-            LOG(ERROR) << "Failed to register service " << soundTriggerName;
-        }
+        LOG(ERROR) << "Legacy soundtrigger backend unavailable, ISoundTriggerHw reports no device";
+    }
+    const std::string soundTriggerName =
+            std::string(aidl::android::hardware::soundtrigger3::ISoundTriggerHw::descriptor) +
+            "/default";
+    if (AServiceManager_addService(soundTrigger->asBinder().get(), soundTriggerName.c_str()) !=
+        STATUS_OK) {
+        LOG(ERROR) << "Failed to register service " << soundTriggerName;
     }
 
     ABinderProcess_joinThreadPool();

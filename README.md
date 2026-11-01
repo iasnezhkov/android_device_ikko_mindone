@@ -148,9 +148,9 @@ installed system before it can be installed as an update.
 
 | Area | Implementation |
 |---|---|
-| Audio | AIDL primary service over the AFE/tinyalsa backend, with media, cellular earpiece/speaker, headset microphone and modem Bluetooth SCO routing |
+| Audio | AIDL primary service over the AFE/tinyalsa backend, with media, cellular earpiece/speaker, headset microphone and modem Bluetooth SCO routing; restarts together with audioserver |
 | Video | In-tree V4L2 Codec2 with AVC/HEVC encoding and AVC, HEVC, VP8, VP9, MPEG-4 and H.263 decoding |
-| Camera | AIDL frontend over the stock camera backend, default sensor pixel mode and separate stock MDP/gralloc libraries beside donor graphics |
+| Camera | AIDL frontend over the stock camera backend, default sensor pixel mode and separate stock MDP/gralloc libraries beside donor graphics; recordable RGBA8888 EGL configs for CameraX video processing |
 | GNSS | AIDL extensions and session-controlled receiver power |
 | Display | 96 Hz default and VFP-only 60 Hz idle mode, SurfaceFlinger idle/touch timers, LiveDisplay calibration and Night Light integration |
 | Radio / IMS / secure element | Selected donor AIDL radio, 64-bit IMS, Wi-Fi-calling helper and radio-backed AIDL secure-element service |

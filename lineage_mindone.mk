@@ -23,7 +23,7 @@ PRODUCT_BUILD_PROP_OVERRIDES += \
     BuildFingerprint=iKKO/MindOne/MindOne:15/AP3A.240905.015.A2/1776068888:user/release-keys \
     DeviceProduct=mindone
 
-MINDONE_PERSONAL_BUILD ?= true
+MINDONE_PERSONAL_BUILD ?= false
 
 ifeq ($(MINDONE_PERSONAL_BUILD),true)
 WITH_GAPPS ?= true
@@ -33,4 +33,6 @@ endif
 
 ifeq ($(WITH_GAPPS),true)
 $(call inherit-product, vendor/gapps/arm64/arm64-vendor.mk)
+PRODUCT_COPY_FILES += \
+    device/ikko/mindone/configs/permissions/privapp-permissions-mindone-gms.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/permissions/privapp-permissions-mindone-gms.xml
 endif

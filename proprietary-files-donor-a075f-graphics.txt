@@ -59,7 +59,6 @@ vendor/lib64/vendor.mediatek.hardware.graphics-V1-ndk.so|7dc324a0b09de8f535832ff
 vendor/lib64/vendor.mediatek.hardware.mmagent-V1-ndk.so|b1e7e9f9a0fdd02e44ecdf2b9d715d5ce2401382
 vendor/lib64/vendor.mediatek.hardware.mmlpq-V3-ndk.so|7af70f05288761fd71c1ce744135045095582d37
 vendor/lib64/vendor.mediatek.hardware.mms-V1-ndk.so|0d5b441e3718e22a761eb49e97622683b77900ec
-vendor/lib64/vendor.mediatek.hardware.mtkpower-V2-ndk.so|880576459272a301dcea6ab6d9cc7fe1cc463fff
 vendor/lib64/vendor.mediatek.hardware.neuropilot.agent-V1-ndk.so|c7f283b370025318ab472c64204481b172805aca
 vendor/lib64/vendor.mediatek.hardware.neuropilot.agent@1.0.so|764236db3e3433cebab7877284208c53d233096d
 vendor/lib64/vendor.mediatek.hardware.neuropilot.agent@1.1.so|1f13d46eccaa105841ba5e78d94554a13bb22eea
