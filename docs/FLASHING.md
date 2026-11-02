@@ -35,20 +35,13 @@ adb reboot
 active slot, boots it, marks it successful and merges the snapshots into the shared partitions —
 seconds, not the minutes a full image write takes. If the new slot does not come up, the
 bootloader falls back to the slot that was already working, before any merge, and none of this
-touches `/data`. Signed packages built this way were installed on the device on four separate
-days in a row, alternating slots, and both slots booted. One of those builds could not boot (a bad
-init change): the bootloader used up its tries and returned to the previous slot on its own, with
-nothing lost — the fallback doing its job. See "How installing works here" below for why this is
-the expected behaviour, not a lucky run.
+touches `/data`. See "How installing works here" below.
 
 ## How installing works here (Virtual A/B)
 
-An earlier version of this page said slot `_b` did not boot, and that `update_engine`, the
-Updater and `adb sideload` did not work on this device. That was wrong. What actually failed,
-every time it was checked, was a specific bad image — one whose `vendor_boot` carried the device
-tree twice (see "A duplicated device tree blob" under "Traps"). Once that stopped happening,
-`update_engine` writes have installed correctly and repeatedly, through both the Updater app and
-`update_engine_client` directly.
+Both slots install and boot through `update_engine`, from the Updater app and from
+`update_engine_client`. An image whose `vendor_boot` carries the device tree twice does not
+boot in either slot (see "A duplicated device tree blob" under "Traps").
 
 `BoardConfig.mk` configures seven logical partitions per slot inside `super`:
 `odm_dlkm`, `product`, `system`, `system_dlkm`, `system_ext`, `vendor` and `vendor_dlkm`.
@@ -77,8 +70,8 @@ Consequences worth being explicit about:
   switching slots.
 - 🔴 The fastboot fallback further down writes the shared base extents directly and bypasses the
   snapshot mechanism entirely. It is a real way to get bits onto the device, but it is not a
-  substitute for a normal `update_engine` install, and it is what left the other slot's partition
-  metadata stale in the past.
+  substitute for a normal `update_engine` install, and it leaves the other slot's partition
+  metadata stale.
 
 ## Kernel, DTBO and module updates
 
@@ -96,10 +89,12 @@ The product is 64-bit only. See [Proprietary files](BLOBS.md) for extraction and
 Sign the complete target-files archive and generate the full OTA with
 `ota_from_target_files` without `--partial`.
 
-The former kernel-only partial-OTA recipe omitted `system_dlkm` and DTBO and does not
-cover this paired set. Keep the matching AVB descriptors and measured target TEE
-contents and partition size: earlier measurements found `tee_a` at 5 MiB and `tee_b` at 6 MiB.
-Do not copy whole donor partitions or substitute another device's TEE.
+A kernel-only partial OTA cannot carry this paired set: it omits `system_dlkm` and DTBO.
+Keep the matching AVB descriptors. The full OTA also carries the ten stock firmware images
+listed in `proprietary-firmware.txt` (`lk`, `tee`, `gz`, `spmfw`, `sspm`, `scp`, `mcupm`,
+`dpm`, `pi_img`, `md1img`); extract them from one stock firmware version. `tee_a` is 5 MiB
+and `tee_b` 6 MiB, so a TEE image must fit 5 MiB. Do not copy whole donor partitions or
+substitute another device's TEE.
 
 Install the full signed package through the Updater or `update_engine_client` as above.
 Keep a tested signed known-good package: before snapshot merge a failed boot may fall
@@ -113,15 +108,15 @@ non-reset register (RGU `NONRST2`, `0x10007024`, low nibble) holds 2, and only t
 `androidboot.force_normal_boot=1` off the command line. The kernel's `syscon-reboot-mode` writes
 that value on `reboot recovery`; the bootloader's `fastboot reboot recovery` and its key menu do
 the same. Recovery then boots the same `boot` and `vendor_boot` as the system, and first-stage init
-loads `modules.load.recovery` **instead of** `modules.load.ramdisk`. That list is what used to be
-broken: it had lost the display, USB and reboot-mode modules, so recovery did start, with a dark
-screen and no USB, cleared the BCB and rebooted two minutes later — which looked exactly like
-"recovery cannot be entered". An earlier version of this page said so; it was wrong.
+loads `modules.load.recovery` **instead of** `modules.load.ramdisk`. That list must keep the
+display, USB and reboot-mode modules: without them recovery starts with a dark screen and no
+USB, clears the BCB and reboots two minutes later, which looks exactly like "recovery cannot be
+entered".
 
 Recovery's own "Apply update" and `adb sideload` go through `update_engine_sideload`, the same
 `update_engine` machinery described above, and are shipped in this build.
 
-Ways in, each verified on the device:
+Ways in:
 
 - `adb reboot recovery`;
 - from the bootloader's fastboot, `fastboot reboot recovery`;
@@ -186,8 +181,7 @@ alone -- but check, do not assume. Compare each against the device before writin
 stop if one differs: a partial set leaves the device in a combination nobody built or tested.
 
 🔴 `vbmeta_system` and `vbmeta_vendor` belong in the *written* group, not the checked one. They
-do change between builds, and an earlier version of this procedure wrote neither -- the same
-class of omission that had already bootlooped this device once on a forgotten `vbmeta`.
+change between builds, and a stale `vbmeta*` partition can bootloop the device.
 Six written + ten checked + seven inside `super` = 23. Include `system_dlkm` in the
 matching `super` image and preserve DTBO with the kernel set.
 
@@ -218,7 +212,7 @@ once with `development/tools/make_key`.
 
 ```sh
 cd <your lineage tree>
-source build/envsetup.sh && lunch lineage_mindone-bp4a-userdebug
+source build/envsetup.sh && breakfast mindone
 export PATH=$PWD/out/host/linux-x86/bin:$PATH
 KEYS=/path/to/your/keys
 
@@ -269,9 +263,8 @@ it first -- `blockdev --getsize64 /dev/block/by-name/super` against the sparse h
 
 🔴 **Never write `super` from the running system.** It is running *from* that partition. `dd`,
 `sync` and `reboot` are themselves files in `/system`; once the write replaces them they die with
-`SIGILL` mid-operation. That was tried here and very nearly cost the device -- the write only
-finished because `dd` happened to already be resident in memory. This applies regardless of which
-install path put the running system there.
+`SIGILL` mid-operation. This applies regardless of which install path put the running system
+there.
 
 ## Verify, always
 
@@ -286,7 +279,7 @@ sha256sum boot.img
 
 🔴 Compare **the same number of bytes**, not whole partitions. Partitions of the same name in the
 two slots can differ in size, so hashing them whole reports a difference where the content is
-identical. That produced a wrong conclusion here once.
+identical.
 
 The seven logical partitions are checked the same way, through `/dev/block/mapper/<name>${SLOT}`.
 
@@ -296,7 +289,7 @@ match. `update_engine_client --status`, `getprop ro.boot.slot_suffix` before and
 `bootctl get-snapshot-merge-status` (idle once the merge has finished) are the equivalent checks
 for that path.
 
-## Traps that have actually bitten
+## Traps
 
 **A duplicated device tree blob.** `BOARD_PREBUILT_DTBIMAGE_DIR` concatenates **every** `*.dtb`
 in that directory. Copy a new blob in under a different name without removing the old one and the
@@ -304,13 +297,11 @@ build silently produces a `vendor_boot` carrying the DTB twice, with no warning 
 device then does not boot: no adb, a preloader window every ~33 s. Check the size -- if the
 `dtb` inside `vendor_boot` is an exact multiple of the blob you built, that is what happened.
 The directory is a build product and is `.gitignore`d, so a clean clone does not protect you;
-`BoardConfig.mk` now refuses to build with more than one blob there. This was the actual cause of
-every "slot `_b` does not boot" report this page used to carry.
+`BoardConfig.mk` refuses to build with more than one blob there.
 
 **`grep -q` at the end of a pipeline.** With `set -o pipefail`, `grep -q` closes the pipe on its
 first match, the stage before it dies of SIGPIPE with 141, and the pipeline reports 141 -- a
-successful match that looks like a failure. A check written that way here reported "fastboot
-never appeared" while the device was sitting in fastboot. Capture into a variable, then match.
+successful match that looks like a failure. Capture into a variable, then match.
 
 **Piping flashing-tool output through `grep`/`tail`.** The pipeline buffers and a running flash
 looks hung. Write to a file and read the file.
@@ -334,26 +325,3 @@ whiteouts (character devices marking deletions).
 Data is not at risk in any of the above: `/data` is a separate partition and none of this touches
 it. After a fastboot-fallback install, enroll fingerprints again: the sensor starts with no
 enrollments, and enrolling works immediately.
-
-## What here has actually been run
-
-The following records describe earlier installations.
-
-| | |
-|---|---|
-| Install via the LineageOS Updater (Local update) | **Run.** Repeatedly, on separate days, alternating slots; both slots boot |
-| Install headless via `update_engine_client` | **Run.** Same result |
-| Historical partial (kernel-only) OTA | **Previously run.** Superseded by the full signed ROM procedure above |
-| Fallback after a build that does not boot | **Observed once, unplanned.** A build with a bad init change used up its tries; the bootloader returned to the previous slot, nothing lost |
-| Snapshot merge after a successful boot | **Observed.** Completes within seconds |
-| Signing chain (repack, sign, `add_img_to_target_files`, `ota_from_target_files`) | **Run.** This is how every installed package was produced |
-| `build_super_image` | **Run** |
-| Fingerprint comparison | **Run** |
-| `fastboot flash super` with a full 9 GB sparse image | **Run.** 3.3 GB of traffic, 53 sparse pieces, ~140 s |
-| Writing `boot`/`vendor_boot`/`dtbo`/`vbmeta`/`vbmeta_system`/`vbmeta_vendor` into the active slot with fastboot | **Run** |
-| Reading all twelve fastboot-written partitions back and comparing | **Run.** All twelve matched |
-| Completeness check of the ten unwritten firmwares | **Run.** All ten matched the device |
-| `adb reboot recovery` | **Run.** Works with a `vendor_boot` built after 19.09.2026; before that recovery came up dark and without USB |
-| `fastboot reboot recovery` | **Run.** Works |
-| Key menu (top-left + Power) into recovery and fastboot | **Run.** Works |
-| fastbootd (`adb reboot fastboot`) | **Run.** Reachable |
