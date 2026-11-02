@@ -14,7 +14,7 @@
 ---
 
 > An independent, unofficial LineageOS source release.
-> Read [Status](#-status) and keep a tested recovery route before installing.
+> Read [Features](#-features) and keep a tested recovery route before installing.
 
 ## 🧬 Why this one is unusual
 
@@ -42,6 +42,8 @@ extraction also handles removed Android 17 APIs without a framework exception fo
 | Tethering offload | AIDL service with a native MDDP connection-mode backend |
 | Gatekeeper / fingerprint | AIDL bridges to legacy implementations |
 | Modem / Wi-Fi helpers | Rust `gsm0710muxd`, modem status and Wi-Fi-calling components, private gen4m commands; the open RIL lives beside the selected donor radio stack |
+| MediaTek power interface | Local `vendor.mediatek.hardware.mtkpower@1.2` service for the vendor clients, with event-driven backend notifications instead of periodic polling |
+| Battery gauge | Rust `mindone_gauged` shadow service reading status-carrying fuel-gauge samples beside the stock GM30 gauge, without replacing it |
 
 The local services do not remove the need for proprietary radio, graphics, imaging,
 receiver and firmware components. Only extraction lists, source and fixups belong here.
@@ -144,7 +146,7 @@ in-tree Codec2 implementation; the former external Codec2 patch series is no lon
 its source. The resulting unofficial package must be signed with keys trusted by the
 installed system before it can be installed as an update.
 
-## 📊 Status
+## 📊 Features
 
 | Area | Implementation |
 |---|---|
@@ -185,9 +187,10 @@ certificate must match the installed trust store. Install the signed package usi
 
 Virtual A/B updates use snapshots over shared logical-partition extents. Keep the
 kernel, DTB/DTBO, GKI modules, vendor modules, userspace and AVB descriptors paired.
-The target slot's TEE size/content must be preserved by packaging; the two TEE partitions
-have different sizes. Do not apply an old partial-OTA partition list to a set that also
-changes DTBO or `system_dlkm`.
+The full package also carries the ten stock firmware images listed in
+`proprietary-firmware.txt`; extract them from one stock firmware version. The two TEE
+partitions have different sizes, so a TEE image must fit the smaller one. A partial-OTA
+partition list cannot carry a set that also changes DTBO or `system_dlkm`.
 
 Before snapshot merge, a failed trial may return to the retained successful slot.
 After merge, restore an earlier build by installing a compatible signed known-good
