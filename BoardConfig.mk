@@ -15,7 +15,7 @@ TARGET_CPU_VARIANT_RUNTIME := cortex-a76
 
 AB_OTA_UPDATER := true
 
-AB_OTA_PARTITIONS += \
+MINDONE_ROM_AB_PARTITIONS := \
     boot \
     vendor_boot \
     dtbo \
@@ -29,6 +29,7 @@ AB_OTA_PARTITIONS += \
     vbmeta \
     vbmeta_system \
     vbmeta_vendor
+AB_OTA_PARTITIONS += $(MINDONE_ROM_AB_PARTITIONS)
 
 TARGET_BOOTLOADER_BOARD_NAME := G251
 TARGET_BOARD_FASTBOOT_INFO_FILE := $(DEVICE_PATH)/fastboot-info.txt
@@ -53,6 +54,7 @@ BOARD_KERNEL_CMDLINE += loglevel=5
 BOARD_KERNEL_CMDLINE += cpuidle.governor=teo
 BOARD_KERNEL_CMDLINE += log_buf_len=2M
 BOARD_KERNEL_CMDLINE += rcutree.enable_rcu_lazy=1
+BOARD_KERNEL_CMDLINE += rcu_nocbs=0-7
 BOARD_KERNEL_CMDLINE += softlockup_panic=1 nmi_watchdog=panic sysctl.kernel.hung_task_timeout_secs=45
 
 BOARD_MKBOOTIMG_ARGS := --ramdisk_offset $(BOARD_RAMDISK_OFFSET)
@@ -188,5 +190,8 @@ BOARD_WPA_SUPPLICANT_PRIVATE_LIB := lib_driver_cmd_mt66xx
 WIFI_DRIVER_STATE_OFF := "0"
 
 include vendor/ikko/mindone/BoardConfigVendor.mk
+ifeq ($(MINDONE_COMMUNITY_BUILD),true)
+AB_OTA_PARTITIONS := $(filter $(MINDONE_ROM_AB_PARTITIONS),$(AB_OTA_PARTITIONS))
+endif
 
 $(call soong_config_set,android_hardware_audio,run_64bit,true)

@@ -1,3 +1,14 @@
+From: bengris32 <bengris32@protonmail.ch>
+Date: Fri, 15 Dec 2023 22:05:40 +0000
+Subject: [PATCH] ImsService: Export receivers that aren't exclusively
+ registered for system broadcasts
+
+* Remove incompatible androidprv:tooltipVerticalPadding while here.
+
+Signed-off-by: bengris32 <bengris32@protonmail.ch>
+[mindone: regenerated against the ImsService.apk of the iKKO MindOne; the
+ change is the one of device/xelex/Q25 ims-patches/0001]
+---
 diff --git a/smali/androidx/core/content/ContextCompat$Api26Impl.smali b/smali/androidx/core/content/ContextCompat$Api26Impl.smali
 --- a/smali/androidx/core/content/ContextCompat$Api26Impl.smali
 +++ b/smali/androidx/core/content/ContextCompat$Api26Impl.smali

@@ -19,11 +19,13 @@
 ## 🧬 Why this one is unusual
 
 The device shipped with a Linux 5.10 vendor kernel. The companion kernel project ports
-its device support to Google's **android16-6.12-2026-09_r10 GKI prebuilt**, CI **16736897**.
+its device support to Google's **android17-6.18-2026-09_r12 GKI prebuilt**, CI **16754118**
+(`6.18.32-android17-5`).
 The core kernel is Google's prebuilt; device drivers are loadable vendor modules built
 through Kleaf, with device DTB/DTBO outputs. Device code is not added to the GKI core.
 
-This branch targets **LineageOS 24.0 / Android 17**, uses **FCM 202504**, and inherits
+This branch targets **LineageOS 24.0 / Android 17**, uses **FCM 202504** with the kernel at
+kernel FCM 202604, and inherits
 `core_64_bit_only.mk`. It does not provide a 32-bit application runtime. Android HAL
 interfaces use AIDL, including frontends over legacy backends where necessary.
 Vendor-specific HIDL interfaces and proprietary backend libraries still remain. IMS
@@ -101,9 +103,10 @@ their absent RXFILTER support and the stock firmware patch. Do not substitute ar
 ### Stage the kernel set and build
 
 Build device modules and DTB/DTBO in the companion kernel repository on
-`android16-6.12`, following the build guide in that repository's documentation.
-Use the r10 core image, its exact GKI modules and metadata, and the device modules built
-against that base as one reviewed set. Do not mix outputs from different candidates.
+`android17-6.18`, following the build guide in that repository's documentation.
+Use the r12 core image, its exact GKI modules and metadata, and the device modules built
+against that base as one reviewed set. Moving an installed 6.12 build to 6.18 changes the
+GKI release and therefore takes a full signed ROM. Do not mix outputs from different candidates.
 
 Populate the ignored `kernel/` build inputs before building the ROM:
 
@@ -209,8 +212,9 @@ AVB coverage and exact readback lengths before writing; never overwrite a mounte
 
 ## 🧩 What else you need
 
-The companion kernel source branch is `android16-6.12`. It supplies the device DTB/DTBO
-and loadable drivers over Google's r10 GKI core. Firmware, proprietary userspace and
+The companion kernel source branch is `android17-6.18`. It supplies the device DTB/DTBO
+and loadable drivers over Google's r12 GKI core. The previous `android16-6.12` line
+matches the `lineage-23.2` branch of this repository. Firmware, proprietary userspace and
 kernel build products must be obtained or built separately; none belong in this Git tree.
 
 ## 🔎 Useful beyond this phone

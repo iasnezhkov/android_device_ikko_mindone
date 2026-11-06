@@ -24,6 +24,12 @@ PRODUCT_BUILD_PROP_OVERRIDES += \
     DeviceProduct=mindone
 
 MINDONE_PERSONAL_BUILD ?= false
+MINDONE_COMMUNITY_BUILD ?= false
+
+ifeq ($(MINDONE_COMMUNITY_BUILD),true)
+MINDONE_PERSONAL_BUILD := false
+WITH_GAPPS := false
+endif
 
 ifeq ($(MINDONE_PERSONAL_BUILD),true)
 WITH_GAPPS ?= true

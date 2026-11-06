@@ -78,7 +78,7 @@ Consequences worth being explicit about:
 Deliver the paired `boot`, `vendor_boot`, `vendor_dlkm`, `system_dlkm` and DTBO
 inside a **full signed ROM**, using the signing procedure below. Build it with the exact GKI `Image.gz`, matching DTB/DTBO, vendor modules and all
 load lists. The selected `system_dlkm` modules come from Google's pinned
-`android16-6.12-2026-09_r10` GKI archive, CI `16736897`
+`android17-6.18-2026-09_r12` GKI archive, CI `16754118`
 (`system_dlkm_staging_archive.tar.gz`), staged under
 `kernel/system_dlkm/flatten/lib/modules/` with `kernel/modules.load.system`.
 `BoardConfig.mk` includes `system_dlkm` and `dtbo` in `AB_OTA_PARTITIONS`.

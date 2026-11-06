@@ -55,7 +55,6 @@ mmprofile.ko
 mtk_uart_apdma.ko
 phy_generic.ko
 phy_mtk_tphy.ko
-musb_boost.ko
 mtk_pmic_wrap.ko
 mt635x_auxadc.ko
 mt6577_auxadc.ko

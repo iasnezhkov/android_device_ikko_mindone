@@ -23,3 +23,4 @@ genfscon sysfs /devices/platform/soc/11015000.i2c/i2c-3/3-0028/wakeup u:object_r
 genfscon sysfs /devices/platform/soc/10026000.pwrap/10026000.pwrap:mt6366/mt6358-rtc/rtc/rtc0/alarmtimer.0.auto/wakeup u:object_r:sysfs_wakeup:s0
 
 genfscon sysfs /devices/virtual/misc/mddp/mddp_method u:object_r:sysfs_mindone_mddp:s0
+genfscon sysfs /devices/platform/soc/14000000.dispsys_config/wakeup u:object_r:sysfs_wakeup:s0

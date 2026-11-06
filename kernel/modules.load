@@ -37,7 +37,6 @@ mmprofile.ko
 mtk_uart_apdma.ko
 phy_generic.ko
 phy_mtk_tphy.ko
-musb_boost.ko
 mt635x_auxadc.ko
 mt6577_auxadc.ko
 mt63xx_debug.ko
@@ -149,14 +148,12 @@ devmpu.ko
 mtk_btcvsd.ko
 nvmem_mt635x_efuse.ko
 spmtwam.ko
-task_turbo.ko
 cmdq_sec_drv.ko
 gz_irq_mod.ko
 gz_log_mod.ko
 gz_virtio_mod.ko
 gz_main_mod.ko
 camera_mem.ko
-mtk_heap_debug.ko
 widevine_driver.ko
 mtk_disp_sec.ko
 camera_fdvt_isp51.ko
@@ -195,7 +192,6 @@ backlight_cooling.ko
 mtk_pwm.ko
 hf_manager.ko
 thermal_interface.ko
-pmsr.ko
 mtk_qos.ko
 vcp.ko
 mediatek_cpufreq_hw.ko

@@ -1524,6 +1524,8 @@ static int start_output_stream(struct mindone_stream_out *out)
         sco_pcm_config(adev, &hw_config);
     else
         hw_config = out->config;
+    if (new_dev != OUT_DEVICE_BT_SCO)
+        apply_dl_crossbar(adev, out);
     pthread_mutex_unlock(&adev->lock);
 
     struct pcm *pcm = pcm_open(PCM_CARD, pcm_dev, PCM_OUT | PCM_MONOTONIC, &hw_config);
@@ -1532,6 +1534,9 @@ static int start_output_stream(struct mindone_stream_out *out)
               pcm_dev, pcm ? pcm_get_error(pcm) : "unknown");
         if (pcm)
             pcm_close(pcm);
+        pthread_mutex_lock(&adev->lock);
+        teardown_dl_crossbar(adev, out);
+        pthread_mutex_unlock(&adev->lock);
         return -ENODEV;
     }
 
@@ -1539,6 +1544,7 @@ static int start_output_stream(struct mindone_stream_out *out)
     pthread_mutex_lock(&adev->lock);
     if (new_dev != output_device_from_mask(out->device) ||
         (new_dev == OUT_DEVICE_BT_SCO && hw_config.rate != sco_rate(adev))) {
+        teardown_dl_crossbar(adev, out);
         pthread_mutex_unlock(&adev->lock);
         pcm_close(pcm);
         return -EAGAIN;
@@ -1547,18 +1553,17 @@ static int start_output_stream(struct mindone_stream_out *out)
     if (new_dev != OUT_DEVICE_BT_SCO) {
         int rc = check_endpoint_transition(adev, OUT_DEVICE_NONE, new_dev);
         if (rc) {
+            teardown_dl_crossbar(adev, out);
             pthread_mutex_unlock(&adev->lock);
             pcm_close(pcm);
             return rc;
         }
     }
 #endif
-    if (new_dev == OUT_DEVICE_BT_SCO) {
+    if (new_dev == OUT_DEVICE_BT_SCO)
         bt_sco_configure(adev);
-    } else {
-        apply_dl_crossbar(adev, out);
+    else
         apply_output_route(adev, OUT_DEVICE_NONE, new_dev);
-    }
     out->pcm = pcm;
     out->hw_config = hw_config;
     out->reopen_pending = false;
@@ -2124,6 +2129,8 @@ static int start_input_stream(struct mindone_stream_in *in)
         in->hw_config = in->config;
     }
     in->reopen_pending = false;
+    if (new_dev != IN_DEVICE_BT_SCO)
+        apply_input_route(adev, IN_DEVICE_NONE, new_dev);
     pthread_mutex_unlock(&adev->lock);
 
     in->pcm = pcm_open(PCM_CARD, pcm_dev, PCM_IN, &in->hw_config);
@@ -2134,6 +2141,11 @@ static int start_input_stream(struct mindone_stream_in *in)
             pcm_close(in->pcm);
             in->pcm = NULL;
         }
+        if (new_dev != IN_DEVICE_BT_SCO) {
+            pthread_mutex_lock(&adev->lock);
+            teardown_input_route(adev, new_dev);
+            pthread_mutex_unlock(&adev->lock);
+        }
         return -ENODEV;
     }
 
@@ -2141,14 +2153,17 @@ static int start_input_stream(struct mindone_stream_in *in)
     pthread_mutex_lock(&adev->lock);
     if (new_dev != input_device_from_mask(in->device) ||
         (new_dev == IN_DEVICE_BT_SCO && in->hw_config.rate != sco_rate(adev))) {
+        if (new_dev != IN_DEVICE_BT_SCO)
+            teardown_input_route(adev, new_dev);
         pthread_mutex_unlock(&adev->lock);
         pcm_close(in->pcm);
         in->pcm = NULL;
         return -EAGAIN;
     }
-    if (new_dev == IN_DEVICE_BT_SCO)
+    if (new_dev == IN_DEVICE_BT_SCO) {
         bt_sco_configure(adev);
-    apply_input_route(adev, IN_DEVICE_NONE, new_dev);
+        apply_input_route(adev, IN_DEVICE_NONE, new_dev);
+    }
     adev->active_in = in;
     in->routed_device = new_dev;
     in->standby = false;

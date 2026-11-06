@@ -153,7 +153,7 @@ Record the stock firmware identity with your private extraction records. Where a
 release identifier is unknown, identify its files by the hashes in the extraction lists.
 
 Kernel modules for `system_dlkm` come separately from Google's pinned
-`android16-6.12-2026-09_r10` GKI archive, CI `16736897`
+`android17-6.18-2026-09_r12` GKI archive, CI `16754118`
 (`system_dlkm_staging_archive.tar.gz`). They are not stock MindOne or donor userspace
 blobs. Stage the selected modules and load list with the exact GKI image and matching
 vendor modules before building a full signed ROM. See [Flashing](FLASHING.md).
