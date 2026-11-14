@@ -5,4 +5,7 @@
 
 type sysfs_mindone_hall, fs_type, sysfs_type;
 type sysfs_mindone_gauge_learned, fs_type, sysfs_type;
+type sysfs_mindone_charge_control, fs_type, sysfs_type;
+type vendor_camera_color_file, file_type, data_file_type;
+type sysfs_mindone_camera_4cell, fs_type, sysfs_type;
 

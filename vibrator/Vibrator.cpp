@@ -6,7 +6,6 @@
  */
 
 #include <chrono>
-#include <cstdio>
 #include <thread>
 
 #include <log/log.h>
@@ -126,21 +125,8 @@ ndk::ScopedAStatus Vibrator::alwaysOnDisable(int32_t) {
     return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
-ndk::ScopedAStatus Vibrator::getResonantFrequency(float* _aidl_return) {
-    FILE* fp = fopen("/sys/class/leds/vibrator/f0", "r");
-    if (fp == nullptr) {
-        return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
-    }
-    int raw = 0;
-    int matched = fscanf(fp, "%d", &raw);
-    fclose(fp);
-    if (matched != 1 || raw <= 0) {
-        ALOGE("getResonantFrequency: unexpected f0 content");
-        return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
-    }
-    *_aidl_return = static_cast<float>(raw) / 10.0f;
-    ALOGI("getResonantFrequency: %.1f Hz (raw %d)", *_aidl_return, raw);
-    return ndk::ScopedAStatus::ok();
+ndk::ScopedAStatus Vibrator::getResonantFrequency(float*) {
+    return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
 ndk::ScopedAStatus Vibrator::getQFactor(float*) {

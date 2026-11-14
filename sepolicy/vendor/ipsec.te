@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+allow ipsec self:netlink_xfrm_socket nlmsg;
+allowxperm ipsec self:netlink_xfrm_socket nlmsg {
+  XFRM_MSG_NEWSA XFRM_MSG_UPDSA XFRM_MSG_GETSA XFRM_MSG_DELSA XFRM_MSG_FLUSHSA
+  XFRM_MSG_ALLOCSPI XFRM_MSG_GETAE
+  XFRM_MSG_NEWPOLICY XFRM_MSG_UPDPOLICY XFRM_MSG_GETPOLICY XFRM_MSG_DELPOLICY
+  XFRM_MSG_FLUSHPOLICY
+};
+allow ipsec self:netlink_route_socket nlmsg;
+allowxperm ipsec self:netlink_route_socket nlmsg {
+  RTM_GETLINK RTM_NEWADDR RTM_DELADDR RTM_NEWROUTE RTM_DELROUTE RTM_NEWRULE RTM_DELRULE
+};

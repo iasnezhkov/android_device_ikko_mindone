@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ilia Snezhkov <iasnezhkov@gmail.com>
+Date: Fri, 13 Nov 2026 22:30:00 +0900
+Subject: [PATCH] Follow the camera list when the flip hides a camera
+
+With persist.vendor.camera.flip_exclusive set, the mindone camera provider
+reports the camera ID the flip module does not face as NOT_PRESENT, so the
+list CameraX returns holds one internal camera, and which one changes with
+every flip. CameraRepository computed the internal cameras and the main
+back/front camera once, lazily, so after the first flip the facing that
+was absent at start stayed null and setCameraFacing logged "No camera
+available" while the open camera had just been disconnected.
+
+The internal list is now recomputed when the set of internal camera IDs
+changes, and setCameraFacing waits up to 2 s for the requested main camera
+to appear, because the hall broadcast and the provider's PRESENT report
+travel separately. With the switch off both cameras are always listed, the
+cached list is returned and the wait ends at once.
+
+---
+diff --git a/app/src/main/java/org/lineageos/aperture/repositories/CameraRepository.kt b/app/src/main/java/org/lineageos/aperture/repositories/CameraRepository.kt
+--- a/app/src/main/java/org/lineageos/aperture/repositories/CameraRepository.kt
++++ b/app/src/main/java/org/lineageos/aperture/repositories/CameraRepository.kt
+@@ -50,29 +50,29 @@
+         ExtensionsManager.getInstanceAsync(context, cameraProvider).get()
+     }
+ 
+-    /**
+-     * List of internal cameras. These should never change.
+-     */
+-    private val internalCameras by lazy {
+-        cameraProvider.availableCameraInfos
+-            .filter { cameraXCameraInfo ->
+-                cameraXCameraInfo.lensFacing != CameraSelector.LENS_FACING_EXTERNAL
+-                        && cameraXCameraInfo.isInternalCameraAllowed()
+-            }
+-            .mapToCamera()
+-    }
++    private var internalCamerasCache: Pair<List<String>, List<Camera>>? = null
+ 
+-    val mainBackCamera by lazy {
+-        internalCameras.firstOrNull { camera ->
++    private val internalCameras: List<Camera>
++        @Synchronized get() {
++            val cameraInfos = cameraProvider.availableCameraInfos
++                .filter { cameraXCameraInfo ->
++                    cameraXCameraInfo.lensFacing != CameraSelector.LENS_FACING_EXTERNAL
++                            && cameraXCameraInfo.isInternalCameraAllowed()
++                }
++            val cameraIds = cameraInfos.map { Camera2CameraInfo.from(it).cameraId }
++            internalCamerasCache?.takeIf { it.first == cameraIds }?.let { return it.second }
++            return cameraInfos.mapToCamera().also { internalCamerasCache = cameraIds to it }
++        }
++
++    val mainBackCamera: Camera?
++        get() = internalCameras.firstOrNull { camera ->
+             camera.cameraFacing == CameraFacing.BACK
+         }
+-    }
+ 
+-    val mainFrontCamera by lazy {
+-        internalCameras.firstOrNull { camera ->
++    val mainFrontCamera: Camera?
++        get() = internalCameras.firstOrNull { camera ->
+             camera.cameraFacing == CameraFacing.FRONT
+         }
+-    }
+ 
+     /**
+      * List of external cameras. These will change once the user connects or disconnects a camera.
+diff --git a/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt b/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
+--- a/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
++++ b/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
+@@ -1284,16 +1284,16 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
+         if (_cameraConfiguration.value == null) {
+             return@launch
+         }
++        val facingCamera = when (cameraFacing) {
++            CameraFacing.FRONT, CameraFacing.BACK -> awaitMainCamera(cameraFacing)
++            CameraFacing.UNKNOWN, CameraFacing.EXTERNAL -> null
++        }
+         updateConfiguration<CameraConfiguration> { cameraConfiguration ->
+             if (cameraConfiguration.camera.cameraFacing == cameraFacing) {
+                 return@updateConfiguration cameraConfiguration
+             }
+ 
+-            val camera = when (cameraFacing) {
+-                CameraFacing.FRONT -> cameraRepository.mainFrontCamera
+-                CameraFacing.BACK -> cameraRepository.mainBackCamera
+-                CameraFacing.UNKNOWN, CameraFacing.EXTERNAL -> null
+-            } ?: run {
++            val camera = facingCamera ?: run {
+                 Log.e(LOG_TAG, "No camera available for requested facing $cameraFacing")
+                 return@updateConfiguration cameraConfiguration
+             }
+@@ -1307,6 +1307,25 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
+                 cameraMode = cameraConfiguration.cameraMode,
+             )
+         }
++    }
++
++    private suspend fun awaitMainCamera(
++        cameraFacing: CameraFacing,
++    ) = kotlinx.coroutines.withTimeoutOrNull(2000L) {
++        var camera = mainCamera(cameraFacing)
++        while (camera == null) {
++            kotlinx.coroutines.delay(100L)
++            camera = mainCamera(cameraFacing)
++        }
++        camera
++    }
++
++    private fun mainCamera(
++        cameraFacing: CameraFacing,
++    ) = when (cameraFacing) {
++        CameraFacing.FRONT -> cameraRepository.mainFrontCamera
++        CameraFacing.BACK -> cameraRepository.mainBackCamera
++        CameraFacing.UNKNOWN, CameraFacing.EXTERNAL -> null
+     }
+ 
+     fun setCameraMode(
+-- 
+2.47.0

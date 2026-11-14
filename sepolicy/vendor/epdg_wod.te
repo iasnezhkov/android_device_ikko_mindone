@@ -1,3 +1,5 @@
 # SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 allowxperm epdg_wod self:udp_socket ioctl SIOCSIFADDR;
+allow epdg_wod self:netlink_route_socket nlmsg;
+allowxperm epdg_wod self:netlink_route_socket nlmsg { RTM_NEWLINK RTM_DELLINK };

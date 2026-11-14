@@ -1,0 +1,563 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Thu, 12 Nov 2026 21:00:00 +0900
+Subject: [PATCH] telephony: power off the radio of a phone without a
+ subscription
+
+When config_powerOffRadioWhenNoActiveSubscription is true, every
+GsmCdmaPhone gets a NoSubscriptionRadioPowerController. It votes the
+cellular radio of that phone off with an internal radio-off reason
+(RADIO_POWER_REASON_NO_SUBSCRIPTION = 1000) while the phone has no
+active subscription, and withdraws the vote as soon as one appears.
+
+A phone has no subscription when SubscriptionManagerService maps no
+subscription to its slot and the SIM state is final: ABSENT,
+CARD_IO_ERROR, CARD_RESTRICTED, or NOT_READY with an empty eUICC profile
+or with uicc applications disabled on the inserted card. A PIN, PUK or
+network locked SIM keeps its subscription mapped (the ICCID is readable),
+so the radio stays on for the unlock flow and limited service. UNKNOWN,
+READY and NOT_READY while applications load are transitional and also
+keep the radio on, so the radio is never cut before the SIM state is
+known at boot, during a SIM refresh, or while the user re-enables a SIM.
+
+The vote is applied only after the no-subscription state has held for
+30 s, and is never applied while the radio is in use for an emergency:
+a Telecom emergency call, any call on any phone or IMS phone, emergency
+callback mode, emergency SMS mode, EmergencyStateTracker call/ECBM/SCBM
+when domain selection is used, or an enabled satellite session. While
+blocked it rechecks every 60 s. An emergency call clears all radio-off
+reasons through setRadioPower(forEmergencyCall=true); the controller
+observes the radio turning on, waits for the emergency session and ECBM
+to end, and then applies the vote again. Devices that support OEM
+satellite keep the radio on, since SatelliteController refuses to enable
+satellite while the cellular radio is off.
+
+Inputs: SubscriptionManagerService onSubscriptionChanged and
+onUiccApplicationsEnabledChanged, the carrier config change for this
+slot (sent once the SIM state is final), and RIL radio-on. The decision
+is per phone, so on multi-SIM devices only the empty or disabled slot
+is switched off. The reason is internal to frameworks/opt/telephony;
+ServiceStateTracker treats it like any other entry in its reason set and
+dumps it as 1000. TelephonyManager#getRadioPowerOffReasons reports it to
+privileged callers as an unnamed value; no public API changes.
+
+Test: atest NoSubscriptionRadioPowerControllerTest (not run)
+---
+diff --git a/src/java/com/android/internal/telephony/GsmCdmaPhone.java b/src/java/com/android/internal/telephony/GsmCdmaPhone.java
+index ef655d7..c2d5251 100644
+--- a/src/java/com/android/internal/telephony/GsmCdmaPhone.java
++++ b/src/java/com/android/internal/telephony/GsmCdmaPhone.java
+@@ -187,6 +187,7 @@ public class GsmCdmaPhone extends Phone {
+     private String mEsn;
+     private String mMeid;
+     private Boolean mUiccApplicationsEnabled = null;
++    private NoSubscriptionRadioPowerController mNoSubscriptionRadioPowerController;
+     // keeps track of when we have triggered an emergency call due to the ril.test.emergencynumber
+     // param being set and we should generate a simulated exit from the modem upon exit of ECbM.
+     private boolean mIsTestingEmergencyCallbackMode = false;
+@@ -401,6 +402,12 @@ public class GsmCdmaPhone extends Phone {
+             }
+         });
+ 
++        if (mContext.getResources().getBoolean(
++                com.android.internal.R.bool.config_powerOffRadioWhenNoActiveSubscription)) {
++            mNoSubscriptionRadioPowerController =
++                    new NoSubscriptionRadioPowerController(this, getLooper());
++        }
++
+         mLinkBandwidthEstimator = mTelephonyComponentFactory
+                 .inject(LinkBandwidthEstimator.class.getName())
+                 .makeLinkBandwidthEstimator(this, getLooper());
+@@ -3847,6 +3854,9 @@ public class GsmCdmaPhone extends Phone {
+                         + ServiceState.rilServiceStateToString(mTelecomVoiceServiceStateOverride)
+                         + ")");
+         pw.println(" mUiccApplicationsEnabled=" + mUiccApplicationsEnabled);
++        if (mNoSubscriptionRadioPowerController != null) {
++            mNoSubscriptionRadioPowerController.dump(pw);
++        }
+         pw.flush();
+         try {
+             mCallWaitingController.dump(pw);
+diff --git a/src/java/com/android/internal/telephony/NoSubscriptionRadioPowerController.java b/src/java/com/android/internal/telephony/NoSubscriptionRadioPowerController.java
+new file mode 100644
+index 0000000..df77660
+--- /dev/null
++++ b/src/java/com/android/internal/telephony/NoSubscriptionRadioPowerController.java
+@@ -0,0 +1,211 @@
++/*
++ * SPDX-FileCopyrightText: 2026 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package com.android.internal.telephony;
++
++import android.annotation.NonNull;
++import android.annotation.Nullable;
++import android.os.Handler;
++import android.os.Looper;
++import android.os.Message;
++import android.telecom.TelecomManager;
++import android.telephony.CarrierConfigManager;
++import android.telephony.SubscriptionManager;
++import android.util.LocalLog;
++
++import com.android.internal.annotations.VisibleForTesting;
++import com.android.internal.telephony.domainselection.DomainSelectionResolver;
++import com.android.internal.telephony.emergency.EmergencyStateTracker;
++import com.android.internal.telephony.satellite.SatelliteController;
++import com.android.internal.telephony.subscription.SubscriptionManagerService;
++import com.android.internal.telephony.subscription.SubscriptionManagerService.SubscriptionManagerServiceCallback;
++import com.android.telephony.Rlog;
++
++import java.io.PrintWriter;
++
++public class NoSubscriptionRadioPowerController extends Handler {
++    public static final int RADIO_POWER_REASON_NO_SUBSCRIPTION = 1000;
++
++    @VisibleForTesting
++    public static final long POWER_OFF_DELAY_MILLIS = 30_000L;
++
++    @VisibleForTesting
++    public static final long RECHECK_DELAY_MILLIS = 60_000L;
++
++    private static final String TAG = "NoSubRadioPower";
++    private static final int EVENT_EVALUATE = 1;
++    private static final int EVENT_POWER_OFF = 2;
++
++    private final Phone mPhone;
++    private final LocalLog mLocalLog = new LocalLog(64);
++    private boolean mPowerOffRequested;
++
++    public NoSubscriptionRadioPowerController(@NonNull Phone phone, @NonNull Looper looper) {
++        super(looper);
++        mPhone = phone;
++        SubscriptionManagerService.getInstance().registerCallback(
++                new SubscriptionManagerServiceCallback(this::post) {
++                    @Override
++                    public void onSubscriptionChanged(int subId) {
++                        scheduleEvaluate();
++                    }
++
++                    @Override
++                    public void onUiccApplicationsEnabledChanged(int subId) {
++                        scheduleEvaluate();
++                    }
++                });
++        CarrierConfigManager configManager =
++                phone.getContext().getSystemService(CarrierConfigManager.class);
++        if (configManager != null) {
++            configManager.registerCarrierConfigChangeListener(this::post,
++                    (slotIndex, subId, carrierId, specificCarrierId) -> {
++                        if (slotIndex == mPhone.getPhoneId()) {
++                            scheduleEvaluate();
++                        }
++                    });
++        }
++        mPhone.mCi.registerForOn(this, EVENT_EVALUATE, null);
++        scheduleEvaluate();
++    }
++
++    @Override
++    public void handleMessage(@NonNull Message msg) {
++        switch (msg.what) {
++            case EVENT_EVALUATE:
++                evaluate();
++                break;
++            case EVENT_POWER_OFF:
++                powerOff();
++                break;
++            default:
++                break;
++        }
++    }
++
++    private void scheduleEvaluate() {
++        removeMessages(EVENT_EVALUATE);
++        sendEmptyMessage(EVENT_EVALUATE);
++    }
++
++    private void evaluate() {
++        removeMessages(EVENT_EVALUATE);
++        if (mPhone.isShuttingDown()) {
++            return;
++        }
++        if (!hasNoSubscription() || isSatelliteSupported()) {
++            removeMessages(EVENT_POWER_OFF);
++            restoreRadioPower();
++            return;
++        }
++        if (isPowerOffApplied()) {
++            return;
++        }
++        if (isRadioInUse()) {
++            removeMessages(EVENT_POWER_OFF);
++            sendEmptyMessageDelayed(EVENT_EVALUATE, RECHECK_DELAY_MILLIS);
++            return;
++        }
++        if (!hasMessages(EVENT_POWER_OFF)) {
++            sendEmptyMessageDelayed(EVENT_POWER_OFF, POWER_OFF_DELAY_MILLIS);
++        }
++    }
++
++    private void powerOff() {
++        if (mPhone.isShuttingDown() || !hasNoSubscription() || isSatelliteSupported()
++                || isPowerOffApplied()) {
++            return;
++        }
++        if (isRadioInUse()) {
++            sendEmptyMessageDelayed(EVENT_EVALUATE, RECHECK_DELAY_MILLIS);
++            return;
++        }
++        log("power off radio, no active subscription, sim state "
++                + mPhone.getIccCard().getState());
++        mPowerOffRequested = true;
++        mPhone.setRadioPowerForReason(false, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    private void restoreRadioPower() {
++        if (!mPowerOffRequested && !isPowerOffApplied()) {
++            return;
++        }
++        log("restore radio power, sim state " + mPhone.getIccCard().getState()
++                + ", subId " + mPhone.getSubId());
++        mPowerOffRequested = false;
++        mPhone.setRadioPowerForReason(true, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    private boolean isPowerOffApplied() {
++        return mPhone.getRadioPowerOffReasons().contains(RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    private boolean hasNoSubscription() {
++        if (SubscriptionManager.isValidSubscriptionId(mPhone.getSubId())) {
++            return false;
++        }
++        IccCard card = mPhone.getIccCard();
++        switch (card.getState()) {
++            case ABSENT:
++            case CARD_IO_ERROR:
++            case CARD_RESTRICTED:
++                return true;
++            case NOT_READY:
++                return card.isEmptyProfile() || !SubscriptionManagerService.getInstance()
++                        .areUiccAppsEnabledOnCard(mPhone.getPhoneId());
++            default:
++                return false;
++        }
++    }
++
++    private boolean isSatelliteSupported() {
++        SatelliteController satellite = SatelliteController.getInstance();
++        return satellite != null && satellite.isSatelliteSupportedViaOem();
++    }
++
++    private boolean isRadioInUse() {
++        SatelliteController satellite = SatelliteController.getInstance();
++        if (satellite != null && satellite.isSatelliteEnabledOrBeingEnabled()) {
++            return true;
++        }
++        if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
++            EmergencyStateTracker tracker = EmergencyStateTracker.getInstance();
++            if (tracker.isInEmergencyCall() || tracker.isInEcm() || tracker.isInScbm()) {
++                return true;
++            }
++        }
++        TelecomManager telecomManager =
++                mPhone.getContext().getSystemService(TelecomManager.class);
++        if (telecomManager != null && telecomManager.isInEmergencyCall()) {
++            return true;
++        }
++        for (Phone phone : PhoneFactory.getPhones()) {
++            if (isInUse(phone) || isInUse(phone.getImsPhone())) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private static boolean isInUse(@Nullable Phone phone) {
++        return phone != null && (phone.getState() != PhoneConstants.State.IDLE
++                || phone.isInEmergencyCall() || phone.isInEcm()
++                || phone.isInEmergencySmsMode());
++    }
++
++    private void log(@NonNull String message) {
++        Rlog.i(TAG + "-" + mPhone.getPhoneId(), message);
++        mLocalLog.log(message);
++    }
++
++    public void dump(@NonNull PrintWriter pw) {
++        pw.println("NoSubscriptionRadioPowerController:");
++        pw.println("  mPowerOffRequested=" + mPowerOffRequested);
++        pw.println("  powerOffApplied=" + isPowerOffApplied());
++        pw.println("  powerOffPending=" + hasMessages(EVENT_POWER_OFF));
++        pw.println("  recheckPending=" + hasMessages(EVENT_EVALUATE));
++        mLocalLog.dump(pw);
++    }
++}
+diff --git a/tests/telephonytests/src/com/android/internal/telephony/NoSubscriptionRadioPowerControllerTest.java b/tests/telephonytests/src/com/android/internal/telephony/NoSubscriptionRadioPowerControllerTest.java
+new file mode 100644
+index 0000000..ddcb68f
+--- /dev/null
++++ b/tests/telephonytests/src/com/android/internal/telephony/NoSubscriptionRadioPowerControllerTest.java
+@@ -0,0 +1,257 @@
++/*
++ * SPDX-FileCopyrightText: 2026 The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package com.android.internal.telephony;
++
++import static com.android.internal.telephony.NoSubscriptionRadioPowerController.POWER_OFF_DELAY_MILLIS;
++import static com.android.internal.telephony.NoSubscriptionRadioPowerController.RADIO_POWER_REASON_NO_SUBSCRIPTION;
++import static com.android.internal.telephony.NoSubscriptionRadioPowerController.RECHECK_DELAY_MILLIS;
++
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.anyBoolean;
++import static org.mockito.ArgumentMatchers.anyInt;
++import static org.mockito.Mockito.atLeastOnce;
++import static org.mockito.Mockito.doReturn;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.verify;
++
++import android.os.Looper;
++import android.telephony.CarrierConfigManager;
++import android.telephony.SubscriptionManager;
++import android.telephony.TelephonyManager;
++import android.testing.AndroidTestingRunner;
++import android.testing.TestableLooper;
++
++import com.android.internal.telephony.subscription.SubscriptionManagerService.SubscriptionManagerServiceCallback;
++
++import org.junit.After;
++import org.junit.Before;
++import org.junit.Test;
++import org.junit.runner.RunWith;
++import org.mockito.ArgumentCaptor;
++
++import java.util.Collections;
++import java.util.List;
++import java.util.Set;
++
++@RunWith(AndroidTestingRunner.class)
++@TestableLooper.RunWithLooper
++public class NoSubscriptionRadioPowerControllerTest extends TelephonyTest {
++    private static final int PHONE_ID = 0;
++    private static final int ACTIVE_SUB_ID = 1;
++
++    private NoSubscriptionRadioPowerController mController;
++    private SubscriptionManagerServiceCallback mSubscriptionCallback;
++    private CarrierConfigManager.CarrierConfigChangeListener mCarrierConfigListener;
++
++    @Before
++    public void setUp() throws Exception {
++        super.setUp(getClass().getSimpleName());
++        doReturn(PHONE_ID).when(mPhone).getPhoneId();
++        doReturn(SubscriptionManager.INVALID_SUBSCRIPTION_ID).when(mPhone).getSubId();
++        doReturn(IccCardConstants.State.UNKNOWN).when(mUiccProfile).getState();
++        doReturn(Collections.emptySet()).when(mPhone).getRadioPowerOffReasons();
++        doReturn(PhoneConstants.State.IDLE).when(mPhone).getState();
++        doReturn(null).when(mPhone).getImsPhone();
++        doReturn(false).when(mTelecomManager).isInEmergencyCall();
++        doReturn(false).when(mSatelliteController).isSatelliteSupportedViaOem();
++        doReturn(false).when(mSatelliteController).isSatelliteEnabledOrBeingEnabled();
++
++        mController = new NoSubscriptionRadioPowerController(mPhone, Looper.myLooper());
++
++        ArgumentCaptor<SubscriptionManagerServiceCallback> callbackCaptor =
++                ArgumentCaptor.forClass(SubscriptionManagerServiceCallback.class);
++        verify(mSubscriptionManagerService, atLeastOnce()).registerCallback(
++                callbackCaptor.capture());
++        List<SubscriptionManagerServiceCallback> callbacks = callbackCaptor.getAllValues();
++        mSubscriptionCallback = callbacks.get(callbacks.size() - 1);
++
++        ArgumentCaptor<CarrierConfigManager.CarrierConfigChangeListener> listenerCaptor =
++                ArgumentCaptor.forClass(CarrierConfigManager.CarrierConfigChangeListener.class);
++        verify(mCarrierConfigManager, atLeastOnce()).registerCarrierConfigChangeListener(any(),
++                listenerCaptor.capture());
++        List<CarrierConfigManager.CarrierConfigChangeListener> listeners =
++                listenerCaptor.getAllValues();
++        mCarrierConfigListener = listeners.get(listeners.size() - 1);
++        processAllMessages();
++    }
++
++    @After
++    public void tearDown() throws Exception {
++        mController = null;
++        mSubscriptionCallback = null;
++        mCarrierConfigListener = null;
++        super.tearDown();
++    }
++
++    private void notifySimState(IccCardConstants.State state) {
++        doReturn(state).when(mUiccProfile).getState();
++        mCarrierConfigListener.onCarrierConfigChanged(PHONE_ID,
++                SubscriptionManager.INVALID_SUBSCRIPTION_ID, TelephonyManager.UNKNOWN_CARRIER_ID,
++                TelephonyManager.UNKNOWN_CARRIER_ID);
++        processAllMessages();
++    }
++
++    private void advance(long millis) {
++        moveTimeForward(millis);
++        processAllMessages();
++    }
++
++    private void powerOffForAbsentSim() {
++        notifySimState(IccCardConstants.State.ABSENT);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone).setRadioPowerForReason(false, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    @Test
++    public void testNoActionBeforeSimStateIsKnown() {
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++    }
++
++    @Test
++    public void testPowerOffAfterDelayWhenSimAbsent() {
++        notifySimState(IccCardConstants.State.ABSENT);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone).setRadioPowerForReason(false, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    @Test
++    public void testPowerOffWhenUiccApplicationsDisabled() {
++        doReturn(false).when(mSubscriptionManagerService).areUiccAppsEnabledOnCard(PHONE_ID);
++        notifySimState(IccCardConstants.State.NOT_READY);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone).setRadioPowerForReason(false, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    @Test
++    public void testNoPowerOffWhileUiccApplicationsAreLoading() {
++        doReturn(true).when(mSubscriptionManagerService).areUiccAppsEnabledOnCard(PHONE_ID);
++        notifySimState(IccCardConstants.State.NOT_READY);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++    }
++
++    @Test
++    public void testNoPowerOffWhenSimLocked() {
++        doReturn(ACTIVE_SUB_ID).when(mPhone).getSubId();
++        notifySimState(IccCardConstants.State.PIN_REQUIRED);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++    }
++
++    @Test
++    public void testPendingPowerOffCancelledWhenSimReturns() {
++        notifySimState(IccCardConstants.State.ABSENT);
++        advance(POWER_OFF_DELAY_MILLIS / 2);
++        doReturn(ACTIVE_SUB_ID).when(mPhone).getSubId();
++        notifySimState(IccCardConstants.State.LOADED);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++    }
++
++    @Test
++    public void testRestoreWhenSubscriptionBecomesActive() {
++        powerOffForAbsentSim();
++        doReturn(Set.of(RADIO_POWER_REASON_NO_SUBSCRIPTION)).when(mPhone)
++                .getRadioPowerOffReasons();
++        doReturn(ACTIVE_SUB_ID).when(mPhone).getSubId();
++        doReturn(IccCardConstants.State.LOADED).when(mUiccProfile).getState();
++        mSubscriptionCallback.onSubscriptionChanged(ACTIVE_SUB_ID);
++        processAllMessages();
++        verify(mPhone).setRadioPowerForReason(true, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    @Test
++    public void testRestoreWhenUserEnablesUiccApplications() {
++        doReturn(false).when(mSubscriptionManagerService).areUiccAppsEnabledOnCard(PHONE_ID);
++        notifySimState(IccCardConstants.State.NOT_READY);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone).setRadioPowerForReason(false, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++        doReturn(Set.of(RADIO_POWER_REASON_NO_SUBSCRIPTION)).when(mPhone)
++                .getRadioPowerOffReasons();
++        doReturn(true).when(mSubscriptionManagerService).areUiccAppsEnabledOnCard(PHONE_ID);
++        mSubscriptionCallback.onUiccApplicationsEnabledChanged(ACTIVE_SUB_ID);
++        processAllMessages();
++        verify(mPhone).setRadioPowerForReason(true, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    @Test
++    public void testNoPowerOffDuringEmergencyCall() {
++        doReturn(true).when(mTelecomManager).isInEmergencyCall();
++        notifySimState(IccCardConstants.State.ABSENT);
++        advance(POWER_OFF_DELAY_MILLIS + RECHECK_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++        doReturn(false).when(mTelecomManager).isInEmergencyCall();
++        advance(RECHECK_DELAY_MILLIS);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone).setRadioPowerForReason(false, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    @Test
++    public void testNoPowerOffInEmergencyCallbackMode() {
++        doReturn(true).when(mPhone).isInEcm();
++        notifySimState(IccCardConstants.State.ABSENT);
++        advance(POWER_OFF_DELAY_MILLIS + RECHECK_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++        doReturn(false).when(mPhone).isInEcm();
++        advance(RECHECK_DELAY_MILLIS);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone).setRadioPowerForReason(false, RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    @Test
++    public void testReapplyAfterEmergencyCallClearedReasons() {
++        powerOffForAbsentSim();
++        doReturn(true).when(mTelecomManager).isInEmergencyCall();
++        mSimulatedCommands.notifyRadioOn();
++        processAllMessages();
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, times(1)).setRadioPowerForReason(false,
++                RADIO_POWER_REASON_NO_SUBSCRIPTION);
++        doReturn(false).when(mTelecomManager).isInEmergencyCall();
++        advance(RECHECK_DELAY_MILLIS);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, times(2)).setRadioPowerForReason(false,
++                RADIO_POWER_REASON_NO_SUBSCRIPTION);
++    }
++
++    @Test
++    public void testNoPowerOffWhileSatelliteEnabled() {
++        doReturn(true).when(mSatelliteController).isSatelliteEnabledOrBeingEnabled();
++        notifySimState(IccCardConstants.State.ABSENT);
++        advance(POWER_OFF_DELAY_MILLIS + RECHECK_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++    }
++
++    @Test
++    public void testNoPowerOffWhenOemSatelliteSupported() {
++        doReturn(true).when(mSatelliteController).isSatelliteSupportedViaOem();
++        notifySimState(IccCardConstants.State.ABSENT);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++    }
++
++    @Test
++    public void testNoPowerOffWhileShuttingDown() {
++        doReturn(true).when(mPhone).isShuttingDown();
++        notifySimState(IccCardConstants.State.ABSENT);
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++    }
++
++    @Test
++    public void testIgnoresOtherSlots() {
++        doReturn(IccCardConstants.State.ABSENT).when(mUiccProfile).getState();
++        mCarrierConfigListener.onCarrierConfigChanged(PHONE_ID + 1,
++                SubscriptionManager.INVALID_SUBSCRIPTION_ID, TelephonyManager.UNKNOWN_CARRIER_ID,
++                TelephonyManager.UNKNOWN_CARRIER_ID);
++        processAllMessages();
++        advance(POWER_OFF_DELAY_MILLIS);
++        verify(mPhone, never()).setRadioPowerForReason(anyBoolean(), anyInt());
++    }
++}
+-- 
+2.50.1
+

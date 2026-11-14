@@ -3,8 +3,10 @@
 
 vendor_internal_prop(vendor_silead_fp_prop)
 vendor_internal_prop(vendor_mindone_modules_prop)
+vendor_internal_prop(vendor_mindone_tune_prop)
 vendor_internal_prop(vendor_mindone_gauge_config_prop)
 vendor_internal_prop(vendor_dumpstate_prop)
+vendor_internal_prop(vendor_mindone_camera_prop)
 
 vendor_restricted_prop(vendor_mtk_hwc_boot_display_config_prop)
 vendor_restricted_prop(vendor_dp_prop)

@@ -1,14 +1,9 @@
-bootprof.ko
-dbgtop_drm.ko
 mtk_boot_common.ko
-mtk_printk_ctrl.ko
 log_store.ko
 nvmem_mtk_devinfo.ko
 mtk_wdt.ko
 sec_rng.ko
-device_apc_common.ko
-device_apc_mt6789.ko
-clk-mediatek.ko
+clk-mtk-ack.ko
 clk-mt6789.ko
 mtk-eint.ko
 pinctrl-mtk-common-v2.ko
@@ -17,7 +12,7 @@ pinctrl-mt6789.ko
 8250_mtk.ko
 clk_mt6789_bus.ko
 clk_fmeter_mt6789.ko
-mtk_pmic_wrap.ko
+mtk-pmic-wrap.ko
 mt6397.ko
 mt6358_regulator.ko
 reset-ti-syscon.ko

@@ -2,7 +2,7 @@
 SPDX-FileCopyrightText: 2026 The LineageOS Project
 SPDX-License-Identifier: Apache-2.0
 -->
-<manifest version="4.0" type="device" target-level="202504">
+<manifest version="4.0" type="device" target-level="202604">
     <hal format="hidl">
         <name>vendor.mediatek.hardware.camera.atms</name>
         <transport>hwbinder</transport>

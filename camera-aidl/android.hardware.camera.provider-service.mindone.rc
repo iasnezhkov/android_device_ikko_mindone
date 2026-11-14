@@ -8,3 +8,14 @@ service vendor.camera-provider-mindone /vendor/bin/hw/android.hardware.camera.pr
     ioprio rt 4
     capabilities SYS_NICE
     task_profiles CameraServiceCapacity MaxPerformance
+
+on post-fs-data
+    mkdir /data/vendor/camera 0755 root root
+
+on early-boot && property:persist.vendor.camera.maxres=*
+    chown cameraserver camera /sys/module/imgsensor_isp6s/parameters/imx766_4cell
+    chmod 0664 /sys/module/imgsensor_isp6s/parameters/imx766_4cell
+
+on property:persist.vendor.camera.maxres=*
+    chown cameraserver camera /sys/module/imgsensor_isp6s/parameters/imx766_4cell
+    chmod 0664 /sys/module/imgsensor_isp6s/parameters/imx766_4cell

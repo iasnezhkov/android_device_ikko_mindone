@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Thu, 12 Nov 2026 21:00:00 +0900
+Subject: [PATCH] satellite: resolve support as false without a vendor service
+
+When config_satellite_service_package is empty, SatelliteModemInterface
+stops binding for good, every requestIsSatelliteSupported() ends with
+SATELLITE_RESULT_RADIO_NOT_AVAILABLE and mIsSatelliteSupported stays
+null, so updateSatelliteSupportedState() never runs and
+mSatelliteSessionController is never created. ServiceStateTracker then
+retries registerForSatelliteModemStateChanged() from pollStateDone() and
+updateCarrierDisplayName() on every poll, and each attempt logs two
+errors.
+
+The package name is static device configuration (bindService() stops its
+retries for the same reason), so a device without it does not support
+OEM satellite. Resolve that once on the controller's handler after the
+singleton is published: the session controller is created in its
+unsupported state, listeners register normally and requests are answered
+from the cached value. setSatelliteServicePackageName() still clears the
+cached state when a test service is installed.
+
+---
+diff --git a/src/java/com/android/internal/telephony/satellite/SatelliteController.java b/src/java/com/android/internal/telephony/satellite/SatelliteController.java
+index 63e22c9..7947fe3 100644
+--- a/src/java/com/android/internal/telephony/satellite/SatelliteController.java
++++ b/src/java/com/android/internal/telephony/satellite/SatelliteController.java
+@@ -1014,9 +1014,19 @@ public class SatelliteController extends Handler {
+         if (sInstance == null) {
+             sInstance = new SatelliteController(
+                     context, WorkerThread.get().getLooper(), featureFlags);
++            sInstance.post(sInstance::resolveSupportWithoutVendorService);
+         }
+     }
+ 
++    private void resolveSupportWithoutVendorService() {
++        if (getIsSatelliteSupported() != null
++                || mSatelliteModemInterface.isSatelliteServiceSupported()) {
++            return;
++        }
++        plogd("resolveSupportWithoutVendorService: no satellite vendor service is configured");
++        updateSatelliteSupportedState(false);
++    }
++
+     /**
+      * Create a SatelliteController to act as a backend service of
+      * {@link android.telephony.satellite.SatelliteManager}

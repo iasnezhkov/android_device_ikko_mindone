@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+allow hal_lineage_health_default sysfs_mindone_charge_control:dir search;
+allow hal_lineage_health_default sysfs_mindone_charge_control:file rw_file_perms;

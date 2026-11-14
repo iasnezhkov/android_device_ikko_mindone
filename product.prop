@@ -2,3 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 log.tag.InetDiagMessage=SILENT
+
+suspend.disable_sync_on_suspend=true
+
+mmd.zram.enabled=true
+mmd.zram.size=25%
+mmd.zram.comp_algorithm=lz4
+mmd.zram.recompression.enabled=true
+mmd.zram.recompression.algorithm=zstd

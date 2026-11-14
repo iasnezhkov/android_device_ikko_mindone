@@ -3,13 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define LOG_TAG "mindone.camera.aidl"
+
 #include "CameraDevice.h"
 #include "CameraDeviceCallback.h"
 #include "CameraDeviceSession.h"
+#include "CharacteristicsFixup.h"
+#include "MetadataEdit.h"
 #include <aidl/android/hardware/camera/device/BnCameraDevice.h>
 #include <android/hardware/camera/device/3.5/ICameraDevice.h>
 #include <android/hardware/camera/device/3.7/ICameraDevice.h>
 #include <cutils/native_handle.h>
+#include <log/log.h>
+
+#include <algorithm>
+#include <chrono>
+#include <thread>
 
 namespace mindone::camera {
 namespace hc = ::android::hardware::camera::common::V1_0;
@@ -22,14 +31,22 @@ static ScopedAStatus status(hc::Status value) {
 }
 class CameraDevice : public ad::BnCameraDevice {
   public:
-    CameraDevice(const ::android::sp<hd::V3_2::ICameraDevice>& backend,
-                 const std::shared_ptr<NameMap>& names) : mBackend(backend), mNames(names) {}
+    CameraDevice(const ::android::sp<hd::V3_2::ICameraDevice>& backend, const std::string& name,
+                 const std::shared_ptr<NameMap>& names, const std::shared_ptr<SensorOwner>& sensor,
+                 const MaximumResolution& maximumResolution)
+        : mBackend(backend), mName(name), mNames(names), mSensor(sensor),
+          mMaximumResolution(maximumResolution) {}
     ScopedAStatus getCameraCharacteristics(ad::CameraMetadata* metadata) override {
         hc::Status value = hc::Status::INTERNAL_ERROR;
         auto result = mBackend->getCameraCharacteristics([&](auto code, const auto& bytes) {
             value = code;
             if (code == hc::Status::OK) metadata->metadata.assign(bytes.begin(), bytes.end());
         });
+        if (result.isOk() && value == hc::Status::OK &&
+            !fixCharacteristics(&metadata->metadata, mMaximumResolution.enabled())) {
+            ALOGE("%s: characteristics fixup failed, passing the HAL metadata through",
+                  mName.c_str());
+        }
         return status(result.isOk() ? value : hc::Status::INTERNAL_ERROR);
     }
     ScopedAStatus getPhysicalCameraCharacteristics(const std::string& id,
@@ -58,7 +75,17 @@ class CameraDevice : public ad::BnCameraDevice {
                 cost->conflictingDevices.push_back(mNames->remember(name.c_str()));
             }
         });
-        return status(result.isOk() ? value : hc::Status::INTERNAL_ERROR);
+        if (!result.isOk() || value != hc::Status::OK) {
+            return status(result.isOk() ? value : hc::Status::INTERNAL_ERROR);
+        }
+        auto& conflicts = cost->conflictingDevices;
+        for (const auto& other : mNames->names()) {
+            if (other != mName && std::find(conflicts.begin(), conflicts.end(), other) ==
+                                          conflicts.end()) {
+                conflicts.push_back(other);
+            }
+        }
+        return ScopedAStatus::ok();
     }
     ScopedAStatus isStreamCombinationSupported(const ad::StreamConfiguration& streams,
                                              bool* supported) override {
@@ -80,7 +107,7 @@ class CameraDevice : public ad::BnCameraDevice {
         ::android::sp<hd::V3_5::ICameraDevice> backend35 = cast35;
         if (!backend35) return status(hc::Status::OPERATION_NOT_SUPPORTED);
         hd::V3_4::StreamConfiguration converted;
-        auto conversion = convertStreams(streams, &converted);
+        auto conversion = convertStreams(streams, &converted, mMaximumResolution.enabled());
         if (!conversion.isOk()) return conversion;
         auto result = backend35->isStreamCombinationSupported(converted, receive);
         return status(result.isOk() ? value : hc::Status::INTERNAL_ERROR);
@@ -89,18 +116,62 @@ class CameraDevice : public ad::BnCameraDevice {
                       std::shared_ptr<ad::ICameraDeviceSession>* session) override {
         session->reset();
         if (!callback) return status(hc::Status::ILLEGAL_ARGUMENT);
+        bool absent = false;
+        auto hold = mSensor->acquire(mName, &absent);
+        if (absent) {
+            ALOGW("%s: the flip module faces the other way", mName.c_str());
+            return status(hc::Status::CAMERA_DISCONNECTED);
+        }
+        if (!hold) {
+            ALOGW("%s: the shared sensor is held by another camera ID", mName.c_str());
+            return status(hc::Status::CAMERA_IN_USE);
+        }
+        if (hold->handover()) {
+            auto wait = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    hold->settled() - SensorOwner::Clock::now());
+            if (wait.count() > 0) {
+                ALOGI("%s: %s released the shared sensor, waiting %lld ms for the HAL to power "
+                      "it down", mName.c_str(), hold->previous().c_str(),
+                      static_cast<long long>(wait.count()));
+                std::this_thread::sleep_for(wait);
+            }
+        }
         auto adapter = createCameraDeviceCallback(callback);
+        if (mMaximumResolution.enabled()) {
+            ad::CameraMetadata characteristics;
+            if (getCameraCharacteristics(&characteristics).isOk()) {
+                auto binning = peek<int32_t>(characteristics.metadata,
+                                             ANDROID_SENSOR_INFO_BINNING_FACTOR);
+                auto partial = peek<int32_t>(characteristics.metadata,
+                                             ANDROID_REQUEST_PARTIAL_RESULT_COUNT);
+                if (binning.size() == 2 && binning[0] == binning[1] && partial.size() == 1) {
+                    getMetadataQueues(adapter)->pixelModes.configure(
+                            mMaximumResolution.remosaicTag, binning[0], partial[0]);
+                }
+            }
+        }
+        Reopen reopen = [device = mBackend,
+                         adapter]() -> ::android::sp<hd::V3_2::ICameraDeviceSession> {
+            ::android::sp<hd::V3_2::ICameraDeviceSession> fresh;
+            auto result = device->open(adapter, [&](auto code, const auto& backend) {
+                if (code == hc::Status::OK) fresh = backend;
+            });
+            if (!result.isOk()) return {};
+            return fresh;
+        };
         hc::Status value = hc::Status::INTERNAL_ERROR;
         auto result = mBackend->open(adapter, [&](auto code, const auto& backend) {
             value = code;
             if (code == hc::Status::OK && backend) {
-                *session = createCameraDeviceSession(backend, adapter);
+                *session = createCameraDeviceSession(backend, adapter, std::move(hold),
+                                                     std::move(reopen));
             }
             if (code == hc::Status::OK && !*session) value = hc::Status::INTERNAL_ERROR;
         });
         return status(result.isOk() ? value : hc::Status::INTERNAL_ERROR);
     }
     ScopedAStatus setTorchMode(bool on) override {
+        if (mSensor->absent(mName)) return status(hc::Status::CAMERA_DISCONNECTED);
         auto result = mBackend->setTorchMode(on ? hc::TorchMode::ON : hc::TorchMode::OFF);
         return status(result.isOk() ? static_cast<hc::Status>(result) : hc::Status::INTERNAL_ERROR);
     }
@@ -119,11 +190,17 @@ class CameraDevice : public ad::BnCameraDevice {
   private:
     static ScopedAStatus unsupported() { return status(hc::Status::OPERATION_NOT_SUPPORTED); }
     const ::android::sp<hd::V3_2::ICameraDevice> mBackend;
+    const std::string mName;
     const std::shared_ptr<NameMap> mNames;
+    const std::shared_ptr<SensorOwner> mSensor;
+    const MaximumResolution mMaximumResolution;
 };
 ScopedAStatus createCameraDevice(const ::android::sp<hd::V3_2::ICameraDevice>& backend,
-        const std::shared_ptr<NameMap>& names, std::shared_ptr<ad::ICameraDevice>* device) {
-    *device = ndk::SharedRefBase::make<CameraDevice>(backend, names);
+        const std::string& name, const std::shared_ptr<NameMap>& names,
+        const std::shared_ptr<SensorOwner>& sensor, const MaximumResolution& maximumResolution,
+        std::shared_ptr<ad::ICameraDevice>* device) {
+    *device = ndk::SharedRefBase::make<CameraDevice>(backend, name, names, sensor,
+                                                     maximumResolution);
     return ScopedAStatus::ok();
 }
 }

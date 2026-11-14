@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+allow volte_imsm_93 self:netlink_route_socket nlmsg;
+allowxperm volte_imsm_93 self:netlink_route_socket nlmsg {
+  RTM_NEWROUTE RTM_DELROUTE RTM_NEWRULE RTM_DELRULE
+};

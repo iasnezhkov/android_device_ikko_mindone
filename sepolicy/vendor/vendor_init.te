@@ -4,3 +4,9 @@
 allow vendor_init mtk_radio_device:lnk_file unlink;
 
 allow vendor_init sysfs_mindone_gauge_learned:file setattr;
+allow vendor_init sysfs_mindone_charge_control:file setattr;
+allow vendor_init sysfs_mindone_camera_4cell:file setattr;
+
+set_prop(vendor_init, vendor_mindone_tune_prop)
+
+allow vendor_init rootdisk_sysdev:lnk_file read;

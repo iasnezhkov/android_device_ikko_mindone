@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Thu, 12 Nov 2026 21:00:00 +0900
+Subject: [PATCH] healthloop: do not re-arm the wake alarm that woke the loop
+
+On battery the wake alarm runs at periodic_chores_interval_slow, and
+MainLoop() re-arms it with timerfd_settime() whenever epoll_wait()
+returns events, before the handlers run. timerfd_settime() resets the
+expiration count, so when the alarm itself is one of those events the
+non-blocking read() in WakeAlarmEvent() fails with EAGAIN, logs
+"wakealarm_event: read wakealarm fd failed" and skips PeriodicChores():
+every slow alarm wakeup is lost.
+
+Re-arm only when the wake alarm is not among the returned events. A
+fired alarm keeps its periodic interval, so the slow cadence is
+unchanged.
+
+---
+diff --git a/health/utils/libhealthloop/HealthLoop.cpp b/health/utils/libhealthloop/HealthLoop.cpp
+index 8501f33..78c762d 100644
+--- a/health/utils/libhealthloop/HealthLoop.cpp
++++ b/health/utils/libhealthloop/HealthLoop.cpp
+@@ -267,11 +267,19 @@ void HealthLoop::MainLoop(void) {
+             break;
+         }
+ 
++        bool wakealarm_fired = false;
++        for (int n = 0; n < nevents; ++n) {
++            auto* event_handler = reinterpret_cast<EventHandler*>(events[n].data.ptr);
++            if (event_handler != nullptr && event_handler->fd == wakealarm_fd_.get()) {
++                wakealarm_fired = true;
++            }
++        }
++
+         /*
+          * Reset slow timer to avoid excessive wakeup on interrupt
+          * It's assumed periodic_chores_interval_slow means the device being in non-charging state
+          */
+-        if (nevents > 0 &&
++        if (nevents > 0 && !wakealarm_fired &&
+             wakealarm_wake_interval_ == healthd_config_.periodic_chores_interval_slow) {
+             WakeAlarmSetInterval(wakealarm_wake_interval_);
+         }

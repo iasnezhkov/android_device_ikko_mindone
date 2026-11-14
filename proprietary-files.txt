@@ -257,7 +257,7 @@ vendor/lib64/mt6789/libcamera.customaf.so:vendor/lib64/libcamera.customaf.so
 vendor/lib64/mt6789/libcamera.customawb.so:vendor/lib64/libcamera.customawb.so
 vendor/lib64/mt6789/libcamera.customflk.so:vendor/lib64/libcamera.customflk.so
 vendor/lib64/mt6789/libcameracustom.camera.3a.so:vendor/lib64/libcameracustom.camera.3a.so
-vendor/lib64/mt6789/libcameracustom.camera.isp.so:vendor/lib64/libcameracustom.camera.isp.so
+vendor/lib64/mt6789/libcameracustom.camera.isp.so:vendor/lib64/libcameracustom.camera.isp_mtk.so;FIX_SONAME
 vendor/lib64/mt6789/libcameracustom.camera.sensors.so:vendor/lib64/libcameracustom.camera.sensors.so
 vendor/lib64/mt6789/libcameracustom.camera_exif.so:vendor/lib64/libcameracustom.camera_exif.so
 vendor/lib64/mt6789/libcameracustom.eis.so:vendor/lib64/libcameracustom.eis.so

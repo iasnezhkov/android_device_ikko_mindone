@@ -107,7 +107,8 @@ PRODUCT_PACKAGES += \
     mindone_wfca
 
 PRODUCT_PACKAGES += \
-    android.hardware.camera.provider-service.mindone
+    android.hardware.camera.provider-service.mindone \
+    libcameracustom.camera.isp
 
 PRODUCT_PACKAGES += \
     android.hardware.gnss-service.mindone
@@ -115,6 +116,15 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     android.hardware.health-service.mediatek \
     android.hardware.health-service.mediatek-recovery
+
+PRODUCT_PACKAGES += \
+    vendor.lineage.health-service.default
+
+$(call soong_config_set,lineage_health,charging_control_charging_path,/sys/class/cmd_charge_disable/cmd_charge_disable)
+$(call soong_config_set,lineage_health,charging_control_charging_enabled,0)
+$(call soong_config_set,lineage_health,charging_control_charging_disabled,1)
+$(call soong_config_set_bool,lineage_health,charging_control_supports_toggle,true)
+$(call soong_config_set_bool,lineage_health,charging_control_supports_bypass,true)
 
 $(call inherit-product, hardware/lineage/compat/frameworks/compat.mk)
 $(call inherit-product, hardware/mediatek/frameworks/mediatek-frameworks.mk)
@@ -247,6 +257,7 @@ PRODUCT_PACKAGES += \
     init_connectivity.rc \
     init.bip_ap.rc \
     init.modem.rc \
+    init.mindone.tune.rc \
     init.mt8781.rc \
     init.mtkgki.rc \
     init.project.rc \
@@ -275,6 +286,9 @@ PRODUCT_PACKAGES += \
 
 PRODUCT_COPY_FILES += \
     device/ikko/mindone/configs/thermal/thermal_info_config.json:$(TARGET_COPY_OUT_VENDOR)/etc/thermal_info_config.json
+
+PRODUCT_COPY_FILES += \
+    device/ikko/mindone/configs/displayconfig/display_port_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/displayconfig/display_port_0.xml
 
 PRODUCT_PACKAGES += \
     MindOneKeyHandler
@@ -383,5 +397,8 @@ PRODUCT_COPY_FILES += \
 PRODUCT_PACKAGES += vendor.lineage.livedisplay-service.mindone
 
 PRODUCT_PACKAGES += android.hardware.tetheroffload-service.mindone
+
+PRODUCT_PACKAGES += \
+    TetheringConfigOverlayMindone
 
 PRODUCT_PACKAGES += mindone_gauged

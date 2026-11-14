@@ -78,7 +78,7 @@ Consequences worth being explicit about:
 Deliver the paired `boot`, `vendor_boot`, `vendor_dlkm`, `system_dlkm` and DTBO
 inside a **full signed ROM**, using the signing procedure below. Build it with the exact GKI `Image.gz`, matching DTB/DTBO, vendor modules and all
 load lists. The selected `system_dlkm` modules come from Google's pinned
-`android17-6.18-2026-09_r12` GKI archive, CI `16754118`
+`android17-6.18-2026-09_r13` GKI archive, CI `16831611`
 (`system_dlkm_staging_archive.tar.gz`), staged under
 `kernel/system_dlkm/flatten/lib/modules/` with `kernel/modules.load.system`.
 `BoardConfig.mk` includes `system_dlkm` and `dtbo` in `AB_OTA_PARTITIONS`.
@@ -92,9 +92,12 @@ Sign the complete target-files archive and generate the full OTA with
 A kernel-only partial OTA cannot carry this paired set: it omits `system_dlkm` and DTBO.
 Keep the matching AVB descriptors. The full OTA also carries the ten stock firmware images
 listed in `proprietary-firmware.txt` (`lk`, `tee`, `gz`, `spmfw`, `sspm`, `scp`, `mcupm`,
-`dpm`, `pi_img`, `md1img`); extract them from one stock firmware version. `tee_a` is 5 MiB
-and `tee_b` 6 MiB, so a TEE image must fit 5 MiB. Do not copy whole donor partitions or
-substitute another device's TEE.
+`dpm`, `pi_img`, `md1img`). The current set takes the TEE from the stock V13 `_b` slot
+(built 13.04.2026), the modem from stock V14 (MOLY.LR13.R2.MP.V195, 24.04.2026) and the
+other eight from the stock V13 `_a` slot; all of them run with the stock V13 preloader.
+The V14 TEE moves its load address and ships with the V14 preloader, so it is not used:
+this project never writes the preloader. `tee_a` is 5 MiB and `tee_b` 6 MiB, so a TEE
+image must fit 5 MiB. Do not copy whole donor partitions or substitute another device's TEE.
 
 Install the full signed package through the Updater or `update_engine_client` as above.
 Keep a tested signed known-good package: before snapshot merge a failed boot may fall

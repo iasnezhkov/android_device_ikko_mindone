@@ -12,7 +12,8 @@ namespace mindone::camera {
 namespace ad = ::aidl::android::hardware::camera::device;
 namespace hd = ::android::hardware::camera::device;
 ndk::ScopedAStatus convertStreams(const ad::StreamConfiguration& source,
-                                 hd::V3_4::StreamConfiguration* target);
+                                 hd::V3_4::StreamConfiguration* target,
+                                 bool maximumResolution = false);
 ndk::ScopedAStatus convertStreams(const ad::StreamConfiguration& source,
                                  hd::V3_7::StreamConfiguration* target);
 }

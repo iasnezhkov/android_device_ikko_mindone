@@ -42,7 +42,8 @@ ndk::ScopedAStatus convertStreams(const ad::StreamConfiguration& source,
     return ndk::ScopedAStatus::ok();
 }
 ndk::ScopedAStatus convertStreams(const ad::StreamConfiguration& source,
-                                 hd::V3_4::StreamConfiguration* target) {
+                                 hd::V3_4::StreamConfiguration* target,
+                                 bool maximumResolution) {
     hd::V3_7::StreamConfiguration full;
     auto result = convertStreams(source, &full);
     if (!result.isOk()) return result;
@@ -55,13 +56,15 @@ ndk::ScopedAStatus convertStreams(const ad::StreamConfiguration& source,
     target->streams.resize(full.streams.size());
     for (size_t i = 0; i < full.streams.size(); ++i) {
         const auto& s = full.streams[i];
-        const bool defaultMode = std::all_of(s.sensorPixelModesUsed.begin(),
-                s.sensorPixelModesUsed.end(), [](auto mode) {
-                    return mode == ::android::hardware::camera::metadata::V3_6::
-                            CameraMetadataEnumAndroidSensorPixelMode::
-                            ANDROID_SENSOR_PIXEL_MODE_DEFAULT;
+        using PixelMode = ::android::hardware::camera::metadata::V3_6::
+                CameraMetadataEnumAndroidSensorPixelMode;
+        const bool knownModes = std::all_of(s.sensorPixelModesUsed.begin(),
+                s.sensorPixelModesUsed.end(), [&](auto mode) {
+                    return mode == PixelMode::ANDROID_SENSOR_PIXEL_MODE_DEFAULT ||
+                            (maximumResolution &&
+                             mode == PixelMode::ANDROID_SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION);
                 });
-        if (s.groupId != -1 || !defaultMode) {
+        if (s.groupId != -1 || !knownModes) {
             return ndk::ScopedAStatus::fromServiceSpecificError(static_cast<int32_t>(
                     ::aidl::android::hardware::camera::common::Status::ILLEGAL_ARGUMENT));
         }

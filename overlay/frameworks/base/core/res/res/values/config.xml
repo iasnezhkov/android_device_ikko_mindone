@@ -9,6 +9,7 @@
 
     <bool name="config_showNavigationBar">true</bool>
     <bool name="config_unplugTurnsOnScreen">true</bool>
+    <bool name="config_powerOffRadioWhenNoActiveSubscription">true</bool>
     <string-array name="config_gnssParameters" translatable="false">
         <item>LONGTERM_PSDS_SERVER_1=https://agnss.goog/lto2.dat</item>
         <item>NORMAL_PSDS_SERVER=https://agnss.goog/rto.dat</item>

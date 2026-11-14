@@ -258,5 +258,10 @@ log.tag.RfxRilAdapter=I
 log.tag.RfxRoot=I
 log.tag.RfxStatusMgr=I
 log.tag.RmcNwHdlr=I
+log.tag.AE_STAT=I
+log.tag.CAM_CUS_MSDK=I
+log.tag.DualAfAssist=I
+log.tag.android.hardware.camera.provider-service.mindone=I
 
 debug.stagefright.c2inputsurface=-1
+

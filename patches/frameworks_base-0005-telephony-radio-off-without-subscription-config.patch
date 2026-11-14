@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mindone <mindone@localhost>
+Date: Thu, 12 Nov 2026 21:00:00 +0900
+Subject: [PATCH] telephony: add config_powerOffRadioWhenNoActiveSubscription
+
+A device may want to switch off the cellular radio of a logical modem
+while that modem has no usable subscription: the slot is empty, the card
+is unusable, or the user turned the SIM off with "Use SIM" (uicc
+applications disabled). The modem then cannot register and, depending on
+the network, can keep searching for an acceptable cell indefinitely.
+
+The flag is read by frameworks/opt/telephony
+NoSubscriptionRadioPowerController. It defaults to false, so behaviour
+does not change unless a device overlay enables it. Emergency calls keep
+working: they power the radio on through the existing forEmergencyCall
+path, which clears every radio-off reason, exactly as in airplane mode.
+
+---
+diff --git a/core/res/res/values/config_telephony.xml b/core/res/res/values/config_telephony.xml
+index da464012..d703b4da 100644
+--- a/core/res/res/values/config_telephony.xml
++++ b/core/res/res/values/config_telephony.xml
+@@ -52,6 +52,9 @@
+     <integer name="config_delay_for_ims_dereg_millis">0</integer>
+     <java-symbol type="integer" name="config_delay_for_ims_dereg_millis" />
+ 
++    <bool name="config_powerOffRadioWhenNoActiveSubscription">false</bool>
++    <java-symbol type="bool" name="config_powerOffRadioWhenNoActiveSubscription" />
++
+     <!-- Define the bar of considering the availability of a subscription is stable in milliseconds,
+          where 0 means immediate switch, and negative milliseconds indicates the auto data switch
+          feature is disabled.-->
+-- 
+2.50.1
+

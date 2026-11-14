@@ -16,5 +16,13 @@ service mindone_fast_insmod /vendor/bin/mindone-fast-insmod.sh /vendor/etc/init.
 
 on early-init
     setprop vendor.all.modules.ready 0
-    write /proc/bootprof "modprobe: Load_Module_START"
     exec_start mindone_fast_insmod
+
+service mindone_late_insmod /vendor/bin/mindone-fast-insmod.sh --late
+    user root
+    group root system
+    disabled
+    oneshot
+
+on property:sys.boot_completed=1
+    start mindone_late_insmod

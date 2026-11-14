@@ -66,7 +66,7 @@
     <path name="speaker">
         <ctl name="LOL Mux" value="Playback"/>
         <ctl name="Ext_Speaker_Amp Switch" value="1"/>
-        <ctl name="RCV Mux" value="Media Playback"/>
+        <ctl name="RCV Mux" value="Voice Playback"/>
     </path>
     <path name="speaker-off">
         <ctl name="RCV Mux" value="Open"/>
@@ -96,8 +96,7 @@
         <ctl name="ADC R Mux" value="Right Preamplifier"/>
         <ctl name="PGA L Mux" value="AIN0"/>
         <ctl name="PGA R Mux" value="AIN0"/>
-        <ctl name="PGA1 Volume" value="4"/>
-        <ctl name="PGA2 Volume" value="4"/>
+        <ctl name="PGA Volume" value="4"/>
         <ctl name="MTKAIF_DMIC" value="On"/>
         <ctl name="UL1_CH1 ADDA_UL_CH1" value="1"/>
         <ctl name="UL1_CH2 ADDA_UL_CH2" value="1"/>

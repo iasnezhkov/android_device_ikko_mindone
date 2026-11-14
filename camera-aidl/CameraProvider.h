@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "MaximumResolution.h"
+
 #include <aidl/android/hardware/camera/provider/BnCameraProvider.h>
 #include <android/hardware/camera/provider/2.6/ICameraProvider.h>
 
@@ -18,11 +20,15 @@ namespace ap = ::aidl::android::hardware::camera::provider;
 namespace ac = ::aidl::android::hardware::camera::common;
 namespace ad = ::aidl::android::hardware::camera::device;
 namespace hp = ::android::hardware::camera::provider;
+class FlipWatcher;
 class NameMap;
+class SensorOwner;
+struct FlipLinks;
 
 class CameraProvider : public ap::BnCameraProvider {
   public:
-    explicit CameraProvider(const ::android::sp<hp::V2_6::ICameraProvider>& backend);
+    CameraProvider(const ::android::sp<hp::V2_6::ICameraProvider>& backend,
+                   const MaximumResolution& maximumResolution);
     ndk::ScopedAStatus setCallback(
             const std::shared_ptr<ap::ICameraProviderCallback>& callback) override;
     ndk::ScopedAStatus getVendorTags(std::vector<ac::VendorTagSection>* tags) override;
@@ -38,6 +44,10 @@ class CameraProvider : public ap::BnCameraProvider {
   private:
     const ::android::sp<hp::V2_6::ICameraProvider> mBackend;
     const std::shared_ptr<NameMap> mNames;
+    const std::shared_ptr<SensorOwner> mSensor;
+    const std::shared_ptr<FlipLinks> mLinks;
+    const std::shared_ptr<FlipWatcher> mFlip;
+    const MaximumResolution mMaximumResolution;
 };
 
 }

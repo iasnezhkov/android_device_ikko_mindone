@@ -39,6 +39,6 @@ endif
 
 ifeq ($(WITH_GAPPS),true)
 $(call inherit-product, vendor/gapps/arm64/arm64-vendor.mk)
-PRODUCT_COPY_FILES += \
-    device/ikko/mindone/configs/permissions/privapp-permissions-mindone-gms.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/permissions/privapp-permissions-mindone-gms.xml
+PRODUCT_PACKAGES += \
+    GmsConfiguratorOverlayMindone
 endif

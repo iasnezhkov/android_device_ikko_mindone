@@ -68,12 +68,6 @@
 # RPMB (for Trusty)
 /dev/block/mmcblk0rpmb    0660   root       system
 
-# TrustonicTEE driver
-/dev/mobicore             0600   system     system
-/dev/mobicore-user        0666   system     system
-
-# teeperf driver
-/dev/teeperf              0666   system     system
 
 #v4l2 device
 /dev/video*      0660 camera system
@@ -81,7 +75,7 @@
 /dev/v4l-subdev* 0660 camera system
 
 #v4l2 codec
-/dev/vcu    0660 camera system
+/dev/vcu    0660 media system
 
 #vdec-fmt
 /dev/vdec-fmt   0660 media system
@@ -94,8 +88,6 @@
 
 
 #import uevent.fingerprint.rc
-/dev/spidev1.0   0660   system   system
-/dev/spidev0.0   0660   system   system
 /dev/silead_fp   0660   system   system
 
 # add the read write right of ttyUSB*

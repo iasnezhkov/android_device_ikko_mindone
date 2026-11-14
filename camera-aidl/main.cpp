@@ -6,6 +6,7 @@
 #define LOG_TAG "mindone.camera.aidl"
 
 #include "CameraProvider.h"
+#include "MaximumResolution.h"
 
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
@@ -17,6 +18,7 @@
 #include <cstdlib>
 #include <dlfcn.h>
 #include <thread>
+#include <utility>
 
 extern "C" ::android::hardware::camera::provider::V2_4::ICameraProvider*
 HIDL_FETCH_ICameraProvider(const char* name);
@@ -29,6 +31,7 @@ int main() {
     ABinderProcess_setThreadPoolMaxThreadCount(16);
     ABinderProcess_startThreadPool();
 
+    const int32_t maximumResolutionMode = mindone::camera::applyMaximumResolutionSwitch();
     void* library = dlopen("/vendor/lib64/hw/"
                           "android.hardware.camera.provider@2.6-impl-mediatek.so", RTLD_NOW);
     LOG_ALWAYS_FATAL_IF(!library, "Provider dlopen failed: %s", dlerror());
@@ -42,22 +45,21 @@ int main() {
     ::android::sp<mindone::camera::hp::V2_6::ICameraProvider> backend = cast;
     LOG_ALWAYS_FATAL_IF(!backend, "Provider does not implement 2.6");
 
-    const char* descriptors[] = {
-        "vendor.mediatek.hardware.camera.isphal@1.0::IISPModule",
-        "vendor.mediatek.hardware.camera.isphal@1.1::IISPModule",
-        "vendor.mediatek.hardware.camera.postproc@1.0::IPostDevice",
-        "vendor.mediatek.hardware.camera.bgservice@1.1::IBGService",
-        "vendor.mediatek.hardware.camera.atms@1.0::IATMs",
+    const std::pair<const char*, const char*> services[] = {
+        {"vendor.mediatek.hardware.camera.isphal@1.0::IISPModule", "internal/0"},
+        {"vendor.mediatek.hardware.camera.isphal@1.1::IISPModule", "internal/0"},
+        {"vendor.mediatek.hardware.camera.bgservice@1.1::IBGService", "internal/0"},
+        {"vendor.mediatek.hardware.camera.atms@1.0::IATMs", "default"},
     };
-    for (size_t i = 0; i < 5; ++i) {
-        if (i == 4) ALOGW("Skipping vendor C++ IGrallocHelper initialization");
+    ALOGW("Skipping vendor C++ IGrallocHelper initialization");
+    for (const auto& [descriptor, instance] : services) {
         auto result = ::android::hardware::registerPassthroughServiceImplementation(
-                descriptors[i], descriptors[i], i == 4 ? "default" : "internal/0");
-        if (result != ::android::OK) ALOGW("Private registration %s failed: %d",
-                                          descriptors[i], result);
+                descriptor, descriptor, instance);
+        if (result != ::android::OK) ALOGW("Private registration %s failed: %d", descriptor, result);
     }
     ALOGW("Skipping vendor C++ getMtkcamModuleFactory DebugExif call");
-    auto provider = ndk::SharedRefBase::make<mindone::camera::CameraProvider>(backend);
+    auto provider = ndk::SharedRefBase::make<mindone::camera::CameraProvider>(
+            backend, mindone::camera::loadMaximumResolution(maximumResolutionMode, backend));
     auto result = AServiceManager_addService(provider->asBinder().get(),
             "android.hardware.camera.provider.ICameraProvider/internal/0");
     LOG_ALWAYS_FATAL_IF(result != STATUS_OK, "AIDL provider registration failed: %d", result);

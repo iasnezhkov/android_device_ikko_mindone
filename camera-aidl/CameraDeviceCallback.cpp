@@ -25,6 +25,13 @@ class CameraDeviceCallback : public hd::V3_5::ICameraDeviceCallback {
                 shutter.readoutTimestamp = 0;
                 converted.push_back(ad::NotifyMsg::make<ad::NotifyMsg::Tag::shutter>(shutter));
             } else if (message.type == hd::V3_2::MsgType::ERROR) {
+                const auto code = message.msg.error.errorCode;
+                if (code == hd::V3_2::ErrorCode::ERROR_DEVICE) {
+                    queues->pixelModes.clear();
+                } else if (code == hd::V3_2::ErrorCode::ERROR_REQUEST ||
+                           code == hd::V3_2::ErrorCode::ERROR_RESULT) {
+                    queues->pixelModes.forget(message.msg.error.frameNumber);
+                }
                 ad::ErrorMsg error;
                 error.frameNumber = static_cast<int32_t>(message.msg.error.frameNumber);
                 error.errorStreamId = message.msg.error.errorStreamId;
@@ -47,13 +54,14 @@ class CameraDeviceCallback : public hd::V3_5::ICameraDeviceCallback {
             const hidl_vec<hd::V3_4::CaptureResult>& results) override {
         std::lock_guard<std::mutex> lock(queues->resultMutex);
         std::vector<ad::CaptureResult> converted(results.size());
-        auto metadata = [&](uint64_t size, const auto& bytes, auto* target, int64_t* fmqSize) {
+        auto metadata = [&](uint64_t size, const auto& bytes, auto* target, int64_t* fmqSize,
+                            auto edit) {
             if (size) {
                 if (!queues->backend || size > queues->backend->availableToRead()) return false;
                 target->metadata.resize(size);
                 if (!queues->backend->read(target->metadata.data(), size)) return false;
             } else target->metadata.assign(bytes.begin(), bytes.end());
-            if (!validMetadata(target->metadata)) return false;
+            if (!validMetadata(target->metadata) || !edit(&target->metadata)) return false;
             *fmqSize = 0;
             if (!target->metadata.empty() && queues->result.write(
                     reinterpret_cast<const int8_t*>(target->metadata.data()),
@@ -80,7 +88,10 @@ class CameraDeviceCallback : public hd::V3_5::ICameraDeviceCallback {
             auto& t = converted[i];
             t.frameNumber = s.frameNumber;
             t.partialResult = s.partialResult;
-            if (!metadata(s.fmqResultSize, s.result, &t.result, &t.fmqResultSize) ||
+            auto pixelMode = [&](std::vector<uint8_t>* bytes) {
+                return queues->pixelModes.mapResult(s.frameNumber, s.partialResult, bytes);
+            };
+            if (!metadata(s.fmqResultSize, s.result, &t.result, &t.fmqResultSize, pixelMode) ||
                     !buffer(s.inputBuffer, &t.inputBuffer)) return failure();
             t.outputBuffers.resize(s.outputBuffers.size());
             for (size_t j = 0; j < s.outputBuffers.size(); ++j) {
@@ -91,8 +102,10 @@ class CameraDeviceCallback : public hd::V3_5::ICameraDeviceCallback {
                 const auto& physical = results[i].physicalCameraMetadata[j];
                 auto& out = t.physicalCameraMetadata[j];
                 out.physicalCameraId = physical.physicalCameraId.c_str();
-                if (!metadata(physical.fmqMetadataSize, physical.metadata,
-                              &out.metadata, &out.fmqMetadataSize)) return failure();
+                if (!metadata(physical.fmqMetadataSize, physical.metadata, &out.metadata,
+                              &out.fmqMetadataSize, [](std::vector<uint8_t>*) { return true; })) {
+                    return failure();
+                }
             }
         }
         return mCallback->processCaptureResult(converted).isOk() ? Return<void>(Void()) : failure();

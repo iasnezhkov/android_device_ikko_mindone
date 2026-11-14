@@ -478,7 +478,7 @@ static void teardown_input_route(struct mindone_audio_device *adev,
 static const char *output_volume_control_name(enum output_device device)
 {
     switch (device) {
-    case OUT_DEVICE_HEADPHONE: return "Headset Volume";
+    case OUT_DEVICE_HEADPHONE: return "Headphone Volume";
     case OUT_DEVICE_EARPIECE: return "Handset Volume";
     case OUT_DEVICE_SPEAKER: return "Lineout Volume";
     default: return NULL;
@@ -2090,26 +2090,27 @@ static int in_set_route(struct mindone_stream_in *in, audio_devices_t new_mask)
 static int in_set_gain(struct mindone_stream_in *in, float gain)
 {
     struct mindone_audio_device *adev = in->dev;
-    struct mixer_ctl *ctl_l, *ctl_r;
+    struct mixer_ctl *ctl;
     int min, max, value;
+    unsigned int i, num_values;
 
     if (!adev->mixer)
         return 0;
 
-    ctl_l = mixer_get_ctl_by_name(adev->mixer, "PGA1 Volume");
-    ctl_r = mixer_get_ctl_by_name(adev->mixer, "PGA2 Volume");
-    if (!ctl_l || !ctl_r)
+    ctl = mixer_get_ctl_by_name(adev->mixer, "PGA Volume");
+    if (!ctl)
         return 0;
 
     if (gain < 0.0f) gain = 0.0f;
     if (gain > 1.0f) gain = 1.0f;
 
-    min = mixer_ctl_get_range_min(ctl_l);
-    max = mixer_ctl_get_range_max(ctl_l);
+    min = mixer_ctl_get_range_min(ctl);
+    max = mixer_ctl_get_range_max(ctl);
     value = min + (int)lroundf(gain * (float)(max - min));
 
-    mixer_ctl_set_value(ctl_l, 0, value);
-    mixer_ctl_set_value(ctl_r, 0, value);
+    num_values = mixer_ctl_get_num_values(ctl);
+    for (i = 0; i < num_values; i++)
+        mixer_ctl_set_value(ctl, (int)i, value);
     return 0;
 }
 

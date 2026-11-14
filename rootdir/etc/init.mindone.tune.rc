@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.vm.swappiness=*
+    write /proc/sys/vm/swappiness ${persist.vendor.mindone.tune.vm.swappiness}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.vm.page_cluster=*
+    write /proc/sys/vm/page-cluster ${persist.vendor.mindone.tune.vm.page_cluster}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.vm.watermark_boost_factor=*
+    write /proc/sys/vm/watermark_boost_factor ${persist.vendor.mindone.tune.vm.watermark_boost_factor}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.vm.watermark_scale_factor=*
+    write /proc/sys/vm/watermark_scale_factor ${persist.vendor.mindone.tune.vm.watermark_scale_factor}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.vm.dirty_writeback_centisecs=*
+    write /proc/sys/vm/dirty_writeback_centisecs ${persist.vendor.mindone.tune.vm.dirty_writeback_centisecs}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.mm.vma_ra_enabled=*
+    write /sys/kernel/mm/swap/vma_ra_enabled ${persist.vendor.mindone.tune.mm.vma_ra_enabled}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.mm.lru_gen_min_ttl_ms=*
+    write /sys/kernel/mm/lru_gen/min_ttl_ms ${persist.vendor.mindone.tune.mm.lru_gen_min_ttl_ms}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.mm.thp_enabled=*
+    write /sys/kernel/mm/transparent_hugepage/enabled ${persist.vendor.mindone.tune.mm.thp_enabled}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.mm.thp_defrag=*
+    write /sys/kernel/mm/transparent_hugepage/defrag ${persist.vendor.mindone.tune.mm.thp_defrag}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.mm.thp_shmem_enabled=*
+    write /sys/kernel/mm/transparent_hugepage/shmem_enabled ${persist.vendor.mindone.tune.mm.thp_shmem_enabled}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.mm.mthp_16kb=*
+    write /sys/kernel/mm/transparent_hugepage/hugepages-16kB/enabled ${persist.vendor.mindone.tune.mm.mthp_16kb}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.mm.mthp_32kb=*
+    write /sys/kernel/mm/transparent_hugepage/hugepages-32kB/enabled ${persist.vendor.mindone.tune.mm.mthp_32kb}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.mm.mthp_64kb=*
+    write /sys/kernel/mm/transparent_hugepage/hugepages-64kB/enabled ${persist.vendor.mindone.tune.mm.mthp_64kb}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.net.tcp_congestion_control=*
+    write /proc/sys/net/ipv4/tcp_congestion_control ${persist.vendor.mindone.tune.net.tcp_congestion_control}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.net.default_qdisc=*
+    write /proc/sys/net/core/default_qdisc ${persist.vendor.mindone.tune.net.default_qdisc}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.net.tcp_ecn=*
+    write /proc/sys/net/ipv4/tcp_ecn ${persist.vendor.mindone.tune.net.tcp_ecn}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.pm.sync_on_suspend=*
+    write /sys/power/sync_on_suspend ${persist.vendor.mindone.tune.pm.sync_on_suspend}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.pm.print_times=*
+    write /sys/power/pm_print_times ${persist.vendor.mindone.tune.pm.print_times}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.pm.debug_messages=*
+    write /sys/power/pm_debug_messages ${persist.vendor.mindone.tune.pm.debug_messages}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.slot0.value=*
+    write ${persist.vendor.mindone.tune.slot0.path} ${persist.vendor.mindone.tune.slot0.value}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.slot1.value=*
+    write ${persist.vendor.mindone.tune.slot1.path} ${persist.vendor.mindone.tune.slot1.value}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.slot2.value=*
+    write ${persist.vendor.mindone.tune.slot2.path} ${persist.vendor.mindone.tune.slot2.value}
+
+on property:sys.boot_completed=1 && property:persist.vendor.mindone.tune.slot3.value=*
+    write ${persist.vendor.mindone.tune.slot3.path} ${persist.vendor.mindone.tune.slot3.value}

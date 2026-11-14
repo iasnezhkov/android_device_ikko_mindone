@@ -59,7 +59,7 @@ requires a successful persistent update before reporting success.
 Tethering offload uses the native MDDP connection-mode backend rather than HIDL
 IOffloadConfig/IOffloadControl. The secure-element service in `secure-element/`
 uses the radio AIDL SIM interface for logical channels to the UICC. The product targets
-FCM 202504; vendor-specific HIDL interfaces remain where required.
+FCM 202604; vendor-specific HIDL interfaces remain where required.
 
 ## Camera provider — `camera-aidl/`
 

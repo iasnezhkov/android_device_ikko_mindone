@@ -7,10 +7,21 @@ MODDIR=/vendor/lib/modules
 LOAD=$MODDIR/modules.load
 SYSTEM_MODDIR=/system/lib/modules
 SYSTEM_LOAD=$SYSTEM_MODDIR/modules.load
+if [ -s "$MODDIR/modules.load.system" ]; then
+  SYSTEM_LOAD=$MODDIR/modules.load.system
+fi
 
 if [ $# -ne 1 ]; then
-  echo "usage: mindone-fast-insmod.sh <cfg>" >&2
+  echo "usage: mindone-fast-insmod.sh <cfg>|--late" >&2
   exit 2
+fi
+
+if [ "$1" = "--late" ]; then
+  if [ -s "$MODDIR/modules.load.late" ]; then
+    modprobe -a -d "$MODDIR" $(cat "$MODDIR/modules.load.late")
+    setprop vendor.mindone.modules.late "$?"
+  fi
+  exit 0
 fi
 
 status=ok

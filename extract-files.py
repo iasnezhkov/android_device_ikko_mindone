@@ -15,6 +15,7 @@ from audio_param_tuning import (
     tune_speech_audio_param,
     tune_speech_vol_audio_param,
 )
+from camera_lenslist_fixup import name_imx766_in_sub_lens_list
 from camera_metastore_fixup import fix_imx766_stream_table
 from halsensor_poweron_fixup import drop_poweron_sleep
 from rxfilter_firmware import firmware_support, install_firmware
@@ -62,6 +63,10 @@ def fixup_halsensor_poweron(ctx, file, file_path, *args, **kwargs):
     drop_poweron_sleep(file_path)
 
 
+def fixup_camera_lenslist(ctx, file, file_path, *args, **kwargs):
+    name_imx766_in_sub_lens_list(file_path)
+
+
 def fixup_rxfilter_firmware(ctx, file, file_path, *args, **kwargs):
     if os.environ.get('MINDONE_PERSONAL_BUILD', 'false') != 'true':
         return
@@ -105,6 +110,10 @@ blob_fixups: blob_fixups_user_type = {
         'vendor/lib64/libcam.halsensor.so',
     ): blob_fixup()
         .call(fixup_halsensor_poweron, need_tmp_dir=False),
+    (
+        'vendor/lib64/libcameracustom.lens.so',
+    ): blob_fixup()
+        .call(fixup_camera_lenslist, need_tmp_dir=False),
 
     (
         'vendor/bin/mnld',
@@ -168,6 +177,7 @@ blob_fixups: blob_fixups_user_type = {
         .replace_needed('libdpframework.so', 'libdpfw_cam.so')
         .replace_needed('libgralloc_extra.so', 'libgrextra_cam.so'),
     'vendor/lib64/libdpfw_cam.so': blob_fixup()
+        .binary_regex_replace(b'ro\\.vendor\\.mtk_pq_support', b'vendor.dp.cam_pq_support')
         .replace_needed('libaiselector.so', 'libaisel_cam.so')
         .replace_needed('libgralloc_extra.so', 'libgrextra_cam.so'),
     'vendor/lib64/libgrextra_cam.so': blob_fixup()
@@ -316,6 +326,10 @@ blob_fixups: blob_fixups_user_type = {
         'vendor/etc/sensors/hals.conf'
     ): blob_fixup()
         .regex_replace('android.hardware.sensors@2.X-subhal-mediatek.so', 'android.hardware.sensors@2.0-subhal-impl-1.0.so'),
+    (
+        'vendor/etc/init/mtklog.rc'
+    ): blob_fixup()
+        .regex_replace(r'on property:sys\.boot_completed=1 && property:ro\.build\.type=(?:eng|userdebug)\n    write /proc/dynamic_debug/control [^\n]*\n', ''),
 }
 
 def installed_paths(file):

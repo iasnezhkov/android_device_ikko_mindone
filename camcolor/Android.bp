@@ -1,0 +1,41 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_library_shared {
+    name: "libcameracustom.camera.isp",
+    vendor: true,
+    compile_multilib: "64",
+    srcs: [
+        "color.cpp",
+        "forward.S",
+        "shim.cpp",
+    ],
+    shared_libs: ["liblog"],
+    stl: "none",
+    cpp_std: "c++17",
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-fvisibility=hidden",
+    ],
+}
+
+cc_test_host {
+    name: "camcolor_test",
+    srcs: [
+        "color.cpp",
+        "color_test.cpp",
+    ],
+    cpp_std: "c++17",
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+    gtest: false,
+}

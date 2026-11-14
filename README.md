@@ -5,7 +5,7 @@
 
 # iKKO MindOne
 
-### Unofficial LineageOS 24.0 device tree — an independent research project
+### Unofficial LineageOS 24 device tree — an independent research project
 
 **Android 17 · MT6789 / MT8781 (Helio G99) · arm64 only · 96 Hz display**
 
@@ -19,13 +19,11 @@
 ## 🧬 Why this one is unusual
 
 The device shipped with a Linux 5.10 vendor kernel. The companion kernel project ports
-its device support to Google's **android17-6.18-2026-09_r12 GKI prebuilt**, CI **16754118**
-(`6.18.32-android17-5`).
+its device support to Google's **android17-6.18-2026-09_r13 GKI prebuilt**, CI **16831611**.
 The core kernel is Google's prebuilt; device drivers are loadable vendor modules built
 through Kleaf, with device DTB/DTBO outputs. Device code is not added to the GKI core.
 
-This branch targets **LineageOS 24.0 / Android 17**, uses **FCM 202504** with the kernel at
-kernel FCM 202604, and inherits
+This product builds **LineageOS 24 / Android 17**, uses **FCM 202604**, and inherits
 `core_64_bit_only.mk`. It does not provide a 32-bit application runtime. Android HAL
 interfaces use AIDL, including frontends over legacy backends where necessary.
 Vendor-specific HIDL interfaces and proprietary backend libraries still remain. IMS
@@ -104,9 +102,8 @@ their absent RXFILTER support and the stock firmware patch. Do not substitute ar
 
 Build device modules and DTB/DTBO in the companion kernel repository on
 `android17-6.18`, following the build guide in that repository's documentation.
-Use the r12 core image, its exact GKI modules and metadata, and the device modules built
-against that base as one reviewed set. Moving an installed 6.12 build to 6.18 changes the
-GKI release and therefore takes a full signed ROM. Do not mix outputs from different candidates.
+Use the r13 core image, its exact GKI modules and metadata, and the device modules built
+against that base as one reviewed set. Do not mix outputs from different candidates.
 
 Populate the ignored `kernel/` build inputs before building the ROM:
 
@@ -122,9 +119,9 @@ kernel/modules.load.system
 kernel/system_dlkm/flatten/lib/modules/*.ko
 ```
 
-The current companion kernel requests 26 first-stage and 236 vendor-DLKM modules,
-a disjoint combined set of 262; recovery requests 131. This device stages 26 entries in
-`kernel/modules.load.ramdisk`, 235 in `kernel/modules.load`, 131 in
+The current companion kernel requests 21 first-stage and 193 vendor-DLKM modules,
+a disjoint combined set of 214; recovery requests 109. This device stages 21 entries in
+`kernel/modules.load.ramdisk`, 192 in `kernel/modules.load`, 109 in
 `kernel/modules.load.recovery` and 24 in `kernel/modules.load.system`. The vendor count
 differs because `libarc4` is staged in `system_dlkm` instead. The unused `subaf`,
 `sub2af`, `main2af` and `main3af` wrappers are absent; `mainaf` remains.
@@ -153,13 +150,15 @@ installed system before it can be installed as an update.
 
 | Area | Implementation |
 |---|---|
-| Audio | AIDL primary service over the AFE/tinyalsa backend, with media, cellular earpiece/speaker, headset microphone and modem Bluetooth SCO routing; restarts together with audioserver |
+| Audio | AIDL primary service over the AFE/tinyalsa backend, with media, cellular earpiece/speaker, headset microphone and modem Bluetooth SCO routing; restarts together with audioserver; codec gains and the receiver mux use the upstream mt6358 control names of the paired kernel |
 | Video | In-tree V4L2 Codec2 with AVC/HEVC encoding and AVC, HEVC, VP8, VP9, MPEG-4 and H.263 decoding |
-| Camera | AIDL frontend over the stock camera backend, default sensor pixel mode and separate stock MDP/gralloc libraries beside donor graphics; recordable RGBA8888 EGL configs for CameraX video processing |
+| Camera | AIDL frontend over the stock camera backend, default sensor pixel mode and separate stock MDP/gralloc libraries beside donor graphics; recordable RGBA8888 EGL configs for CameraX video processing; camera IDs 0 and 1 are the one flip IMX766 with its DW9800W autofocus actuator, and the provider hands the sensor from one ID to the other; maximum resolution, 60 fps and flip exclusivity are properties, off by default |
 | GNSS | AIDL extensions and session-controlled receiver power |
-| Display | 96 Hz default and VFP-only 60 Hz idle mode, SurfaceFlinger idle/touch timers, LiveDisplay calibration and Night Light integration |
-| Radio / IMS / secure element | Selected donor AIDL radio, 64-bit IMS, Wi-Fi-calling helper and radio-backed AIDL secure-element service |
-| Tethering offload | AIDL service with native MDDP connection-mode support |
+| Display | 96 Hz default and VFP-only 60 Hz idle mode, SurfaceFlinger idle/touch timers, LiveDisplay calibration and Night Light integration; refresh rate capped to 60 Hz from thermal status SEVERE |
+| Radio / IMS / secure element | Selected donor AIDL radio, 64-bit IMS, Wi-Fi-calling helper and radio-backed AIDL secure-element service; a phone's radio powers off after 30 s without a subscription, never during calls or emergency modes |
+| Tethering offload | AIDL service with native MDDP connection-mode support; USB tethering uses NCM |
+| USB-C and charging control | Type-C and USB PD through the kernel's TCPM, whose power supply the health HAL reads like the other chargers; LineageOS Health service with charging-control toggle and bypass through the charger's charge-disable control |
+| Memory | zram managed by `mmd`: 25 % of RAM, LZ4 with zstd recompression |
 | Sound trigger | Backend over the kernel voice-wakeup interface |
 | Vibrator | In-tree AIDL service for the AW862xx haptics driver |
 | Own radio HAL crates | Rust AT transport, registration/signal/SIM state, network/modem handlers, shared core and event-driven reactor beside the selected donor radio stack |
@@ -213,8 +212,7 @@ AVB coverage and exact readback lengths before writing; never overwrite a mounte
 ## 🧩 What else you need
 
 The companion kernel source branch is `android17-6.18`. It supplies the device DTB/DTBO
-and loadable drivers over Google's r12 GKI core. The previous `android16-6.12` line
-matches the `lineage-23.2` branch of this repository. Firmware, proprietary userspace and
+and loadable drivers over Google's r13 GKI core. Firmware, proprietary userspace and
 kernel build products must be obtained or built separately; none belong in this Git tree.
 
 ## 🔎 Useful beyond this phone

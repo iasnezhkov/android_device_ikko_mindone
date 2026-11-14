@@ -3,7 +3,8 @@
 
 allow hal_tetheroffload_default mddp_device:chr_file { getattr open read write ioctl };
 allowxperm hal_tetheroffload_default mddp_device:chr_file ioctl { 0x0000 };
-allow hal_tetheroffload_default self:netlink_route_socket { create bind read write setopt nlmsg_read nlmsg_getneigh };
+allow hal_tetheroffload_default self:netlink_route_socket { create bind read write setopt nlmsg nlmsg_read nlmsg_getneigh };
+allowxperm hal_tetheroffload_default self:netlink_route_socket nlmsg RTM_GETNEIGH;
 allow hal_tetheroffload_default self:udp_socket { create ioctl };
 
 allow hal_tetheroffload_default { system_server network_stack }:fd use;

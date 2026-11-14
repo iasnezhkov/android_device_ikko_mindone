@@ -49,7 +49,9 @@ whole donor partitions are not installation inputs for the MindOne.
 
 IMS extraction fixes removed Android 17 APIs and receiver export flags in the APK/jars;
 no framework exception for the IMS package is required. Camera extraction fixes the IMX766
-stream table and removes the fixed 300 ms sensor power-on sleep using hash-checked fixups. The AIDL camera service loads the
+stream table, removes the fixed 300 ms sensor power-on sleep and names the IMX766 in the
+lens list of the second sensor index, so camera 1 drives the same DW9800W actuator as
+camera 0, using hash-checked fixups. The AIDL camera service loads the
 HIDL backend in-process; there is no optional camera-proxy extraction path or instance rename.
 
 The stock camera stack (the only one tuned for this IMX766 module) was built against the stock
@@ -153,7 +155,7 @@ Record the stock firmware identity with your private extraction records. Where a
 release identifier is unknown, identify its files by the hashes in the extraction lists.
 
 Kernel modules for `system_dlkm` come separately from Google's pinned
-`android17-6.18-2026-09_r12` GKI archive, CI `16754118`
+`android17-6.18-2026-09_r13` GKI archive, CI `16831611`
 (`system_dlkm_staging_archive.tar.gz`). They are not stock MindOne or donor userspace
 blobs. Stage the selected modules and load list with the exact GKI image and matching
 vendor modules before building a full signed ROM. See [Flashing](FLASHING.md).

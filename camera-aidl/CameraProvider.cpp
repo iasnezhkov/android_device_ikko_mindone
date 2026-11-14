@@ -6,15 +6,18 @@
 #include "CameraProvider.h"
 
 #include "CameraDevice.h"
+#include "FlipWatcher.h"
 #include "StreamConvert.h"
 
 #include <aidl/android/hardware/camera/common/Status.h>
+#include <android-base/properties.h>
 #include <android/hardware/camera/provider/2.6/ICameraProviderCallback.h>
 #include <log/log.h>
 
 #include <map>
 #include <mutex>
 #include <regex>
+#include <set>
 #include <utility>
 
 namespace mindone::camera {
@@ -24,6 +27,16 @@ using ::android::hardware::hidl_string;
 using ::android::hardware::Return;
 using ::android::hardware::Void;
 using ndk::ScopedAStatus;
+
+constexpr char kFlipSwitch[] = "persist.vendor.camera.flip_exclusive";
+constexpr char kHallPosition[] = "/sys/devices/platform/soc/10010000.kp/hall_position";
+constexpr char kInputDir[] = "/dev/input";
+
+struct FlipLinks {
+    std::mutex mutex;
+    std::shared_ptr<ap::ICameraProviderCallback> callback;
+    std::map<std::string, hc::TorchModeStatus> torch;
+};
 
 static ScopedAStatus status(hc::Status value) {
     ac::Status mapped = ac::Status::INTERNAL_ERROR;
@@ -71,25 +84,46 @@ struct DeviceNames final : NameMap {
         auto it = backendNames.find(name);
         return it == backendNames.end() ? std::string() : it->second;
     }
+
+    std::vector<std::string> names() override {
+        std::lock_guard<std::mutex> lock(mutex);
+        std::vector<std::string> result;
+        for (const auto& entry : backendNames) result.push_back(entry.first);
+        return result;
+    }
 };
 
 
 class ProviderCallback : public hp::V2_6::ICameraProviderCallback {
   public:
     ProviderCallback(std::shared_ptr<ap::ICameraProviderCallback> callback,
-                     std::shared_ptr<NameMap> names)
-        : mCallback(std::move(callback)), mNames(std::move(names)) {}
+                     std::shared_ptr<NameMap> names, std::shared_ptr<SensorOwner> sensor,
+                     std::shared_ptr<FlipLinks> links)
+        : mCallback(std::move(callback)), mNames(std::move(names)), mSensor(std::move(sensor)),
+          mLinks(std::move(links)) {}
 
     Return<void> cameraDeviceStatusChange(const hidl_string& name,
                                          hc::CameraDeviceStatus value) override {
-        check(mCallback->cameraDeviceStatusChange(mNames->remember(name.c_str()),
+        const std::string converted = mNames->remember(name.c_str());
+        if (mSensor->absent(converted)) {
+            ALOGI("%s: HAL status %d kept back, the flip module faces the other way",
+                  converted.c_str(), static_cast<int>(value));
+            return Void();
+        }
+        check(mCallback->cameraDeviceStatusChange(converted,
                                                  static_cast<ac::CameraDeviceStatus>(value)));
         return Void();
     }
 
     Return<void> torchModeStatusChange(const hidl_string& name,
                                       hc::TorchModeStatus value) override {
-        check(mCallback->torchModeStatusChange(mNames->remember(name.c_str()),
+        const std::string converted = mNames->remember(name.c_str());
+        if (mLinks) {
+            std::lock_guard<std::mutex> lock(mLinks->mutex);
+            mLinks->torch[converted] = value;
+        }
+        if (mSensor->absent(converted)) return Void();
+        check(mCallback->torchModeStatusChange(converted,
                                               static_cast<ac::TorchModeStatus>(value)));
         return Void();
     }
@@ -108,16 +142,81 @@ class ProviderCallback : public hp::V2_6::ICameraProviderCallback {
     }
     const std::shared_ptr<ap::ICameraProviderCallback> mCallback;
     const std::shared_ptr<NameMap> mNames;
+    const std::shared_ptr<SensorOwner> mSensor;
+    const std::shared_ptr<FlipLinks> mLinks;
 };
 
-CameraProvider::CameraProvider(const ::android::sp<hp::V2_6::ICameraProvider>& backend)
-    : mBackend(backend), mNames(std::make_shared<DeviceNames>()) {}
+static void torchOff(const ::android::sp<hp::V2_6::ICameraProvider>& backend,
+                     const std::shared_ptr<NameMap>& names,
+                     const std::shared_ptr<FlipLinks>& links, const std::string& name) {
+    {
+        std::lock_guard<std::mutex> lock(links->mutex);
+        auto it = links->torch.find(name);
+        if (it == links->torch.end() || it->second != hc::TorchModeStatus::AVAILABLE_ON) return;
+    }
+    ::android::sp<hd::V3_2::ICameraDevice> device;
+    auto result = backend->getCameraDeviceInterface_V3_x(names->lookup(name),
+            [&](auto code, const auto& interface) {
+                if (code == hc::Status::OK) device = interface;
+            });
+    if (!result.isOk() || !device) {
+        ALOGW("%s: no device to turn the torch off before the flip", name.c_str());
+        return;
+    }
+    auto off = device->setTorchMode(hc::TorchMode::OFF);
+    ALOGI("%s: torch off before the flip: %d", name.c_str(),
+          off.isOk() ? static_cast<int>(static_cast<hc::Status>(off)) : -1);
+}
+
+static std::shared_ptr<FlipWatcher> createFlip(
+        const ::android::sp<hp::V2_6::ICameraProvider>& backend,
+        const std::shared_ptr<NameMap>& names, const std::shared_ptr<SensorOwner>& sensor,
+        const std::shared_ptr<FlipLinks>& links) {
+    if (!::android::base::GetBoolProperty(kFlipSwitch, false)) return nullptr;
+    FlipWatcher::Hooks hooks;
+    hooks.setAbsent = [sensor](const std::set<std::string>& absent) {
+        sensor->setAbsent(absent);
+    };
+    hooks.leave = [backend, names, links](const std::string& name) {
+        torchOff(backend, names, links, name);
+    };
+    hooks.report = [links](const std::string& name, bool present) {
+        std::shared_ptr<ap::ICameraProviderCallback> callback;
+        {
+            std::lock_guard<std::mutex> lock(links->mutex);
+            callback = links->callback;
+        }
+        if (!callback) return false;
+        auto result = callback->cameraDeviceStatusChange(name, present
+                ? ac::CameraDeviceStatus::PRESENT : ac::CameraDeviceStatus::NOT_PRESENT);
+        if (!result.isOk()) ALOGW("%s: presence report failed: %s", name.c_str(),
+                                 result.getDescription().c_str());
+        return result.isOk();
+    };
+    return FlipWatcher::create(kHallPosition, kInputDir, std::move(hooks));
+}
+
+CameraProvider::CameraProvider(const ::android::sp<hp::V2_6::ICameraProvider>& backend,
+                               const MaximumResolution& maximumResolution)
+    : mBackend(backend),
+      mNames(std::make_shared<DeviceNames>()),
+      mSensor(std::make_shared<SensorOwner>()),
+      mLinks(std::make_shared<FlipLinks>()),
+      mFlip(createFlip(mBackend, mNames, mSensor, mLinks)),
+      mMaximumResolution(maximumResolution) {}
 
 ScopedAStatus CameraProvider::setCallback(
         const std::shared_ptr<ap::ICameraProviderCallback>& callback) {
     if (!callback) return status(hc::Status::ILLEGAL_ARGUMENT);
-    auto result = mBackend->setCallback(new ProviderCallback(callback, mNames));
-    return result.isOk() ? status(result) : status(hc::Status::INTERNAL_ERROR);
+    if (mFlip) {
+        std::lock_guard<std::mutex> lock(mLinks->mutex);
+        mLinks->callback = callback;
+    }
+    auto result = mBackend->setCallback(
+            new ProviderCallback(callback, mNames, mSensor, mFlip ? mLinks : nullptr));
+    if (!result.isOk()) return status(hc::Status::INTERNAL_ERROR);
+    if (mFlip && static_cast<hc::Status>(result) == hc::Status::OK) mFlip->attach();
+    return status(result);
 }
 
 ScopedAStatus CameraProvider::getVendorTags(std::vector<ac::VendorTagSection>* tags) {
@@ -173,7 +272,7 @@ ScopedAStatus CameraProvider::getCameraDeviceInterface(
     if (!result.isOk()) return status(hc::Status::INTERNAL_ERROR);
     if (value != hc::Status::OK) return status(value);
     if (!backend) return status(hc::Status::INTERNAL_ERROR);
-    return createCameraDevice(backend, mNames, device);
+    return createCameraDevice(backend, name, mNames, mSensor, mMaximumResolution, device);
 }
 
 ScopedAStatus CameraProvider::notifyDeviceStateChange(int64_t state) {

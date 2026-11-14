@@ -1,11 +1,9 @@
 diff --git a/apktool.yml b/apktool.yml
 --- a/apktool.yml
 +++ b/apktool.yml
-@@ -5,6 +5,6 @@
-   ids:
-   tag: null
+@@ -2,4 +2,4 @@
+ apkFileName: mediatek-ims-common.jar
  sdkInfo:
--  minSdkVersion: 28
+-  minSdkVersion: 29
 +  minSdkVersion: 35
- packageInfo:
-   forcedPackageId: null
+ doNotCompress:

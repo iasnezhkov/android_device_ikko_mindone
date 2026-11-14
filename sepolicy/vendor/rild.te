@@ -4,3 +4,5 @@
 hal_server_domain(rild, hal_telephony)
 binder_use(rild)
 hal_client_domain(rild, mtk_hal_netdagent)
+allow rild self:netlink_xfrm_socket nlmsg;
+allowxperm rild self:netlink_xfrm_socket nlmsg { XFRM_MSG_ALLOCSPI XFRM_MSG_DELSA };
