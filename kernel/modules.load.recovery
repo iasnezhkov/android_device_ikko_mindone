@@ -20,7 +20,6 @@ clk_mt6789_vcodec.ko
 clk_mt6789_impen.ko
 clk_mt6789_mfgcfg.ko
 mtk-pm-domains.ko
-clk_bringup.ko
 clk_fmeter_mt6789.ko
 mtk_dramc.ko
 mtk_dvfsrc.ko
@@ -65,7 +64,6 @@ mt6789_dcm.ko
 mtk_dcm.ko
 tkcore.ko
 tkcore_drv.ko
-spi_mt65xx.ko
 clkbuf.ko
 adapter_class.ko
 charger_class.ko

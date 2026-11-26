@@ -29,6 +29,7 @@ ndk::ScopedAStatus createCameraDevice(
         const ::android::sp<::android::hardware::camera::device::V3_2::ICameraDevice>& backend,
         const std::string& name, const std::shared_ptr<NameMap>& names,
         const std::shared_ptr<SensorOwner>& sensor, const MaximumResolution& maximumResolution,
+        bool ois,
         std::shared_ptr<::aidl::android::hardware::camera::device::ICameraDevice>* device);
 
 }

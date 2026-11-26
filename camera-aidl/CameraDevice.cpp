@@ -33,9 +33,9 @@ class CameraDevice : public ad::BnCameraDevice {
   public:
     CameraDevice(const ::android::sp<hd::V3_2::ICameraDevice>& backend, const std::string& name,
                  const std::shared_ptr<NameMap>& names, const std::shared_ptr<SensorOwner>& sensor,
-                 const MaximumResolution& maximumResolution)
+                 const MaximumResolution& maximumResolution, bool ois)
         : mBackend(backend), mName(name), mNames(names), mSensor(sensor),
-          mMaximumResolution(maximumResolution) {}
+          mMaximumResolution(maximumResolution), mOis(ois) {}
     ScopedAStatus getCameraCharacteristics(ad::CameraMetadata* metadata) override {
         hc::Status value = hc::Status::INTERNAL_ERROR;
         auto result = mBackend->getCameraCharacteristics([&](auto code, const auto& bytes) {
@@ -43,7 +43,7 @@ class CameraDevice : public ad::BnCameraDevice {
             if (code == hc::Status::OK) metadata->metadata.assign(bytes.begin(), bytes.end());
         });
         if (result.isOk() && value == hc::Status::OK &&
-            !fixCharacteristics(&metadata->metadata, mMaximumResolution.enabled())) {
+            !fixCharacteristics(&metadata->metadata, mMaximumResolution.enabled(), mOis)) {
             ALOGE("%s: characteristics fixup failed, passing the HAL metadata through",
                   mName.c_str());
         }
@@ -137,16 +137,23 @@ class CameraDevice : public ad::BnCameraDevice {
             }
         }
         auto adapter = createCameraDeviceCallback(callback);
-        if (mMaximumResolution.enabled()) {
+        if (mMaximumResolution.enabled() || mOis) {
             ad::CameraMetadata characteristics;
             if (getCameraCharacteristics(&characteristics).isOk()) {
-                auto binning = peek<int32_t>(characteristics.metadata,
-                                             ANDROID_SENSOR_INFO_BINNING_FACTOR);
                 auto partial = peek<int32_t>(characteristics.metadata,
                                              ANDROID_REQUEST_PARTIAL_RESULT_COUNT);
-                if (binning.size() == 2 && binning[0] == binning[1] && partial.size() == 1) {
-                    getMetadataQueues(adapter)->pixelModes.configure(
-                            mMaximumResolution.remosaicTag, binning[0], partial[0]);
+                if (partial.size() == 1) {
+                    if (mMaximumResolution.enabled()) {
+                        auto binning = peek<int32_t>(characteristics.metadata,
+                                                     ANDROID_SENSOR_INFO_BINNING_FACTOR);
+                        if (binning.size() == 2 && binning[0] == binning[1]) {
+                            getMetadataQueues(adapter)->pixelModes.configure(
+                                    mMaximumResolution.remosaicTag, binning[0], partial[0]);
+                        }
+                    }
+                    if (mOis) {
+                        getMetadataQueues(adapter)->oisModes.configure(partial[0]);
+                    }
                 }
             }
         }
@@ -194,13 +201,14 @@ class CameraDevice : public ad::BnCameraDevice {
     const std::shared_ptr<NameMap> mNames;
     const std::shared_ptr<SensorOwner> mSensor;
     const MaximumResolution mMaximumResolution;
+    const bool mOis;
 };
 ScopedAStatus createCameraDevice(const ::android::sp<hd::V3_2::ICameraDevice>& backend,
         const std::string& name, const std::shared_ptr<NameMap>& names,
         const std::shared_ptr<SensorOwner>& sensor, const MaximumResolution& maximumResolution,
-        std::shared_ptr<ad::ICameraDevice>* device) {
+        bool ois, std::shared_ptr<ad::ICameraDevice>* device) {
     *device = ndk::SharedRefBase::make<CameraDevice>(backend, name, names, sensor,
-                                                     maximumResolution);
+                                                     maximumResolution, ois);
     return ScopedAStatus::ok();
 }
 }

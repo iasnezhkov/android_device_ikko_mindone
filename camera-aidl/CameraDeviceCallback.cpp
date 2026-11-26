@@ -28,9 +28,11 @@ class CameraDeviceCallback : public hd::V3_5::ICameraDeviceCallback {
                 const auto code = message.msg.error.errorCode;
                 if (code == hd::V3_2::ErrorCode::ERROR_DEVICE) {
                     queues->pixelModes.clear();
+                    queues->oisModes.clear();
                 } else if (code == hd::V3_2::ErrorCode::ERROR_REQUEST ||
                            code == hd::V3_2::ErrorCode::ERROR_RESULT) {
                     queues->pixelModes.forget(message.msg.error.frameNumber);
+                    queues->oisModes.forget(message.msg.error.frameNumber);
                 }
                 ad::ErrorMsg error;
                 error.frameNumber = static_cast<int32_t>(message.msg.error.frameNumber);
@@ -88,10 +90,11 @@ class CameraDeviceCallback : public hd::V3_5::ICameraDeviceCallback {
             auto& t = converted[i];
             t.frameNumber = s.frameNumber;
             t.partialResult = s.partialResult;
-            auto pixelMode = [&](std::vector<uint8_t>* bytes) {
-                return queues->pixelModes.mapResult(s.frameNumber, s.partialResult, bytes);
+            auto editResult = [&](std::vector<uint8_t>* bytes) {
+                return queues->pixelModes.mapResult(s.frameNumber, s.partialResult, bytes) &&
+                       queues->oisModes.mapResult(s.frameNumber, s.partialResult, bytes);
             };
-            if (!metadata(s.fmqResultSize, s.result, &t.result, &t.fmqResultSize, pixelMode) ||
+            if (!metadata(s.fmqResultSize, s.result, &t.result, &t.fmqResultSize, editResult) ||
                     !buffer(s.inputBuffer, &t.inputBuffer)) return failure();
             t.outputBuffers.resize(s.outputBuffers.size());
             for (size_t j = 0; j < s.outputBuffers.size(); ++j) {

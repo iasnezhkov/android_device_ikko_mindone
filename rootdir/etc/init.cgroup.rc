@@ -15,8 +15,8 @@ on charger
 on post-fs-data
     write /sys/devices/system/cpu/cpufreq/policy0/scaling_governor schedutil
     write /sys/devices/system/cpu/cpufreq/policy6/scaling_governor schedutil
-    write /sys/devices/system/cpu/cpufreq/policy0/schedutil/rate_limit_us 1
-    write /sys/devices/system/cpu/cpufreq/policy6/schedutil/rate_limit_us 1
+    write /sys/devices/system/cpu/cpufreq/policy0/schedutil/rate_limit_us 1000
+    write /sys/devices/system/cpu/cpufreq/policy6/schedutil/rate_limit_us 500
     write /proc/sys/kernel/sched_util_clamp_min_rt_default 0
 
     # boot perf. tune
@@ -46,14 +46,28 @@ on property:sys.boot_completed=1
     write /sys/class/devfreq/mtk-dvfsrc-devfreq/userspace/set_freq 0
     write /dev/cpuctl/system/cpu.uclamp.min 0
     write /dev/cpuctl/system/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/system/cpu.shares 10240
     write /dev/cpuctl/system-background/cpu.uclamp.min 0
+    write /dev/cpuctl/system-background/cpu.uclamp.max 60
     write /dev/cpuctl/system-background/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/system-background/cpu.shares 2048
     write /dev/cpuctl/foreground/cpu.uclamp.min 0
-    write /dev/cpuctl/foreground/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/foreground/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/foreground/cpu.shares 10240
+    write /dev/cpuctl/foreground_window/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/foreground_window/cpu.shares 10240
     write /dev/cpuctl/top-app/cpu.uclamp.min 0
-    write /dev/cpuctl/top-app/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/top-app/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/top-app/cpu.shares 20480
+    write /dev/cpuctl/camera-daemon/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/camera-daemon/cpu.shares 20480
+    write /dev/cpuctl/rt/cpu.uclamp.latency_sensitive 1
+    write /dev/cpuctl/rt/cpu.shares 20480
     write /dev/cpuctl/background/cpu.uclamp.min 0
+    write /dev/cpuctl/background/cpu.uclamp.max 50
     write /dev/cpuctl/background/cpu.uclamp.latency_sensitive 0
+    write /dev/cpuctl/background/cpu.shares 1024
+    write /dev/cpuctl/dex2oat/cpu.uclamp.max 60
 
 on property:debug.tracing.screen_state=1
     write /sys/class/devfreq/mtk-dvfsrc-devfreq/userspace/set_freq 0

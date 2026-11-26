@@ -57,7 +57,8 @@ BOARD_KERNEL_CMDLINE += log_buf_len=2M
 BOARD_KERNEL_CMDLINE += rcutree.enable_rcu_lazy=1
 BOARD_KERNEL_CMDLINE += rcu_nocbs=0-7
 BOARD_KERNEL_CMDLINE += softlockup_panic=1 nmi_watchdog=panic sysctl.kernel.hung_task_timeout_secs=45
-BOARD_KERNEL_CMDLINE += panic_print=0xc0
+BOARD_KERNEL_CMDLINE += panic_sys_info=all_bt,blocked_tasks
+BOARD_KERNEL_CMDLINE += randomize_kstack_offset=on
 BOARD_KERNEL_CMDLINE += pm.dpm_watchdog_enabled=1 pm.dpm_watchdog_all_cpu_backtrace=1
 
 BOARD_MKBOOTIMG_ARGS := --ramdisk_offset $(BOARD_RAMDISK_OFFSET)

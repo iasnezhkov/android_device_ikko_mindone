@@ -15,7 +15,8 @@ cc_binary {
     srcs: ["main.cpp", "CameraProvider.cpp", "CameraDevice.cpp",
            "CameraDeviceCallback.cpp", "CameraDeviceSession.cpp", "StreamConvert.cpp",
            "CharacteristicsFixup.cpp", "SensorManagerShim.cpp", "FlipWatcher.cpp",
-           "HighFps.cpp", "MaximumResolution.cpp", "SensorOwner.cpp"],
+           "HighFps.cpp", "MaximumResolution.cpp", "OisControl.cpp", "SensorOwner.cpp",
+           "CallbackQueue.cpp"],
     shared_libs: [
         "android.hardware.camera.provider@2.4",
         "android.hardware.camera.provider@2.5",

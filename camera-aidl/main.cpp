@@ -7,6 +7,7 @@
 
 #include "CameraProvider.h"
 #include "MaximumResolution.h"
+#include "OisControl.h"
 
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
@@ -58,8 +59,10 @@ int main() {
         if (result != ::android::OK) ALOGW("Private registration %s failed: %d", descriptor, result);
     }
     ALOGW("Skipping vendor C++ getMtkcamModuleFactory DebugExif call");
+    const bool ois = mindone::camera::oisAvailable();
+    ALOGI("Optical stabilization: %s", ois ? "on" : "off");
     auto provider = ndk::SharedRefBase::make<mindone::camera::CameraProvider>(
-            backend, mindone::camera::loadMaximumResolution(maximumResolutionMode, backend));
+            backend, mindone::camera::loadMaximumResolution(maximumResolutionMode, backend), ois);
     auto result = AServiceManager_addService(provider->asBinder().get(),
             "android.hardware.camera.provider.ICameraProvider/internal/0");
     LOG_ALWAYS_FATAL_IF(result != STATUS_OK, "AIDL provider registration failed: %d", result);

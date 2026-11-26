@@ -66,7 +66,10 @@ FCM 202604; vendor-specific HIDL interfaces remain where required.
 An AIDL `ICameraProvider` service (`android.hardware.camera.provider-service.mindone`, 64-bit)
 in front of the stock HIDL camera provider: it translates provider, device and session calls
 and stream configurations (`StreamConvert.cpp`) to the HIDL `@2.6`/`@3.7` interfaces of the
-closed MediaTek camera stack, so the framework only sees AIDL.
+closed MediaTek camera stack, so the framework only sees AIDL. It routes provider and flip
+presence callbacks through a single-thread `CallbackQueue` to prevent nested `cameraserver`
+deadlocks, and drives the standalone `ois_mindone` 0x5A30 OIS MCU via `OisControl` when
+present.
 
 ## Other own services
 

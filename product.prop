@@ -10,3 +10,5 @@ mmd.zram.size=25%
 mmd.zram.comp_algorithm=lz4
 mmd.zram.recompression.enabled=true
 mmd.zram.recompression.algorithm=zstd
+
+ro.virtual_ab.io_uring.enabled=true

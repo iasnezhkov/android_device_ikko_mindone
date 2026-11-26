@@ -29,16 +29,6 @@ on early-init && property:ro.build.type=userdebug
     chmod 0755 /sys/kernel/debug
 
 on init
-
-    # Support legacy paths
-    symlink /sdcard /mnt/sdcard
-
-    # if primary storage is physical, set ro.vold.primary_physical to 1
-    # setprop ro.vold.primary_physical 1
-
-    mkdir /mnt/cd-rom 0000 system system
-
-# change lk_env permission
     chown root system /proc/lk_env
     chmod 0660 /proc/lk_env
 
@@ -96,14 +86,7 @@ on charger
     start vendor.light-default
 
 on fs
-    start vendor.boot-hal-1-2
-
-    # mount fstab
     mount_all --early
-
-on fs
-
-   mount iso9660 loop@/vendor/etc/iAmCdRom.iso /mnt/cd-rom ro
 
 on late-fs
     wait_for_prop hwservicemanager.ready "true"
@@ -628,8 +611,8 @@ on boot
     chmod 0660 /sys/devices/system/cpu/cpufreq/hotplug/cpu_num_base
     chown system system /sys/devices/system/cpu/cpufreq/policy0/scaling_governor
     chmod 0660 /sys/devices/system/cpu/cpufreq/policy0/scaling_governor
-    chown system system /sys/devices/system/cpu/cpufreq/policy4/scaling_governor
-    chmod 0660 /sys/devices/system/cpu/cpufreq/policy4/scaling_governor
+    chown system system /sys/devices/system/cpu/cpufreq/policy6/scaling_governor
+    chmod 0660 /sys/devices/system/cpu/cpufreq/policy6/scaling_governor
     chown root   system /sys/kernel/debug/binder/transaction_log_enable
     chown root   system /sys/kernel/debug/binder/perf_evalue
     chown system system /sys/devices/system/cpu/rq-stats/htasks_thresh
@@ -807,14 +790,19 @@ on property:vold.decrypt=trigger_shutdown_framework
 
 on property:sys.boot_completed=1
     write /dev/sys/block/by-name/rootdisk/queue/iostats 1
-    write /dev/sys/block/by-name/rootdisk/queue/read_ahead_kb 512
+    write /dev/sys/block/by-name/rootdisk/queue/read_ahead_kb 128
     write /dev/sys/block/by-name/rootdisk/queue/nr_requests 128
+    write /dev/sys/block/by-name/rootdisk/queue/wbt_lat_usec 2000
     write /sys/block/dm-0/queue/read_ahead_kb 128
     write /sys/block/dm-1/queue/read_ahead_kb 128
     write /sys/block/dm-2/queue/read_ahead_kb 128
     write /sys/block/dm-3/queue/read_ahead_kb 128
     write /sys/block/dm-4/queue/read_ahead_kb 128
     write /sys/block/dm-5/queue/read_ahead_kb 128
+    write /sys/kernel/rcu_expedited 0
+    write /sys/kernel/mm/lru_gen/min_ttl_ms 1000
+    write /sys/kernel/mm/transparent_hugepage/hugepages-64kB/enabled madvise
+    write /dev/cpuset/restricted/cpus 0-3
 
 #service dpfd /vendor/bin/dpfd
 #	user root

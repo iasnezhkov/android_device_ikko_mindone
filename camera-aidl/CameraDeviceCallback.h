@@ -5,6 +5,7 @@
 
 #pragma once
 #include "MaximumResolution.h"
+#include "OisControl.h"
 #include "StreamConvert.h"
 #include <aidl/android/hardware/camera/device/ICameraDeviceCallback.h>
 #include <android/hardware/camera/device/3.5/ICameraDeviceCallback.h>
@@ -33,6 +34,7 @@ struct MetadataQueues {
     std::unique_ptr<HidlQueue> backend;
     std::mutex requestMutex, resultMutex;
     PixelModes pixelModes;
+    OisModes oisModes;
 };
 std::shared_ptr<MetadataQueues> getMetadataQueues(
         const ::android::sp<hd::V3_5::ICameraDeviceCallback>& callback);

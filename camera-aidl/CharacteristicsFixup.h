@@ -10,6 +10,6 @@
 
 namespace mindone::camera {
 
-bool fixCharacteristics(std::vector<uint8_t>* metadata, bool maximumResolution);
+bool fixCharacteristics(std::vector<uint8_t>* metadata, bool maximumResolution, bool ois);
 
 }

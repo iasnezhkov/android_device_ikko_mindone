@@ -54,6 +54,7 @@ class CameraDeviceSession : public ad::BnCameraDeviceSession {
           mHold(std::move(hold)), mReopen(std::move(reopen)),
           mRetry(mHold && mHold->handover() && mReopen) {}
     ~CameraDeviceSession() override {
+        mQueues->oisModes.park();
         if (!mClosed && mBackendOpen) mBackend->close();
     }
     template <class T> bool probe(::android::sp<T>* target) {
@@ -74,6 +75,7 @@ class CameraDeviceSession : public ad::BnCameraDeviceSession {
         return mQueues->request.isValid() && mQueues->result.isValid() && probeAll();
     }
     ScopedAStatus close() override {
+        mQueues->oisModes.park();
         bool closed = !mBackendOpen || mBackend->close().isOk();
         if (closed) {
             std::lock_guard<std::mutex> lock(mQueues->resultMutex);
@@ -228,6 +230,10 @@ class CameraDeviceSession : public ad::BnCameraDeviceSession {
         if (value == hc::Status::OK && !validMetadata(metadata->metadata)) {
             value = hc::Status::INTERNAL_ERROR;
         }
+        if (result.isOk() && value == hc::Status::OK && mQueues->oisModes.enabled() &&
+            !mQueues->oisModes.setDefaultRequest(type, &metadata->metadata)) {
+            value = hc::Status::INTERNAL_ERROR;
+        }
         return status(result.isOk() ? value : hc::Status::INTERNAL_ERROR);
     }
     ScopedAStatus flush() override {
@@ -333,15 +339,20 @@ class CameraDeviceSession : public ad::BnCameraDeviceSession {
             }
         }
         auto& pixelModes = mQueues->pixelModes;
+        auto& oisModes = mQueues->oisModes;
         std::vector<uint32_t> frames;
-        if (pixelModes.enabled()) {
+        if (pixelModes.enabled() || oisModes.enabled()) {
             std::vector<std::vector<uint8_t>> settings(full.size());
             for (size_t i = 0; i < full.size(); ++i) {
                 const auto& source = full[i].v3_4.v3_2.settings;
                 settings[i].assign(source.begin(), source.end());
                 frames.push_back(full[i].v3_4.v3_2.frameNumber);
             }
-            if (!pixelModes.mapRequests(frames, &settings)) {
+            if (pixelModes.enabled() && !pixelModes.mapRequests(frames, &settings)) {
+                return status(hc::Status::ILLEGAL_ARGUMENT);
+            }
+            if (oisModes.enabled() && !oisModes.mapRequests(frames, &settings)) {
+                if (pixelModes.enabled()) pixelModes.keep(frames, 0);
                 return status(hc::Status::ILLEGAL_ARGUMENT);
             }
             for (size_t i = 0; i < full.size(); ++i) full[i].v3_4.v3_2.settings = settings[i];
@@ -367,8 +378,10 @@ class CameraDeviceSession : public ad::BnCameraDeviceSession {
             result = mBackend->processCaptureRequest(converted, removals, receive);
         }
         if (!frames.empty()) {
-            pixelModes.keep(frames, result.isOk() && value == hc::Status::OK ?
-                    std::min<size_t>(static_cast<size_t>(*processed), frames.size()) : 0);
+            const size_t accepted = result.isOk() && value == hc::Status::OK ?
+                    std::min<size_t>(static_cast<size_t>(*processed), frames.size()) : 0;
+            if (pixelModes.enabled()) pixelModes.keep(frames, accepted);
+            if (oisModes.enabled()) oisModes.keep(frames, accepted);
         }
         return status(result.isOk() ? value : hc::Status::INTERNAL_ERROR);
     }

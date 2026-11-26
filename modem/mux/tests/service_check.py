@@ -212,11 +212,11 @@ def main():
                     library("runtime", root / "runtime.rs", dependencies[:2])
                     library("platform", root / "platform.rs", dependencies[:4])
             original = (root / "properties.c").read_text()
-            old = "(property == 6 && value != 1)"
+            old = "(property >= 6 && value != 1)"
             if original.count(old) != 1:
                 raise ValueError("Expected one property whitelist mutation site")
             mutated = build / "properties.c"
-            mutated.write_text(original.replace(old, "(0 && property == 6 && value != 1)", 1))
+            mutated.write_text(original.replace(old, "(0 && property >= 6 && value != 1)", 1))
             probe = build / "property-whitelist-mutant"
             execute([args.cc, *flags, "-D__ANDROID__", "-I", str(header.parent.parent), str(mutated),
                      str(root / "tests/property_probe.c"), str(root / "tests/property_backend.c"), "-o", str(probe)])
@@ -229,7 +229,7 @@ def main():
         result = {
             "status": "pass", "source_sha256": before, "input_hashes_unchanged": True,
             "actual_c_trace_controls": len(traces), "actual_c_function_sha256": {name: hashlib.sha256(source_function(c_source, name).encode()).hexdigest() for name in functions},
-            "c_traces": traces, "service_unit_tests": 11, "property_pairs_allowed": 9, "property_pairs_rejected": 29,
+            "c_traces": traces, "service_unit_tests": 11, "property_pairs_allowed": 10, "property_pairs_rejected": 28,
             "fault_controls": mutations, "owned_process_groups": groups,
             "limits": [
                 "Actual private host PTYs exercise the real Driver lifecycle. Startup read/write and mux DeviceReset use controlled UnixStream endpoints and the actual Runtime; no modem errno or reset was induced.",

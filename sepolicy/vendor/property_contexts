@@ -23,3 +23,4 @@ persist.vendor.camera.flip_exclusive u:object_r:vendor_mindone_camera_prop:s0 ex
 persist.vendor.camera.gyro_shim u:object_r:vendor_mindone_camera_prop:s0 exact bool
 persist.vendor.camera.hfps60 u:object_r:vendor_mindone_camera_prop:s0 exact bool
 persist.vendor.camera.maxres u:object_r:vendor_mindone_camera_prop:s0 exact int
+persist.vendor.camera.ois u:object_r:vendor_mindone_camera_prop:s0 exact bool

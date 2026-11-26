@@ -19,7 +19,7 @@
 ## 🧬 Why this one is unusual
 
 The device shipped with a Linux 5.10 vendor kernel. The companion kernel project ports
-its device support to Google's **android17-6.18-2026-09_r13 GKI prebuilt**, CI **16831611**.
+its device support to Google's **android17-6.18-2026-09_r15 GKI prebuilt**, CI **16990439**.
 The core kernel is Google's prebuilt; device drivers are loadable vendor modules built
 through Kleaf, with device DTB/DTBO outputs. Device code is not added to the GKI core.
 
@@ -102,7 +102,7 @@ their absent RXFILTER support and the stock firmware patch. Do not substitute ar
 
 Build device modules and DTB/DTBO in the companion kernel repository on
 `android17-6.18`, following the build guide in that repository's documentation.
-Use the r13 core image, its exact GKI modules and metadata, and the device modules built
+Use the r15 core image, its exact GKI modules and metadata, and the device modules built
 against that base as one reviewed set. Do not mix outputs from different candidates.
 
 Populate the ignored `kernel/` build inputs before building the ROM:
@@ -119,12 +119,13 @@ kernel/modules.load.system
 kernel/system_dlkm/flatten/lib/modules/*.ko
 ```
 
-The current companion kernel requests 21 first-stage and 193 vendor-DLKM modules,
-a disjoint combined set of 214; recovery requests 109. This device stages 21 entries in
-`kernel/modules.load.ramdisk`, 192 in `kernel/modules.load`, 109 in
+The current companion kernel requests 21 first-stage and 192 vendor-DLKM modules,
+a disjoint combined set of 213; recovery requests 107. This device stages 21 entries in
+`kernel/modules.load.ramdisk`, 191 in `kernel/modules.load`, 107 in
 `kernel/modules.load.recovery` and 24 in `kernel/modules.load.system`. The vendor count
 differs because `libarc4` is staged in `system_dlkm` instead. The unused `subaf`,
-`sub2af`, `main2af` and `main3af` wrappers are absent; `mainaf` remains.
+`sub2af`, `main2af`, `main3af`, `spi_mt65xx` and `clk_bringup` modules are absent;
+`mainaf` and `ois_mindone` remain.
 Counts exclude blank/comment lines and describe requested loading.
 
 The load lists select the actual staged modules. Keep exactly one `.dtb` in `kernel/dtb/`;
@@ -152,13 +153,14 @@ installed system before it can be installed as an update.
 |---|---|
 | Audio | AIDL primary service over the AFE/tinyalsa backend, with media, cellular earpiece/speaker, headset microphone and modem Bluetooth SCO routing; restarts together with audioserver; codec gains and the receiver mux use the upstream mt6358 control names of the paired kernel |
 | Video | In-tree V4L2 Codec2 with AVC/HEVC encoding and AVC, HEVC, VP8, VP9, MPEG-4 and H.263 decoding |
-| Camera | AIDL frontend over the stock camera backend, default sensor pixel mode and separate stock MDP/gralloc libraries beside donor graphics; recordable RGBA8888 EGL configs for CameraX video processing; camera IDs 0 and 1 are the one flip IMX766 with its DW9800W autofocus actuator, and the provider hands the sensor from one ID to the other; maximum resolution, 60 fps and flip exclusivity are properties, off by default |
+| Camera | AIDL frontend over the stock camera backend, default sensor pixel mode and separate stock MDP/gralloc libraries beside donor graphics; recordable RGBA8888 EGL configs for CameraX video processing; camera IDs 0 and 1 share the flip IMX766 with its DW9800W autofocus actuator and 0x5A30 OIS sysfs control, serialized through a single-thread provider callback queue; maximum resolution, 60 fps and flip exclusivity are properties, off by default |
 | GNSS | AIDL extensions and session-controlled receiver power |
 | Display | 96 Hz default and VFP-only 60 Hz idle mode, SurfaceFlinger idle/touch timers, LiveDisplay calibration and Night Light integration; refresh rate capped to 60 Hz from thermal status SEVERE |
 | Radio / IMS / secure element | Selected donor AIDL radio, 64-bit IMS, Wi-Fi-calling helper and radio-backed AIDL secure-element service; a phone's radio powers off after 30 s without a subscription, never during calls or emergency modes |
+| Wi-Fi | MediaTek gen4m private commands, `wifi_set_dtim_config` HAL wrapper patch, and `wens`-signed Linux `wireless-regdb` 2026.09.03 in `/vendor/firmware` with cfg80211 keyring verification |
 | Tethering offload | AIDL service with native MDDP connection-mode support; USB tethering uses NCM |
 | USB-C and charging control | Type-C and USB PD through the kernel's TCPM, whose power supply the health HAL reads like the other chargers; LineageOS Health service with charging-control toggle and bypass through the charger's charge-disable control |
-| Memory | zram managed by `mmd`: 25 % of RAM, LZ4 with zstd recompression |
+| Memory, scheduling & storage | zram managed by `mmd` (25 % of RAM, LZ4 with zstd recompression), MGLRU (`min_ttl_ms=1000`), 64 KiB mTHP, post-boot EAS `uclamp` / `cpu.shares` and `schedutil` rate limits, F2FS `gc_merge`/`checkpoint_merge`/`age_extent_cache`, and Virtual A/B `io_uring` |
 | Sound trigger | Backend over the kernel voice-wakeup interface |
 | Vibrator | In-tree AIDL service for the AW862xx haptics driver |
 | Own radio HAL crates | Rust AT transport, registration/signal/SIM state, network/modem handlers, shared core and event-driven reactor beside the selected donor radio stack |
@@ -212,7 +214,7 @@ AVB coverage and exact readback lengths before writing; never overwrite a mounte
 ## 🧩 What else you need
 
 The companion kernel source branch is `android17-6.18`. It supplies the device DTB/DTBO
-and loadable drivers over Google's r13 GKI core. Firmware, proprietary userspace and
+and loadable drivers over Google's r15 GKI core. Firmware, proprietary userspace and
 kernel build products must be obtained or built separately; none belong in this Git tree.
 
 ## 🔎 Useful beyond this phone

@@ -8,7 +8,6 @@ clk_mt6789_vcodec.ko
 clk_mt6789_impen.ko
 clk_mt6789_mfgcfg.ko
 mtk-pm-domains.ko
-clk_bringup.ko
 mtk_dramc.ko
 mtk_dvfsrc.ko
 mtk_dvfsrc_regulator.ko
@@ -48,7 +47,6 @@ mt6789_dcm.ko
 mtk_dcm.ko
 tkcore.ko
 tkcore_drv.ko
-spi_mt65xx.ko
 adapter_class.ko
 charger_class.ko
 mtk_charger_algorithm_class.ko
@@ -104,7 +102,7 @@ mtk_pbm.ko
 mtk_mdpm.ko
 reboot-mode.ko
 syscon-reboot-mode.ko
-soc_temp_lvts.ko
+lvts_thermal.ko
 pmic_temp.ko
 thermal-generic-adc.ko
 gz_trusty_mod.ko
@@ -172,6 +170,7 @@ wlan_drv_gen4m_6789.ko
 mcupm.ko
 fhctl.ko
 mainaf.ko
+ois_mindone.ko
 md_cooling_all.ko
 mtk_cm_ipi.ko
 mtk_vcodec_dec_v1.ko

@@ -5,6 +5,7 @@
 
 #include "CameraProvider.h"
 
+#include "CallbackQueue.h"
 #include "CameraDevice.h"
 #include "FlipWatcher.h"
 #include "StreamConvert.h"
@@ -98,9 +99,9 @@ class ProviderCallback : public hp::V2_6::ICameraProviderCallback {
   public:
     ProviderCallback(std::shared_ptr<ap::ICameraProviderCallback> callback,
                      std::shared_ptr<NameMap> names, std::shared_ptr<SensorOwner> sensor,
-                     std::shared_ptr<FlipLinks> links)
+                     std::shared_ptr<FlipLinks> links, std::shared_ptr<CallbackQueue> queue)
         : mCallback(std::move(callback)), mNames(std::move(names)), mSensor(std::move(sensor)),
-          mLinks(std::move(links)) {}
+          mLinks(std::move(links)), mQueue(std::move(queue)) {}
 
     Return<void> cameraDeviceStatusChange(const hidl_string& name,
                                          hc::CameraDeviceStatus value) override {
@@ -110,8 +111,10 @@ class ProviderCallback : public hp::V2_6::ICameraProviderCallback {
                   converted.c_str(), static_cast<int>(value));
             return Void();
         }
-        check(mCallback->cameraDeviceStatusChange(converted,
-                                                 static_cast<ac::CameraDeviceStatus>(value)));
+        mQueue->post([callback = mCallback, converted, value] {
+            check(callback->cameraDeviceStatusChange(converted,
+                                                    static_cast<ac::CameraDeviceStatus>(value)));
+        });
         return Void();
     }
 
@@ -123,15 +126,20 @@ class ProviderCallback : public hp::V2_6::ICameraProviderCallback {
             mLinks->torch[converted] = value;
         }
         if (mSensor->absent(converted)) return Void();
-        check(mCallback->torchModeStatusChange(converted,
-                                              static_cast<ac::TorchModeStatus>(value)));
+        mQueue->post([callback = mCallback, converted, value] {
+            check(callback->torchModeStatusChange(converted,
+                                                 static_cast<ac::TorchModeStatus>(value)));
+        });
         return Void();
     }
 
     Return<void> physicalCameraDeviceStatusChange(const hidl_string& name,
             const hidl_string& physicalName, hc::CameraDeviceStatus value) override {
-        check(mCallback->physicalCameraDeviceStatusChange(mNames->remember(name.c_str()),
-                mNames->remember(physicalName.c_str()), static_cast<ac::CameraDeviceStatus>(value)));
+        mQueue->post([callback = mCallback, camera = mNames->remember(name.c_str()),
+                      physical = mNames->remember(physicalName.c_str()), value] {
+            check(callback->physicalCameraDeviceStatusChange(camera, physical,
+                                                            static_cast<ac::CameraDeviceStatus>(value)));
+        });
         return Void();
     }
 
@@ -144,6 +152,7 @@ class ProviderCallback : public hp::V2_6::ICameraProviderCallback {
     const std::shared_ptr<NameMap> mNames;
     const std::shared_ptr<SensorOwner> mSensor;
     const std::shared_ptr<FlipLinks> mLinks;
+    const std::shared_ptr<CallbackQueue> mQueue;
 };
 
 static void torchOff(const ::android::sp<hp::V2_6::ICameraProvider>& backend,
@@ -171,7 +180,7 @@ static void torchOff(const ::android::sp<hp::V2_6::ICameraProvider>& backend,
 static std::shared_ptr<FlipWatcher> createFlip(
         const ::android::sp<hp::V2_6::ICameraProvider>& backend,
         const std::shared_ptr<NameMap>& names, const std::shared_ptr<SensorOwner>& sensor,
-        const std::shared_ptr<FlipLinks>& links) {
+        const std::shared_ptr<FlipLinks>& links, const std::shared_ptr<CallbackQueue>& queue) {
     if (!::android::base::GetBoolProperty(kFlipSwitch, false)) return nullptr;
     FlipWatcher::Hooks hooks;
     hooks.setAbsent = [sensor](const std::set<std::string>& absent) {
@@ -180,30 +189,34 @@ static std::shared_ptr<FlipWatcher> createFlip(
     hooks.leave = [backend, names, links](const std::string& name) {
         torchOff(backend, names, links, name);
     };
-    hooks.report = [links](const std::string& name, bool present) {
+    hooks.report = [links, queue](const std::string& name, bool present) {
         std::shared_ptr<ap::ICameraProviderCallback> callback;
         {
             std::lock_guard<std::mutex> lock(links->mutex);
             callback = links->callback;
         }
         if (!callback) return false;
-        auto result = callback->cameraDeviceStatusChange(name, present
-                ? ac::CameraDeviceStatus::PRESENT : ac::CameraDeviceStatus::NOT_PRESENT);
-        if (!result.isOk()) ALOGW("%s: presence report failed: %s", name.c_str(),
-                                 result.getDescription().c_str());
-        return result.isOk();
+        queue->post([callback, name, present] {
+            auto result = callback->cameraDeviceStatusChange(name, present
+                    ? ac::CameraDeviceStatus::PRESENT : ac::CameraDeviceStatus::NOT_PRESENT);
+            if (!result.isOk()) ALOGW("%s: presence report failed: %s", name.c_str(),
+                                     result.getDescription().c_str());
+        });
+        return true;
     };
     return FlipWatcher::create(kHallPosition, kInputDir, std::move(hooks));
 }
 
 CameraProvider::CameraProvider(const ::android::sp<hp::V2_6::ICameraProvider>& backend,
-                               const MaximumResolution& maximumResolution)
+                               const MaximumResolution& maximumResolution, bool ois)
     : mBackend(backend),
       mNames(std::make_shared<DeviceNames>()),
       mSensor(std::make_shared<SensorOwner>()),
       mLinks(std::make_shared<FlipLinks>()),
-      mFlip(createFlip(mBackend, mNames, mSensor, mLinks)),
-      mMaximumResolution(maximumResolution) {}
+      mQueue(CallbackQueue::create()),
+      mFlip(createFlip(mBackend, mNames, mSensor, mLinks, mQueue)),
+      mMaximumResolution(maximumResolution),
+      mOis(ois) {}
 
 ScopedAStatus CameraProvider::setCallback(
         const std::shared_ptr<ap::ICameraProviderCallback>& callback) {
@@ -213,7 +226,7 @@ ScopedAStatus CameraProvider::setCallback(
         mLinks->callback = callback;
     }
     auto result = mBackend->setCallback(
-            new ProviderCallback(callback, mNames, mSensor, mFlip ? mLinks : nullptr));
+            new ProviderCallback(callback, mNames, mSensor, mFlip ? mLinks : nullptr, mQueue));
     if (!result.isOk()) return status(hc::Status::INTERNAL_ERROR);
     if (mFlip && static_cast<hc::Status>(result) == hc::Status::OK) mFlip->attach();
     return status(result);
@@ -272,7 +285,7 @@ ScopedAStatus CameraProvider::getCameraDeviceInterface(
     if (!result.isOk()) return status(hc::Status::INTERNAL_ERROR);
     if (value != hc::Status::OK) return status(value);
     if (!backend) return status(hc::Status::INTERNAL_ERROR);
-    return createCameraDevice(backend, name, mNames, mSensor, mMaximumResolution, device);
+    return createCameraDevice(backend, name, mNames, mSensor, mMaximumResolution, mOis, device);
 }
 
 ScopedAStatus CameraProvider::notifyDeviceStateChange(int64_t state) {

@@ -69,7 +69,7 @@ struct audio_port_config {
 PRODUCTION_ENUMS
 PRODUCTION_STRUCTS
 
-static unsigned int checks, pcm_opens, pcm_closes, modem_calls, freed;
+static unsigned int checks, pcm_opens, pcm_closes, crossbar_applies, crossbar_teardowns, modem_calls, freed;
 static struct pcm opened_pcm;
 static struct mindone_audio_device *change_on_open;
 static struct mindone_stream_out *closing_stream;
@@ -96,7 +96,9 @@ static int pcm_is_ready(const struct pcm *pcm) { return pcm->alive; }
 static const char *pcm_get_error(const struct pcm *pcm) { (void)pcm; return "fake"; }
 static struct pcm *pcm_open(unsigned int card, unsigned int device, unsigned int flags, const struct pcm_config *config)
 {
-    (void)card; (void)device; (void)flags; (void)config;
+    (void)card; (void)flags; (void)config;
+    if (device != 46)
+        check(crossbar_applies == crossbar_teardowns + 1, "crossbar enabled before non-SCO PCM open");
     pcm_opens++;
     opened_pcm.alive = 1;
     opened_pcm.config = *config;
@@ -106,13 +108,17 @@ static struct pcm *pcm_open(unsigned int card, unsigned int device, unsigned int
 }
 static void apply_dl_crossbar(struct mindone_audio_device *adev, struct mindone_stream_out *out)
 {
-    adev->route->effects++;
-    out->crossbar_on = true;
+    if (!out->crossbar_on) {
+        adev->route->effects++;
+        crossbar_applies++;
+        out->crossbar_on = true;
+    }
 }
 static void teardown_dl_crossbar(struct mindone_audio_device *adev, struct mindone_stream_out *out)
 {
     if (out->crossbar_on) {
         adev->route->effects++;
+        crossbar_teardowns++;
         out->crossbar_on = false;
     }
 }
@@ -256,7 +262,7 @@ static void init(struct mindone_audio_device *device, struct mindone_stream_out 
     pthread_mutex_init(&out->lock, NULL);
     device->outs = out;
     device->out_ep_users[OUT_DEVICE_SPEAKER] = 1;
-    pcm_opens = pcm_closes = modem_calls = freed = 0;
+    pcm_opens = pcm_closes = crossbar_applies = crossbar_teardowns = modem_calls = freed = 0;
     change_on_open = NULL;
 }
 
@@ -311,20 +317,29 @@ static void staged_start(void)
     device.out_ep_users[OUT_DEVICE_SPEAKER] = INT_MAX;
     struct saved before = save(&device, &out);
     check(start_output_stream(&out) == -EOVERFLOW, "start planning error propagates");
+    before.effects += 2;
     unchanged(&before, &device, &out, "start rejection preserves config and accepted state");
-    check(pcm_opens == 1 && pcm_closes == 1 && !opened_pcm.alive, "rejected staged PCM is closed");
+    check(pcm_opens == 1 && pcm_closes == 1 && !opened_pcm.alive &&
+          crossbar_applies == 1 && crossbar_teardowns == 1,
+          "rejected staged PCM and crossbar are cleaned up");
     device.out_ep_users[OUT_DEVICE_SPEAKER] = 0;
     change_on_open = &device;
     check(start_output_stream(&out) == -EOVERFLOW, "post-open snapshot is revalidated");
+    before.effects += 2;
     unchanged(&before, &device, &out, "post-open rejection preserves stream state");
-    check(pcm_opens == 2 && pcm_closes == 2, "concurrent count change does not leak PCM");
+    check(pcm_opens == 2 && pcm_closes == 2 &&
+          crossbar_applies == 2 && crossbar_teardowns == 2,
+          "concurrent count change does not leak PCM or crossbar");
     change_on_open = NULL;
     device.out_ep_users[OUT_DEVICE_SPEAKER] = 0;
     check(start_output_stream(&out) == 0, "valid start accepted");
     check(out.pcm == &opened_pcm && out.hw_config.rate == 48000 && !out.reopen_pending &&
           !out.standby && out.routed_device == OUT_DEVICE_SPEAKER && device.active_out == &out &&
-          device.out_ep_users[OUT_DEVICE_SPEAKER] == 1, "valid start publishes complete state");
+          device.out_ep_users[OUT_DEVICE_SPEAKER] == 1 &&
+          crossbar_applies == 3 && crossbar_teardowns == 2 && out.crossbar_on,
+          "valid start publishes complete state");
     check(do_out_standby(&out) == 0, "valid stream cleans up");
+    check(crossbar_teardowns == 3 && !out.crossbar_on, "standby tears down crossbar");
     finish(&device, &out);
 }
 

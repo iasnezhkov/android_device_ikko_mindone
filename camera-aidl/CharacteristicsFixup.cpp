@@ -314,9 +314,23 @@ bool fixHighFps(camera_metadata_t* metadata) {
            store(metadata, ANDROID_REQUEST_AVAILABLE_SESSION_KEYS, keys.data(), keys.size());
 }
 
+bool fixOis(camera_metadata_t* metadata) {
+    const uint8_t modes[] = {
+            ANDROID_LENS_OPTICAL_STABILIZATION_MODE_OFF,
+            ANDROID_LENS_OPTICAL_STABILIZATION_MODE_ON,
+    };
+    return store(metadata, ANDROID_LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION, modes, 2) &&
+           appendValue<int32_t>(metadata, ANDROID_REQUEST_AVAILABLE_CHARACTERISTICS_KEYS,
+                                ANDROID_LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) &&
+           appendValue<int32_t>(metadata, ANDROID_REQUEST_AVAILABLE_REQUEST_KEYS,
+                                ANDROID_LENS_OPTICAL_STABILIZATION_MODE) &&
+           appendValue<int32_t>(metadata, ANDROID_REQUEST_AVAILABLE_RESULT_KEYS,
+                                ANDROID_LENS_OPTICAL_STABILIZATION_MODE);
 }
 
-bool fixCharacteristics(std::vector<uint8_t>* bytes, bool maximumResolution) {
+}
+
+bool fixCharacteristics(std::vector<uint8_t>* bytes, bool maximumResolution, bool ois) {
     return editMetadata(bytes, kExtraEntries, kExtraData, [&](camera_metadata_t* metadata) {
         MaximumResolutionTables tables;
         const bool addTables = maximumResolution && findMaximumResolution(metadata, &tables);
@@ -329,7 +343,7 @@ bool fixCharacteristics(std::vector<uint8_t>* bytes, bool maximumResolution) {
                             &Duration::stall, false) &&
                store(metadata, ANDROID_SENSOR_READOUT_TIMESTAMP, &readout, 1) &&
                (!addTables || addMaximumResolution(metadata, tables)) && fixKeyLists(metadata) &&
-               (!highFpsEnabled() || fixHighFps(metadata));
+               (!highFpsEnabled() || fixHighFps(metadata)) && (!ois || fixOis(metadata));
     });
 }
 
