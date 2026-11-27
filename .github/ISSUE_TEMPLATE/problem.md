@@ -7,18 +7,21 @@ about: Something does not build, flash, or work
 - [ ] iKKO MindOne
 - [ ] another MT6789 / MT8781 device (which one?)
 
-**Versions**
-- LineageOS branch:
-- Kernel this tree was paired with:
+**Build and environment**
+- LineageOS build (`getprop ro.lineage.version`):
+- Active slot (`getprop ro.boot.slot_suffix`):
+- Kernel (`uname -r`):
+- Stock firmware version prior to installation (e.g. V13 / V14):
+- GApps installed (none / MindTheGapps 17.0.0 / other, exact filename):
 
-**What you ran**
+**Steps to reproduce**
 ```
-(exact commands)
+(exact commands or UI steps)
 ```
 
 **What happened**
 ```
-(actual output; for a device that does not boot, include dmesg and logcat -b all -d)
+(actual output; attach `adb bugreport`, or for boot issues `dmesg` and `logcat -b all -d`)
 ```
 
 **What you expected**

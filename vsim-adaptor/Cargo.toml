@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "mindone-vsim-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mindone_vsim_core"
+path = "src/lib.rs"

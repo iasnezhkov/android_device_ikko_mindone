@@ -1,11 +1,18 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
 
-name: tree hygiene
-
+name: CI
 
 on:
   push:
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   hygiene:
@@ -47,7 +54,7 @@ jobs:
       - name: No absolute paths from a developer machine
         run: |
           set -eu
-          if git grep -nIE '/(home|Users)/[^ /]+/' -- . ':!proprietary-files.txt' ':!*.patch'; then
+          if git grep -nIE '/(home|Users|Volumes)/[^ /]+/' -- . ':!proprietary-files.txt' ':!*.patch'; then
             echo "absolute paths from someone's machine do not belong in a published tree"
             exit 1
           fi
@@ -65,7 +72,7 @@ jobs:
           set -eu
           fail=0
           for ref in $(git grep -hoE 'docs/[A-Za-z0-9_-]+\.md' | sort -u); do
-            [ -f "$ref" ] || { echo "comment points at a file this repository does not contain: $ref"; fail=1; }
+            [ -f "$ref" ] || { echo "reference points at a file this repository does not contain: $ref"; fail=1; }
           done
           [ "$fail" = 0 ] || { echo "use a bare marker, not a path -- see CONTRIBUTING.md"; exit 1; }
 
@@ -74,11 +81,94 @@ jobs:
           set -eu
           fail=0
           for f in $(git ls-files '*.xml'); do
-            python3 -c "import sys,xml.etree.ElementTree as E; E.parse(sys.argv[1])" "$f" || {
-              echo "not well-formed: $f"; fail=1; }
+            python3 -B -c "import sys,xml.etree.ElementTree as E; E.parse(sys.argv[1])" "$f" || {
+              echo "not well-formed XML: $f"; fail=1; }
           done
           [ "$fail" = 0 ] || exit 1
 
-      - name: Python tools parse
+      - name: Every JSON parses
         run: |
-          for f in *.py; do python3 -m py_compile "$f"; done
+          set -eu
+          fail=0
+          for f in $(git ls-files '*.json'); do
+            python3 -B -c "import json,sys; json.load(open(sys.argv[1], encoding='utf-8'))" "$f" || {
+              echo "not valid JSON: $f"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Validate Updater JSON v2 feed when present
+        if: hashFiles('updater/mindone.json') != ''
+        run: |
+          python3 -B - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          data = json.loads(Path("updater/mindone.json").read_text(encoding="utf-8"))
+          assert isinstance(data, list) and data, "updater/mindone.json must be a non-empty JSON array"
+          for entry in data:
+              assert isinstance(entry.get("datetime"), int) and entry["datetime"] > 0
+              assert isinstance(entry.get("type"), str) and entry["type"]
+              assert isinstance(entry.get("version"), str) and entry["version"]
+              files = entry.get("files")
+              assert isinstance(files, list) and files, "entry must list at least one file"
+              for item in files:
+                  assert isinstance(item.get("filename"), str) and item["filename"].endswith(".zip")
+                  assert re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))
+                  assert isinstance(item.get("size"), int) and item["size"] > 0
+                  assert isinstance(item.get("url"), str) and item["url"].startswith("https://")
+          print(f"PASS updater/mindone.json ({len(data)} entries)")
+          PY
+
+      - name: Shell scripts syntax check
+        run: |
+          set -eu
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f"
+          done
+
+      - name: Python scripts parse
+        run: |
+          set -eu
+          for f in $(git ls-files '*.py'); do
+            python3 -B -m py_compile "$f"
+          done
+
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust crate unit tests
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path gauge/Cargo.toml --target-dir "$RUNNER_TEMP/cargo-gauge"
+          cargo test --manifest-path vsim-adaptor/Cargo.toml --target-dir "$RUNNER_TEMP/cargo-vsim"
+
+      - name: Camera color unit tests
+        run: |
+          set -euo pipefail
+          clang++ -std=c++20 -O2 -Wall -Wextra -Icamcolor camcolor/color.cpp camcolor/color_test.cpp -o "$RUNNER_TEMP/color_test"
+          "$RUNNER_TEMP/color_test"
+
+      - name: Audio, fingerprint, sensors, and VoLTE host checks
+        run: |
+          set -euo pipefail
+          python3 -B audio-hf/tests/tracking_check.py --output "$RUNNER_TEMP/audio-tracking"
+          python3 -B bridges/fingerprint/tests/lockout-persistence-check.py
+          python3 -B sensors-hf/tests/batch_check.py
+          python3 -B sensors-hf/tests/state_check.py
+          python3 -B volte_md_status/tests/check.py
+          python3 -B volte_md_status/tests/android_check_test.py
+
+      - name: Modem mux and radio host checks
+        run: |
+          set -euo pipefail
+          python3 -B modem/mux/tests/check.py
+          for t in chat core_api daemon mcc namespace platform runtime session transport; do
+            python3 -B "modem/mux/tests/${t}_check.py"
+          done
+          python3 -B modem/mux/tests/service_check.py --output "$RUNNER_TEMP/mux-service"
+          for c in at core ffi modem network runtime state; do
+            python3 -B "modem/radio/${c}/tests/check.py"
+          done

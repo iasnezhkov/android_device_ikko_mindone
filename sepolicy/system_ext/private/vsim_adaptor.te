@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+type vsim_adaptor_exec, system_file_type, exec_type, file_type;
+typeattribute vsim_adaptor coredomain;
+init_daemon_domain(vsim_adaptor)
+binder_use(vsim_adaptor)
+hal_client_domain(vsim_adaptor, hal_telephony)
+
+allow vsim_adaptor self:unix_stream_socket create_stream_socket_perms;
+allow radio vsim_adaptor:unix_stream_socket connectto;
+allow priv_app vsim_adaptor:unix_stream_socket connectto;
+allow untrusted_app_all vsim_adaptor:unix_stream_socket connectto;
+
+get_prop(vsim_adaptor, system_mindone_vsim_prop)
+
+userdebug_or_eng(`
+  allow shell vsim_adaptor:unix_stream_socket connectto;
+  allow su vsim_adaptor:unix_stream_socket connectto;
+  set_prop(shell, system_mindone_vsim_prop)
+')

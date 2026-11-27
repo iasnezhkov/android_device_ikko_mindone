@@ -35,9 +35,8 @@ Notable device-specific parts:
   modem acknowledgements, and opens both 48 kHz hostless PCM directions before starting them.
   Shared receiver ownership is preserved when media and call endpoints change. This requires
   the matching kernel USIP support and ADDA playback-enable fix: updating the HAL alone does
-  not fix a kernel that clears playback enable during a route change. The 11 October cellular
-  call passed earpiece/speaker switching. Bluetooth SCO media, the SCO headset
-  microphone and calls over SCO use the modem speech path with the Bluetooth endpoint
+  not fix a kernel that clears playback enable during a route change. Bluetooth SCO media, the
+  SCO headset microphone and calls over SCO use the modem speech path with the Bluetooth endpoint
   selected.
 
 ## Sensors HAL — `sensors-hf/`
@@ -91,9 +90,8 @@ fallback when MDP is unavailable; HEVC and MPEG-4/H.263 decode; an HEVC encoder;
 (P010) output down-converted to 8-bit for apps that request plain YUV.
 `ro.vendor.v4l2_codec2.*` properties advertise exactly the codecs this device supports; `media.c2.hal.selection=aidl` selects the AIDL-side HAL.
 
-The latest encoder patches honor mapped YUV planes and negotiated input layouts, and return
-queued work after a fatal encoder failure. Surface and flexible-YUV frame-pattern tests passed
-on the device, with unchanged decoder controls.
+The encoder honors mapped YUV planes and negotiated input layouts, and returns
+queued work after a fatal encoder failure.
 
 ## Wi-Fi — `wifi/wpa_supplicant_8_lib/` and a patch to the vendor HAL wrapper
 

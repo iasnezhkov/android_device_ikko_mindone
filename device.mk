@@ -245,7 +245,7 @@ PRODUCT_PACKAGES += \
 
 ENABLE_VENDOR_RIL_SERVICE := true
 
-PRODUCT_PACKAGES += rild-mindone
+PRODUCT_PACKAGES += rild-mindone vsim-adaptor
 
 PRODUCT_PACKAGES += \
     chipinfo \

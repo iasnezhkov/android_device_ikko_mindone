@@ -11,11 +11,16 @@
 #include <android-base/file.h>
 #include <android-base/properties.h>
 #include <log/log.h>
+#include <pthread.h>
 #include <system/camera_metadata.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <condition_variable>
+#include <cstdint>
 #include <cstring>
+#include <thread>
+#include <utility>
 
 namespace mindone::camera {
 namespace {
@@ -24,6 +29,64 @@ constexpr char kOisProperty[] = "persist.vendor.camera.ois";
 constexpr char kOisModePath[] =
         "/sys/devices/platform/soc/11eb1000.i2c/i2c-4/4-0069/mode";
 constexpr size_t kTrackedFrames = 64;
+
+class OisWriter {
+  public:
+    static OisWriter& instance() {
+        static OisWriter* writer = new OisWriter();
+        return *writer;
+    }
+
+    void submit(const std::string& mode) {
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            if (mPending.empty() && mApplied == mode) return;
+            mPending = mode;
+        }
+        mReady.notify_one();
+    }
+
+    void reset() {
+        std::lock_guard<std::mutex> lock(mMutex);
+        ++mGeneration;
+        mApplied.clear();
+    }
+
+  private:
+    OisWriter() {
+        std::thread([this] {
+            pthread_setname_np(pthread_self(), "camprov-ois");
+            run();
+        }).detach();
+    }
+
+    void run() {
+        for (;;) {
+            std::string wanted;
+            uint64_t generation = 0;
+            {
+                std::unique_lock<std::mutex> lock(mMutex);
+                mReady.wait(lock, [this] { return !mPending.empty(); });
+                wanted = std::move(mPending);
+                mPending.clear();
+                if (wanted == mApplied) continue;
+                generation = mGeneration;
+            }
+            if (!::android::base::WriteStringToFile(wanted, kOisModePath)) {
+                ALOGW("Cannot set %s to %s: %s", kOisModePath, wanted.c_str(), strerror(errno));
+                continue;
+            }
+            std::lock_guard<std::mutex> lock(mMutex);
+            if (mGeneration == generation) mApplied = wanted;
+        }
+    }
+
+    std::mutex mMutex;
+    std::condition_variable mReady;
+    std::string mPending;
+    std::string mApplied;
+    uint64_t mGeneration = 0;
+};
 
 }
 
@@ -41,6 +104,7 @@ void OisModes::configure(int32_t partialCount) {
     mApplied.clear();
     mBatch.clear();
     mFrames.clear();
+    OisWriter::instance().reset();
 }
 
 bool OisModes::enabled() {
@@ -132,10 +196,11 @@ void OisModes::forget(uint32_t frame) {
 
 void OisModes::park() {
     std::lock_guard<std::mutex> lock(mMutex);
-    if (mEnabled) applyLocked("off");
     mLast = ANDROID_LENS_OPTICAL_STABILIZATION_MODE_OFF;
+    mApplied.clear();
     mBatch.clear();
     mFrames.clear();
+    if (mEnabled) OisWriter::instance().reset();
 }
 
 void OisModes::clear() {
@@ -146,10 +211,7 @@ void OisModes::clear() {
 
 void OisModes::applyLocked(const std::string& mode) {
     if (mApplied == mode) return;
-    if (!::android::base::WriteStringToFile(mode, kOisModePath)) {
-        ALOGW("Cannot set %s to %s: %s", kOisModePath, mode.c_str(), strerror(errno));
-        return;
-    }
+    OisWriter::instance().submit(mode);
     mApplied = mode;
 }
 

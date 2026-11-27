@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+service mindone.vsim-adaptor /system_ext/bin/vsim-adaptor
+    class late_start
+    user radio
+    group radio
+    disabled
+
+on property:persist.sys.mindone.vsim.enable=1
+    start mindone.vsim-adaptor
+
+on property:persist.sys.mindone.vsim.enable=0
+    stop mindone.vsim-adaptor

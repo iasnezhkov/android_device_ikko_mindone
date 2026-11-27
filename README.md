@@ -57,8 +57,10 @@ for a complete Android checkout and outputs. Start with the `lineage-24.0` sourc
 mkdir lineage
 cd lineage
 repo init -u https://github.com/LineageOS/android.git -b lineage-24.0
-repo sync -c -j8
 git clone <device-repository-url> device/ikko/mindone
+mkdir -p .repo/local_manifests
+cp device/ikko/mindone/docs/local_manifest.xml .repo/local_manifests/mindone.xml
+repo sync -c -j8
 ```
 
 ### Obtain proprietary inputs
@@ -191,10 +193,14 @@ certificate must match the installed trust store. Install the signed package usi
 
 Virtual A/B updates use snapshots over shared logical-partition extents. Keep the
 kernel, DTB/DTBO, GKI modules, vendor modules, userspace and AVB descriptors paired.
-The full package also carries the ten stock firmware images listed in
-`proprietary-firmware.txt`; extract them from one stock firmware version. The two TEE
-partitions have different sizes, so a TEE image must fit the smaller one. A partial-OTA
-partition list cannot carry a set that also changes DTBO or `system_dlkm`.
+Community builds (`MINDONE_COMMUNITY_BUILD=true`) ship 13 ROM partitions only and omit the
+ten stock firmware images; first-time installation from stock copies the device's own
+firmware across slots via `copy-partitions-mindone.zip`. Full self-built packages
+(`MINDONE_COMMUNITY_BUILD=false`) can also carry the ten stock firmware images listed in
+`proprietary-firmware.txt` (optionally pinned via `MINDONE_FIRMWARE_SET`); the two TEE
+partitions have different sizes (5 MiB `tee_a`, 6 MiB `tee_b`), so a TEE image must fit
+the smaller one. A partial-OTA partition list cannot carry a set that also changes DTBO
+or `system_dlkm`.
 
 Before snapshot merge, a failed trial may return to the retained successful slot.
 After merge, restore an earlier build by installing a compatible signed known-good

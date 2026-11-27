@@ -16,7 +16,7 @@ is a small Keyguard patch listed at the end.
 > Confirmed on 8 September 2026 with the ROM session; the keyguard side of the same question is in
 > `KEYGUARD.md`.
 
-Originally verified against `frameworks/base` at `android15-release` (paths as of Android 15):
+Legacy reference paths from `android15-release`:
 
 - `packages/SystemUI/plugin/src/com/android/systemui/plugins/clocks/ClockProviderPlugin.kt`
 - `packages/SystemUI/customization/src/com/android/systemui/shared/clocks/ClockRegistry.kt`

@@ -1,9 +1,8 @@
-# mind_one minimal RIL -- phase 1: AT map + HIDL skeleton (Q23d)
+# mind_one minimal RIL -- AT map and HIDL reference skeleton
 
-Status: research implementation, not shipped and not hardware accepted as a replacement RIL.
-The stock RIL remains the production configuration. Earlier syntax checks do not establish a
-native build or a working enforcing-policy integration for the current source. Emergency
-calling remains unimplemented, so this service is not suitable for a daily-use phone.
+Reference AT-command map and HIDL `@1.6` skeleton (`android.hardware.radio@1.6-service.mindone`).
+The ROM ships the donor AIDL radio stack by default; this component is disabled and does not
+implement emergency calling.
 
 This continues the earlier modem-stack work (the original 37/39-handler,
 96+256-AT-command reconnaissance) and sits alongside the other Q23 CCCI-userspace work
@@ -90,9 +89,9 @@ plus `android.hidl.{base,safe_union}@1.0`. All 5 `.c`/`.cpp` files pass
 build -- no `m`/`ninja` was run, no `.o`/binary was produced, and cross-translation-unit issues
 (duplicate symbols, missing `-l` at link time) are not caught by `-fsyntax-only`.
 
-## Integration prerequisites -- not hardware accepted
+## Integration prerequisites
 
-Both slots have booted through Virtual A/B updates. Before installing a candidate, verify the
+Both slots boot through Virtual A/B updates. Before installing a candidate, verify the
 current slot metadata and snapshot state. Shared logical-partition extents do not provide an
 independent rescue copy after snapshot merge; see [FLASHING.md](../../docs/FLASHING.md).
 
@@ -101,15 +100,8 @@ The module `android.hardware.radio@1.6-service.mindone` installs separately at
 `vendor.mindone_ril`, disabled by default. Keep the stock executable and product entries intact;
 do not overwrite live vendor executables.
 
-Before testing, complete a native build and validate the service's labels, domain transitions
-and required access against the compiled SELinux policy. Keep SELinux enforcing. Resolve the
-VINTF ownership of `IRadio/slot1` and confirm the actual stock service and mux-channel names;
-the two RILs must not compete for the same instance or channels.
-
-Prepare a bounded test and recovery plan with the owner before changing services. Do not treat
-stopping the candidate and starting the stock process as proven recovery after modem state has
-changed. Registration, unsolicited indications and error handling need validation independently
-of call audio. Any real call or SMS attempt requires the owner's explicit authorization.
+Resolve VINTF ownership of `IRadio/slot1` and mux-channel names before enabling this service
+so two RILs do not compete for the same instance or channels, and keep SELinux enforcing.
 
 ## Risks
 

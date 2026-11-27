@@ -1,11 +1,12 @@
 #!/usr/bin/env -S PYTHONPATH=../../../tools/extract-utils python3
 # SPDX-FileCopyrightText: 2026 The LineageOS Project
 # SPDX-License-Identifier: Apache-2.0
+import json
 import os
 import re
 import shutil
 import tempfile
-from hashlib import sha1
+from hashlib import sha1, sha256
 from pathlib import Path
 
 from extract_utils.file import File, FileArgs, FileList
@@ -425,7 +426,20 @@ class MindoneModule(ExtractUtilsModule):
             if donor_roots[donor] is not None:
                 for file in files:
                     verify_donor(donor_roots[donor], file)
+        if firmware_set is not None:
+            for name, spec in firmware_set['replaced'].items():
+                verify_firmware_file(firmware_set_dir / name, spec, name)
         return super().process(*args, **kwargs)
+
+    def stage_firmware_override(self, name, spec, dst):
+        src = firmware_set_dir / name
+        verify_firmware_file(src, spec, name)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=dst.parent) as temporary:
+            staged = Path(temporary) / dst.name
+            shutil.copy2(src, staged)
+            verify_firmware_file(staged, spec, name)
+            os.replace(staged, dst)
 
     def stage_donor(self, donor, file, dst, source=None):
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -456,6 +470,18 @@ class MindoneModule(ExtractUtilsModule):
             if Path(vendor_path).is_relative_to(Path(self.vendor_path) / f'donor-{donor}'):
                 self.stage_donor(donor, file, Path(vendor_path) / file.dst, source)
                 return True
+        if is_firmware and firmware_set is not None:
+            name = Path(file.dst).name
+            dst = Path(vendor_path) / file.dst
+            if name in firmware_set['replaced']:
+                self.stage_firmware_override(name, firmware_set['replaced'][name], dst)
+                return True
+            ok = super().process_file(file, source, backup_source, vendor_path,
+                                      is_firmware, kang, allow_prohibited_files)
+            if not ok:
+                raise RuntimeError(f'Extraction failed: {file.dst}')
+            verify_firmware_file(dst, firmware_set['unchanged'][name], name)
+            return ok
         ok = super().process_file(file, source, backup_source, vendor_path,
                                   is_firmware, kang, allow_prohibited_files)
         if not ok:
@@ -475,6 +501,14 @@ class MindoneModule(ExtractUtilsModule):
                 if donor_roots[donor] is None:
                     raise RuntimeError(f'Re-extract donor blob or set {DONORS[donor][0]}: {file.dst}')
                 self.stage_donor(donor, file, dst)
+        if firmware_set is not None:
+            radio_dir = Path(self.vendor_path) / 'radio'
+            for name, spec in firmware_set['replaced'].items():
+                dst = radio_dir / name
+                if not firmware_file_matches(dst, spec):
+                    self.stage_firmware_override(name, spec, dst)
+            for name, spec in firmware_set['unchanged'].items():
+                verify_firmware_file(radio_dir / name, spec, name)
         super().write_makefiles(legacy, extract_factory)
 
 
@@ -581,6 +615,67 @@ for donor, group in donor_groups:
     retired_paths.update(group_retirements)
     donors.append((donor, group, parsed))
     donor_lines[base.with_suffix('.txt').name] = selected_lines
+
+def firmware_file_matches(path: Path, spec: dict) -> bool:
+    if not path.is_file() or path.stat().st_size != spec['size']:
+        return False
+    digest = sha256()
+    with path.open('rb') as handle:
+        while chunk := handle.read(1048576):
+            digest.update(chunk)
+    return digest.hexdigest() == spec['sha256']
+
+
+def verify_firmware_file(path: Path, spec: dict, name: str) -> None:
+    if not path.is_file():
+        raise ValueError(f'Missing firmware image for {name}: {path}')
+    actual_size = path.stat().st_size
+    if actual_size != spec['size']:
+        raise ValueError(f'Firmware size mismatch for {name}: got {actual_size}, expected {spec["size"]}')
+    digest = sha256()
+    with path.open('rb') as handle:
+        while chunk := handle.read(1048576):
+            digest.update(chunk)
+    actual_sha = digest.hexdigest()
+    if actual_sha != spec['sha256']:
+        raise ValueError(f'Firmware SHA-256 mismatch for {name}: got {actual_sha}, expected {spec["sha256"]}')
+
+
+def load_firmware_set(directory: Path) -> dict:
+    manifest_path = directory / 'firmware-set.json'
+    if not manifest_path.is_file():
+        raise ValueError(f'Missing firmware-set.json in {directory}')
+    data = json.loads(manifest_path.read_text())
+    replaced = data.get('replaced')
+    unchanged = data.get('unchanged')
+    if not isinstance(replaced, dict) or not isinstance(unchanged, dict):
+        raise ValueError(f'Invalid firmware-set.json structure in {manifest_path}')
+    overlap = set(replaced) & set(unchanged)
+    if overlap:
+        raise ValueError(f'Firmware entries listed in both replaced and unchanged: {sorted(overlap)}')
+    declared = set()
+    fw_list = Path(__file__).parent / 'proprietary-firmware.txt'
+    for line in fw_list.read_text().splitlines():
+        item = line.strip()
+        if not item or item.startswith('#'):
+            continue
+        declared.add(item.split(';', 1)[0])
+    combined = set(replaced) | set(unchanged)
+    if combined != declared:
+        raise ValueError(f'firmware-set.json mismatch against proprietary-firmware.txt: '
+                         f'missing={sorted(declared - combined)} extra={sorted(combined - declared)}')
+    for section in (replaced, unchanged):
+        for name, spec in section.items():
+            if not isinstance(spec, dict) or not isinstance(spec.get('size'), int) or spec['size'] <= 0:
+                raise ValueError(f'Invalid size for firmware entry {name}')
+            if not isinstance(spec.get('sha256'), str) or not re.fullmatch('[0-9a-f]{64}', spec['sha256']):
+                raise ValueError(f'Invalid SHA-256 for firmware entry {name}')
+    return {'replaced': replaced, 'unchanged': unchanged}
+
+
+firmware_set_env = os.environ.get('MINDONE_FIRMWARE_SET')
+firmware_set_dir = Path(firmware_set_env).expanduser().absolute() if firmware_set_env else None
+firmware_set = load_firmware_set(firmware_set_dir) if firmware_set_dir is not None else None
 
 module_type = MindoneModule if donors else ExtractUtilsModule
 module = module_type(

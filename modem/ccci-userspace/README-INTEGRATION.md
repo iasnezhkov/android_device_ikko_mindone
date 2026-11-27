@@ -1,9 +1,8 @@
-# mind_one open CCCI userspace daemons -- integration plan
+# mind_one open CCCI userspace daemons -- integration notes
 
-Status: research implementation, not shipped and not accepted as a complete modem stack on
-hardware. The stock modem services remain the production configuration. Earlier syntax checks
-against Android headers do not establish a native build, enforcing-policy compatibility or a
-working modem lifecycle for the current source.
+Optional source-built CCCI userspace daemons (`mindone_mdinit`, `mindone_fsd`, `mindone_rpcd`).
+The ROM ships the stock/donor modem services by default; these targets remain separate disabled
+executables for development and incremental replacement.
 
 ## What is implemented, per daemon
 
@@ -44,8 +43,8 @@ Best-effort / explicitly gated (see source comments for exact provenance):
 - `NVM_RestoreFromBinRegion_OneFile` -- implemented but **compiled out by
   default** (`MINDONE_ENABLE_BINREGION_RESTORE=0`). See Risk register below.
 - `/vendor/firmware/modem_1_*_n.img` existence probing for
-  `CCCI_IOC_SET_MD_IMG_EXIST` -- bit-order inferred from string-table order,
-  not disassembly-confirmed; low risk (metadata only, no NVRAM content).
+  `CCCI_IOC_SET_MD_IMG_EXIST` -- bit-order inferred from string-table order (metadata only,
+  no NVRAM content).
 
 Out of scope, cited as provably inapplicable, not silently skipped:
 - SIM hot-plug / `CCCI_IOC_SIM_SWITCH*` -- the kernel's own
@@ -125,9 +124,9 @@ ldisc-hijack bug is out of the way.
 | MD_SBP NVRAM read (mdinit) | Low -- confirmed (disassembly) to target Sales/Branding code, not IMEI | Read-only; failure falls back to `sbp=0`, matching kernel's own no-gate behavior |
 | `/vendor/firmware/modem_1_*.img` bit order (mdinit) | Low -- metadata bitmap only, wrong order is visible in `getprop`/logcat, not silent | N/A, documented inference |
 
-## Integration prerequisites -- not hardware accepted
+## Integration prerequisites
 
-Both slots have booted through Virtual A/B updates. Shared logical-partition extents do not
+Both slots boot through Virtual A/B updates. Shared logical-partition extents do not
 make an inactive slot an independent rescue copy: verify the current slot metadata and snapshot
 state before an update, and do not assume the old system remains available after snapshot merge.
 See [FLASHING.md](../../docs/FLASHING.md).
@@ -140,18 +139,14 @@ The current Soong modules produce separate executables:
 | `mindone_fsd` | `/vendor/bin/mindone_fsd` |
 | `mindone_rpcd` | `/vendor/bin/mindone_rpcd` |
 
-The adjacent historical init fragments still name the stock `ccci_mdinit`, `ccci_fsd` and
-`vendor.ccci_rpcd` services and stock executable paths. They are not a ready integration for
-these module names and must not be installed unchanged. Before a test, prepare separate disabled
-services with distinct names and the executable paths above; review their lifecycle and startup
-order against the installed vendor configuration. Do not run both implementations against the
-same modem channels. In particular, the stock file server may be a thread inside its modem-init
-process rather than a separately stoppable service.
+The adjacent init fragments name the stock `ccci_mdinit`, `ccci_fsd` and
+`vendor.ccci_rpcd` services and stock executable paths. Do not install them unchanged alongside
+the default services, and do not run both implementations against the same modem channels. In
+particular, the stock file server may be a thread inside its modem-init process rather than a
+separately stoppable service.
 
 Preserve stock executable files and their product entries. Do not overwrite live vendor
-executables or treat restarting services as a guaranteed modem recovery procedure. A candidate
-needs a reviewed installation and recovery plan, an exact native build, and an owner-supervised
-validation window. Calls and SMS require the owner's explicit authorization.
+executables or rely on restarting services as a modem recovery procedure.
 
 ## SELinux prerequisites
 

@@ -1,16 +1,14 @@
-# PIN, pattern and fingerprint in our design language
+# PIN, pattern and fingerprint in SystemUI
 
-What the lead asked: can the launcher own the authentication screens, and can they be restyled and
-fitted to a 432 × 496 dp panel. Written 8 September 2026 with facts from the ROM session,
-which has the device tree and the device.
+Design notes on restyling and fitting the authentication screens to MindOne's 432 × 496 dp panel.
 
 ## 0. The short answers
 
 | Question | Answer |
 |---|---|
 | Can the launcher app do this? | **No.** Not in `store`, not in `system`, not with the HOME role, not with accessibility. Android has no "keyguard provider" role the way it has HOME, dialer, SMS or IME |
-| Can the ROM do this? | **Yes**, `frameworks/base` is built from source in our tree |
-| Is there a plugin API, like the clock has? | **No.** Verified against the tree: the whole `plugins/` package is ActivityStarter, DarkIconDispatcher, DozeServicePlugin, Falsing*, FragmentBase, GlobalActions*, IntentButtonProvider, NavigationEdgeBackPlugin, Notification*, OverlayPlugin, PluginDependency, PluginUtils, SensorManagerPlugin, ToastPlugin, ViewProvider, VolumeDialog*. Nothing for the bouncer |
+| Can the ROM do this? | **Yes**, `frameworks/base` is built from source in this tree |
+| Is there a plugin API, like the clock has? | **No.** The SystemUI `plugins/` package exposes no bouncer plugin interface |
 | Overlay or patch? | **Values overlay for colour and metrics, source patch for anything structural.** See §2 |
 | Fingerprint UI? | **There is none to style.** See §3 |
 
@@ -48,7 +46,7 @@ layouts use ConstraintLayout. So:
 | Key size, spacing, text sizes, the vertical rhythm of the bouncer | RRO, `res/values/dimens.xml` | Values link fine, and this is most of the 432 × 496 fit |
 | Turning features off (haptics, the "emergency call" affordance, ripple) | RRO, `res/values/bools.xml` / `config.xml` | Values link fine |
 | Rearranging the keypad, changing the view hierarchy, replacing a widget | **Patch** `frameworks/base` | Layouts, and the ids the Java looks up |
-| Typeface | **Patch or a font RRO** — needs a look; SystemUI resolves fonts through the framework theme, so it may fall out of the framework overlay we already ship | Unverified |
+| Typeface | **Patch or a font RRO** — SystemUI resolves fonts through the framework theme | Optional |
 
 Patches live in `device/ikko/mindone/patches/` as `frameworks_base-NNNN-mindone-<topic>.patch` and
 are applied by hand. There is already one (`frameworks_base-0001-mindone-ims-dynamic-receiver-flag.patch`)

@@ -90,14 +90,122 @@ Sign the complete target-files archive and generate the full OTA with
 `ota_from_target_files` without `--partial`.
 
 A kernel-only partial OTA cannot carry this paired set: it omits `system_dlkm` and DTBO.
-Keep the matching AVB descriptors. The full OTA also carries the ten stock firmware images
-listed in `proprietary-firmware.txt` (`lk`, `tee`, `gz`, `spmfw`, `sspm`, `scp`, `mcupm`,
-`dpm`, `pi_img`, `md1img`). The current set takes the TEE from the stock V13 `_b` slot
-(built 13.04.2026), the modem from stock V14 (MOLY.LR13.R2.MP.V195, 24.04.2026) and the
-other eight from the stock V13 `_a` slot; all of them run with the stock V13 preloader.
-The V14 TEE moves its load address and ships with the V14 preloader, so it is not used:
-this project never writes the preloader. `tee_a` is 5 MiB and `tee_b` 6 MiB, so a TEE
-image must fit 5 MiB. Do not copy whole donor partitions or substitute another device's TEE.
+Keep the matching AVB descriptors.
+
+Community builds (`MINDONE_COMMUNITY_BUILD=true`) package **13 partitions** (`boot`,
+`vendor_boot`, `dtbo`, `vbmeta`, `vbmeta_system`, `vbmeta_vendor`, and the seven dynamic
+partitions inside `super`) and intentionally omit all ten stock firmware partitions.
+First-time installation from Stock Android 15 relies on updating Stock to the latest
+official iKKO OTA first and sideloading `copy-partitions-mindone.zip` in LineageOS Recovery.
+
+Self-built full-firmware packages (`MINDONE_COMMUNITY_BUILD=false`) also carry the ten
+stock firmware images listed in `proprietary-firmware.txt` (`lk`, `tee`, `gz`, `spmfw`,
+`sspm`, `scp`, `mcupm`, `dpm`, `pi_img`, `md1img`, 23 partitions total). When using a
+pinned firmware directory (`MINDONE_FIRMWARE_SET`), `extract-files.py` checks sizes and
+SHA-256 hashes against `firmware-set.json`. All firmware images must match the installed
+preloader (never write `preloader`). `tee_a` is 5 MiB (`5,242,880` B) and `tee_b` is
+6 MiB (`6,291,456` B), so a TEE image must fit 5 MiB. Do not copy whole donor partitions
+or substitute another device's TEE.
+
+## First-time installation from Stock Android 15 (Community RC + GApps)
+
+### Before you start
+
+- Update Stock Android 15 to the latest official iKKO OTA **before** unlocking or flashing.
+  Community OTAs do not update the ten stock firmware partitions (`lk`, `tee`, `md1img`, etc.).
+- Back up all personal data (including 2FA/TOTP tokens, banking apps, messengers, photos and
+  downloads). Installing from stock formats `/data`.
+- Use a **Linux** or **Windows** host with current Android `platform-tools` (`adb`, `fastboot`)
+  and a data USB-C cable, and charge the phone to at least 50%. On **macOS**, host
+  `fastboot flash` hangs the LK USB endpoint — use Linux or a Linux VM with USB passthrough.
+- Verify every downloaded release artifact against `SHA256SUMS` before flashing, and check the
+  community OTA certificate fingerprint (`unzip -p lineage-24.0-*.zip META-INF/com/android/otacert | openssl x509 -noout -fingerprint -sha256`).
+
+### Unlock the bootloader
+
+1. Enable **Settings → About phone → Build number** (tap 7 times), then open
+   **System → Developer options** and enable **OEM unlocking** and **USB debugging**.
+2. Reboot to the bootloader: `adb reboot bootloader`.
+3. Check unlock state (`fastboot getvar unlocked`) and unlock if locked:
+   `fastboot flashing unlock` (confirm on the phone screen; this erases user data).
+
+### Install LineageOS 24 (guided script or manual)
+
+You can run the guided installer `python3 mindone-install.py --release-dir <dir>` (which checks
+OS compatibility, verifies all SHA-256 hashes, enforces the 6-partition allowlist, and steps
+through recovery/sideload/GApps) or run the exact steps manually:
+
+1. Flash the six initial images to the **active** slot (`_a` or `_b` from `fastboot getvar current-slot`):
+
+```sh
+SLOT="_$(fastboot getvar current-slot 2>&1 | awk '/current-slot:/ {print $2}' | tr -d '_ \r')"
+for p in boot vendor_boot dtbo vbmeta vbmeta_system vbmeta_vendor; do
+    fastboot flash "${p}${SLOT}" "${p}.img"
+done
+fastboot reboot recovery
+```
+
+If needed, enter Recovery by keys from power-off (cable unplugged): hold the **top-left key**
+(iKKO OS switch) + **Power** until the boot menu appears, then press **Volume Down** to select
+`[Recovery Mode]`. Do not hold Volume Down while powering on (that enters Factory Mode).
+
+2. Copy the stock firmware partitions to the inactive slot (required so the newly installed slot
+   has matching `lk`, `tee`, `md1img`, and coprocessor firmware; `copy-partitions-mindone.zip`
+   verifies that the trailing 1 MiB of `tee_b` is all zeros before copying 5 MiB to `tee_a` and
+   never touches `preloader`, `gpt`, `nvram`/`nvdata`, `protect1/2`, `proinfo`, `seccfg`, `frp`,
+   or `otp`):
+   - On the phone: **Apply update → Apply from ADB**
+   - On the host: `adb sideload copy-partitions-mindone.zip`
+3. Format user data: **Factory reset → Format data/factory reset**.
+4. Install LineageOS 24:
+   - On the phone: **Apply update → Apply from ADB**
+   - On the host: `adb sideload lineage-24.0-<YYYYMMDD>-UNOFFICIAL-mindone.zip`
+5. **Optional — Install GApps (`MindTheGapps-17.0.0-arm64`) BEFORE first boot:**
+   - Recommended package: official `MindTheGapps-17.0.0-arm64` from
+     `https://github.com/MindTheGapps/17.0.0-arm64/releases` (alternative: NikGapps Android 17
+     `arm64` Core/Basic).
+   - **Mandatory slot switch:** immediately after sideloading LineageOS, choose
+     **Advanced → Reboot to recovery** (do **not** boot Android yet). This switches to the newly
+     flashed slot so GApps installs onto the new `/system`.
+   - Choose **Apply update → Apply from ADB** and run:
+     `adb sideload MindTheGapps-17.0.0-arm64-<tag>.zip`
+   - Confirm the signature verification prompt (**Install anyway**, because MindTheGapps is
+     signed with its own key rather than the ROM key).
+   - Subsequent OTA updates via **Settings → System → System updates** preserve MindTheGapps
+     automatically through `/system/addon.d/30-gapps.sh` (`backuptool_ab`).
+6. Choose **Reboot system now** to finish Setup Wizard.
+
+### First-boot checklist and known caveats
+
+- After Setup Wizard, check Wi-Fi, Bluetooth, mobile data/SIM/VoLTE, NFC, fingerprint
+  enrollment, flip camera (photo/video/flip), 96/60 Hz display, USB-C charging, and
+  **Settings → System → System updates**.
+- Known caveats on community builds:
+  - Donor Wi-Fi firmware omits custom RXFILTER offload, which can increase idle Wi-Fi wakeups.
+  - Camera 60 fps, 50 MP max-resolution, and flip-exclusivity flags stay off by default.
+  - Android 17 / LOS 24 builds are 64-bit only (`arm64-v8a`); legacy 32-bit-only APKs are not
+    supported.
+  - Play Integrity strong attestation does not pass on an unlocked bootloader.
+
+### Return to Stock Android 15
+
+Keep your verified factory backup (`super.bin` converted to sparse `super-stock-sparse.img`,
+plus `boot`, `init_boot`, `vendor_boot`, `dtbo`, `vbmeta`, `vbmeta_system`, `vbmeta_vendor`,
+and the ten firmware dumps from the **same** stock slot — on factory V13 dumps where `super.bin`
+only contains merged `_b` extents, flash to slot `_b`).
+
+1. Enter LK fastboot (`adb reboot bootloader` or top-left key + Power → `[Fastboot Mode]`).
+2. Set the matching stock slot active (for a `_b`-merged factory dump, `fastboot --set-active=b`).
+3. Flash `super`, `boot`, `init_boot`, `vendor_boot`, `dtbo`, `vbmeta`, `vbmeta_system`,
+   `vbmeta_vendor`, and the matching ten stock firmware partitions (`lk`, `tee`, `md1img`, `scp`,
+   `sspm`, `spmfw`, `mcupm`, `dpm`, `gz`, `pi_img`) for that slot.
+4. Wipe user data (`fastboot -w`) and reboot (`fastboot reboot`).
+
+🔴 **Never write** `preloader`, `gpt`, `nvram`, `nvdata`, `nvcfg`, `protect1`, `protect2`,
+`proinfo`, `seccfg`, `frp`, or `otp`.
+
+🔴 **Do not relock the bootloader (`fastboot flashing lock`)** until Stock Android 15 has
+booted cleanly with intact original AVB metadata on the active slot.
 
 Install the full signed package through the Updater or `update_engine_client` as above.
 Keep a tested signed known-good package: before snapshot merge a failed boot may fall
@@ -133,9 +241,10 @@ Ways in:
 From recovery, `adb reboot bootloader` reaches the bootloader's fastboot and `adb reboot fastboot`
 reaches fastbootd (userspace fastboot, USB `18d1:4ee0`).
 
-🔴 In recovery adb is root and asks for no authorization (`ro.adb.secure=0` in a userdebug build).
-Anyone with a cable gets a root shell on a locked phone -- `/data` stays encrypted, the rest does
-not. Build `user`, or change that, before the phone leaves your hands.
+🔴 In developer builds built with `WITH_ADB_INSECURE=true`, recovery adb is root without
+authorization (`ro.adb.secure=0`). Community builds (`MINDONE_COMMUNITY_BUILD=true`,
+`WITH_ADB_INSECURE` unset) set `ro.adb.secure=1` in both system and recovery and
+`ro.debuggable=0` in system.
 
 **`fastboot flash` from a macOS host.** Every write hangs the USB endpoint, and so does `getvar`.
 Read-only commands are fine. Write from a Linux host, or from a VM with real USB passthrough --

@@ -37,8 +37,9 @@ else
 WITH_GAPPS ?= false
 endif
 
-ifeq ($(WITH_GAPPS),true)
-$(call inherit-product, vendor/gapps/arm64/arm64-vendor.mk)
 PRODUCT_PACKAGES += \
     GmsConfiguratorOverlayMindone
+
+ifeq ($(WITH_GAPPS),true)
+$(call inherit-product, vendor/gapps/arm64/arm64-vendor.mk)
 endif

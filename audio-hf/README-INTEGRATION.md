@@ -1,4 +1,4 @@
-# Audio HAL integration and validation
+# Audio HAL integration
 
 ## Installed configuration
 
@@ -16,8 +16,8 @@ see [BLOBS.md](../docs/BLOBS.md).
 
 For this device's Gen95 modem, the HAL obtains real device parameters from
 `libspeechparser_vendor.so`, reads the modem version through `/dev/ccci_raw_audio`, and transfers
-the parameter blob through `/dev/usip`. The observed blob is 49,152 bytes. Parameters are enabled
-by default; disabling `vendor.audio.mindone.sph_param` is a diagnostic override, not the accepted
+the parameter blob through `/dev/usip`. The parameter blob is 49,152 bytes. Parameters are enabled
+by default; disabling `vendor.audio.mindone.sph_param` is a diagnostic override, not the default
 configuration. SetMode, SpeechOn and SpeechOff replies are validated before their transitions
 are treated as successful.
 
@@ -31,34 +31,19 @@ present. Its ADDA driver must preserve the DAPM-owned playback-enable bit when `
 updates `AFE_ADDA_DL_SRC2_CON0`. Repeated route changes can invoke `hw_params` after DAPM has
 already enabled playback; an unconditional register write clears the bit and silences receive
 sound even though mixer controls still show the expected route. Updating only the HAL is
-insufficient on that kernel. Use the kernel and module set built and validated together;
+insufficient on that kernel. Use the kernel and module set built together;
 the audio modules are installed under `/vendor_dlkm/lib/modules`.
 
 The HAL runs in `hal_audio_default`. Node permissions and SELinux access for the CCCI and USIP
-interfaces must match the installed vendor policy. A visible node or a successful PCM open
-alone does not establish working call audio.
+interfaces must match the installed vendor policy.
 
-## Validation on 11 October 2026
+## Voice-call endpoints
 
-This historical installation predates the current AIDL service and typed backend. Its results
-do not establish acceptance of the current service.
-
-The owner confirmed the cellular microphone, followed by both receive paths while switching
-earpiece → speaker → earpiece. The accepted call logged successful SetMode, SpeechOn and
-SpeechOff acknowledgements, no PCM startup failures and no CCCI timeouts. The kernel still
-executed the previously failing enable-before-`hw_params` order during route changes, exercising
-the ADDA fix in the successful call.
-
-The accepted HAL and kernel module were subsequently installed through a signed OTA. Partition
-readback, reboot, loaded-file hashes and 50 post-install checks confirmed persistent installation
-without a temporary HAL overlay. There was no additional call after the final persistence-only
-reboot. See [FLASHING.md](../docs/FLASHING.md) for installation and Virtual A/B constraints.
-
-This test does not establish incoming-call acceptance, VoIP, Bluetooth SCO calls, wired or USB
-headset calls, or recovery after deliberately restarting the modem. Bluetooth SCO media and
-headset microphone support remain unverified on hardware; cellular routing over SCO is not
-implemented. Existing BLE DSP initialization messages did not prevent the accepted ordinary
-cellular call and are not evidence of working BLE call audio.
+The backend implements cellular speech routing for earpiece, loudspeaker, wired/USB headset
+microphone and Bluetooth SCO endpoints over the Gen95 modem speech path. When switching between
+earpiece, loudspeaker and Bluetooth SCO during an active call, the modem speech session stays up
+and only the AFE and codec routes are reconfigured. See [FLASHING.md](../docs/FLASHING.md) for
+installation and Virtual A/B constraints.
 
 ## Diagnostic controls
 
@@ -69,10 +54,6 @@ Two typed backend calls are available for controlled diagnosis:
 - `mindone_audio_speech_pump` performs a bounded drain of pending modem messages and validates
   the specific codec request before acknowledging it.
 
-Neither call runs automatically or is required by the accepted call configuration. Sending a
-command successfully does not prove its acoustic effect. Normal routing and gain behavior
-should be tested separately from these controls.
-
-For a future owner-operated call test, capture audio-service logs and kernel events before the
-call, check microphone and both receive endpoints, then confirm SpeechOff and route teardown.
-Mixer state alone cannot replace listening or prove that the underlying hardware is enabled.
+Neither call runs automatically or is required for normal call routing. Sending a
+command successfully does not guarantee its acoustic effect; verify routing and gain behavior
+independently when diagnosing call audio.

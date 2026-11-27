@@ -1,0 +1,113 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release Verify
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-verify-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download release assets
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$TAG" --repo "${{ github.repository }}" --dir "$RUNNER_TEMP/release"
+          ls -lh "$RUNNER_TEMP/release"
+
+      - name: Verify SHA256SUMS and community release contract
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          test -f SHA256SUMS
+          test -f release-manifest.json
+          sha256sum -c SHA256SUMS
+          python3 -B - "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release" "$TAG" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          workspace = Path(sys.argv[1])
+          reldir = Path(sys.argv[2])
+          tag = sys.argv[3]
+
+          expected_ab = [
+              "boot", "dtbo", "odm_dlkm", "product", "system", "system_dlkm",
+              "system_ext", "vbmeta", "vbmeta_system", "vbmeta_vendor",
+              "vendor", "vendor_boot", "vendor_dlkm",
+          ]
+          forbidden_fw = {
+              "lk", "tee", "md1img", "scp", "sspm", "spmfw", "mcupm", "dpm",
+              "gz", "pi_img", "preloader", "preloader_raw",
+          }
+          required_images = {
+              "boot.img", "vendor_boot.img", "dtbo.img",
+              "vbmeta.img", "vbmeta_system.img", "vbmeta_vendor.img",
+          }
+
+          manifest = json.loads((reldir / "release-manifest.json").read_text(encoding="utf-8"))
+          assert manifest.get("schema") == "mindone-community-release-v1", manifest.get("schema")
+          assert manifest.get("device") == "mindone", manifest.get("device")
+          ab = sorted(manifest.get("ab_partitions", []))
+          assert not (set(ab) & forbidden_fw), f"forbidden firmware partitions in manifest: {set(ab) & forbidden_fw}"
+          assert ab == expected_ab, f"ab_partitions {ab} != {expected_ab}"
+
+          names = set()
+          ota_item = None
+          for item in manifest.get("artifacts", []):
+              name = item["name"]
+              path = reldir / name
+              assert path.is_file(), f"missing asset {name}"
+              assert path.stat().st_size == item["size"], f"size mismatch for {name}"
+              h = hashlib.sha256()
+              with path.open("rb") as f:
+                  while chunk := f.read(1048576):
+                      h.update(chunk)
+              assert h.hexdigest() == item["sha256"], f"sha256 mismatch for {name}"
+              names.add(name)
+              if item.get("role") == "ota-package":
+                  ota_item = item
+
+          missing_imgs = sorted(required_images - names)
+          assert not missing_imgs, f"missing required first-flash images: {missing_imgs}"
+          assert "copy-partitions-mindone.zip" in names, "missing copy-partitions-mindone.zip"
+          assert "mindone-install.py" in names, "missing mindone-install.py"
+          assert ota_item is not None, "missing ota-package artifact in manifest"
+
+          updater_path = workspace / "updater/mindone.json"
+          if updater_path.is_file():
+              feed = json.loads(updater_path.read_text(encoding="utf-8"))
+              matched = [
+                  f for entry in feed for f in entry.get("files", [])
+                  if f.get("filename") == ota_item["name"]
+              ]
+              assert matched, f"updater/mindone.json has no entry for {ota_item['name']}"
+              entry_file = matched[0]
+              assert entry_file.get("sha256") == ota_item["sha256"], "updater sha256 mismatch"
+              assert entry_file.get("size") == ota_item["size"], "updater size mismatch"
+              assert str(entry_file.get("url", "")).startswith("https://"), "updater url must be HTTPS"
+
+          print(f"PASS release-verify {tag}: {len(names)} artifacts verified, 13 community partitions, 0 forbidden firmware")
+          PY

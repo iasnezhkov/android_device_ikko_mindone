@@ -140,6 +140,7 @@ bool PixelModes::mapRequests(const std::vector<uint32_t>& frames,
     if (!mRemosaicTag) return true;
     uint8_t mode = mLast;
     for (size_t i = 0; i < frames.size(); ++i) {
+        const uint8_t prev = mode;
         auto& bytes = (*settings)[i];
         if (!bytes.empty()) {
             const auto requested = peek<uint8_t>(bytes, ANDROID_SENSOR_PIXEL_MODE);
@@ -148,18 +149,28 @@ bool PixelModes::mapRequests(const std::vector<uint32_t>& frames,
                            ? ANDROID_SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION
                            : ANDROID_SENSOR_PIXEL_MODE_DEFAULT;
         }
-        const int32_t enable = 1;
-        if (!bytes.empty() && mode == ANDROID_SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION &&
-            !editMetadata(&bytes, 1, 64, [&](camera_metadata_t* metadata) {
-                bool ok = store(metadata, mRemosaicTag, &enable, 1);
-                for (const auto& coordinates : kRequestCoordinates) {
-                    ok = ok && scale(metadata, coordinates, mBinning, false);
-                }
-                return ok;
-            })) {
-            for (size_t j = 0; j < i; ++j) mFrames.erase(frames[j]);
-            mBatch.clear();
-            return false;
+        if (!bytes.empty() && mode == ANDROID_SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION) {
+            const int32_t enable = 1;
+            if (!editMetadata(&bytes, 1, 64, [&](camera_metadata_t* metadata) {
+                    bool ok = store(metadata, mRemosaicTag, &enable, 1);
+                    for (const auto& coordinates : kRequestCoordinates) {
+                        ok = ok && scale(metadata, coordinates, mBinning, false);
+                    }
+                    return ok;
+                })) {
+                for (size_t j = 0; j < i; ++j) mFrames.erase(frames[j]);
+                mBatch.clear();
+                return false;
+            }
+        } else if (!bytes.empty() && prev == ANDROID_SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION) {
+            const int32_t disable = 0;
+            if (!editMetadata(&bytes, 1, 16, [&](camera_metadata_t* metadata) {
+                    return store(metadata, mRemosaicTag, &disable, 1);
+                })) {
+                for (size_t j = 0; j < i; ++j) mFrames.erase(frames[j]);
+                mBatch.clear();
+                return false;
+            }
         }
         mBatch.push_back(mode);
         mFrames[frames[i]] = mode;
@@ -177,15 +188,28 @@ void PixelModes::keep(const std::vector<uint32_t>& frames, size_t processed) {
 
 bool PixelModes::mapResult(uint32_t frame, uint32_t partial, std::vector<uint8_t>* result) {
     std::lock_guard<std::mutex> lock(mMutex);
-    if (!mRemosaicTag || partial != mPartialCount || result->empty()) return true;
-    uint8_t mode = ANDROID_SENSOR_PIXEL_MODE_DEFAULT;
+    if (!mRemosaicTag || result->empty()) return true;
+    const bool finalPartial = partial == mPartialCount;
     auto it = mFrames.find(frame);
+    if (it == mFrames.end() && !finalPartial) return true;
+    uint8_t mode = ANDROID_SENSOR_PIXEL_MODE_DEFAULT;
     if (it != mFrames.end()) {
         mode = it->second;
-        mFrames.erase(it);
+        if (finalPartial) mFrames.erase(it);
+    }
+    if (!finalPartial) {
+        if (mode != ANDROID_SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION) return true;
+        bool hasCoords = false;
+        for (const auto& coordinates : kResultCoordinates) {
+            if (!peek<int32_t>(*result, coordinates.tag).empty()) {
+                hasCoords = true;
+                break;
+            }
+        }
+        if (!hasCoords) return true;
     }
     return editMetadata(result, 1, 64, [&](camera_metadata_t* metadata) {
-        bool ok = store(metadata, ANDROID_SENSOR_PIXEL_MODE, &mode, 1);
+        bool ok = !finalPartial || store(metadata, ANDROID_SENSOR_PIXEL_MODE, &mode, 1);
         if (mode != ANDROID_SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION) return ok;
         for (const auto& coordinates : kResultCoordinates) {
             ok = ok && scale(metadata, coordinates, mBinning, true);
@@ -201,6 +225,7 @@ void PixelModes::forget(uint32_t frame) {
 
 void PixelModes::clear() {
     std::lock_guard<std::mutex> lock(mMutex);
+    mLast = ANDROID_SENSOR_PIXEL_MODE_DEFAULT;
     mFrames.clear();
     mBatch.clear();
 }

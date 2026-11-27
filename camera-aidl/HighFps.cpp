@@ -51,13 +51,15 @@ bool highFpsStreams(const ad::StreamConfiguration& config) {
         config.streams.empty()) {
         return false;
     }
+    bool hasVideoOutput = false;
     for (const auto& stream : config.streams) {
-        if (stream.streamType != ad::StreamType::OUTPUT ||
-            !highFpsOutput(static_cast<int64_t>(stream.format), stream.width, stream.height)) {
-            return false;
-        }
+        if (stream.streamType != ad::StreamType::OUTPUT) return false;
+        const auto format = static_cast<int64_t>(stream.format);
+        if (format == HAL_PIXEL_FORMAT_BLOB) continue;
+        if (!highFpsOutput(format, stream.width, stream.height)) return false;
+        hasVideoOutput = true;
     }
-    return true;
+    return hasVideoOutput;
 }
 
 bool highFpsRequested(const std::vector<uint8_t>& sessionParams) {

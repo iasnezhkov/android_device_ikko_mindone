@@ -1,0 +1,68 @@
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+rust_library_rlib {
+    name: "libmindone_vsim_core",
+    crate_name: "mindone_vsim_core",
+    system_ext_specific: true,
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["src/lib.rs"],
+    prefer_rlib: true,
+    lints: "none",
+    clippy_lints: "none",
+}
+
+rust_test_host {
+    name: "mindone_vsim_core_test",
+    crate_name: "mindone_vsim_core_test",
+    edition: "2021",
+    srcs: ["src/lib.rs"],
+    test_suites: ["general-tests"],
+    lints: "none",
+    clippy_lints: "none",
+}
+
+cc_library_static {
+    name: "libmindone_vsim_binder",
+    system_ext_specific: true,
+    compile_multilib: "64",
+    srcs: [
+        "binder/binder_bridge.cpp",
+        "binder/posix_net.cpp",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+        "liblog",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+    cpp_std: "c++17",
+}
+
+rust_binary {
+    name: "vsim-adaptor",
+    crate_name: "vsim_adaptor",
+    system_ext_specific: true,
+    compile_multilib: "64",
+    edition: "2021",
+    srcs: ["src/main.rs"],
+    rustlibs: ["libmindone_vsim_core"],
+    static_libs: ["libmindone_vsim_binder"],
+    shared_libs: [
+        "libbinder_ndk",
+        "libc++",
+        "liblog",
+    ],
+    init_rc: ["vsim-adaptor.rc"],
+    prefer_rlib: true,
+    lints: "none",
+    clippy_lints: "none",
+}

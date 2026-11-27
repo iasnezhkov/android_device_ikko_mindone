@@ -3,11 +3,6 @@
 The launcher ships as a privileged system app. Launcher3QuickStep (TrebuchetQuickStep) stays
 in the image only to provide Recents and gesture animations; our app wins the HOME role.
 
-> Platform target confirmed with the ROM session on 8 September 2026 against the live device tree
-> (`device/ikko/mindone`, adapted from a LineageOS device tree for the same chipset). Earlier
-> revisions of this file said 22.x / Android 15; everything below was written against 15 and is
-> re-checked item by item as it is used.
-
 ## Where our files go in the device tree
 
 The device tree is `device/ikko/mindone` and already has the two conventions we need:
@@ -34,9 +29,8 @@ Two things to know before relying on the overlay path:
 
 1. Build: `./gradlew :app:assembleSystemRelease` → copy `app/build/outputs/apk/system/release/app-system-release.apk`
    here as `Launcher.apk`. Sign with the release key; `presigned: true` keeps that signature.
-   Switch to `certificate: "platform"` only if a signature-level permission becomes necessary.
-   Note that the ROM currently signs with the AOSP **testkey**, so `certificate: "platform"` there
-   means the test key — fine for development, not for anything shipped.
+   Switch to `certificate: "platform"` only if a signature-level permission becomes necessary;
+   release builds sign with the release keys rather than AOSP testkey.
 2. Put this `rom/` directory into the device tree (e.g. `device/ikko/mindone/launcher/`) and add
    `$(call inherit-product, device/ikko/mindone/launcher/launcher.mk)` to the device makefile.
 3. Keep `TrebuchetQuickStep` in `PRODUCT_PACKAGES` (LineageOS adds it in `vendor/lineage`).
@@ -55,7 +49,7 @@ Two things to know before relying on the overlay path:
    and set `status_bar_height` to 28 dp. The launcher draws nothing in the strip: it hides the
    SystemUI clock via `Settings.Secure.icon_blacklist` (WRITE_SECURE_SETTINGS, priv-app) while it is
    the default home and puts it back when it is not, because Home carries the time itself. The strip
-   keeps signal, Wi-Fi and notifications. Decided 13 September 2026; see DESIGN-REVIEW.md §1.
+   keeps signal, Wi-Fi and notifications.
    Check: `adb shell settings get secure icon_blacklist` → `clock`.
 8. Lock screen, AOD and the PIN entry are SystemUI work (`frameworks/base/packages/SystemUI`),
    tracked in `systemui/README.md` and `systemui/KEYGUARD.md`; they only share tokens and

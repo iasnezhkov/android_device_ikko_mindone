@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The LineageOS Project
+# SPDX-License-Identifier: Apache-2.0
+
+persist.sys.mindone.vsim.enable u:object_r:system_mindone_vsim_prop:s0 exact enum 0 1
+persist.sys.mindone.vsim.uid    u:object_r:system_mindone_vsim_prop:s0 exact int

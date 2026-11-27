@@ -72,8 +72,8 @@ The graphics entry pins both the original file SHA-1
 pin for each donor file modified by a fixup, in addition to its input SHA-1.
 
 The Samsung `connsys` group replaces all eight MCU, BT and Wi-Fi firmware files for
-soc2_2 revisions 1d and 1e. Each revision is taken as a complete cohort; partial cohorts
-failed to power connsys on in device testing. Keep the stock `WMT_SOC.cfg` and `BT_FW.cfg`
+soc2_2 revisions 1d and 1e. Each revision is taken as a complete cohort; mixing revisions
+across MCU, BT and Wi-Fi binaries prevents connsys power-on. Keep the stock `WMT_SOC.cfg` and `BT_FW.cfg`
 for the board antenna and TX-power configuration.
 
 ## Wi-Fi RXFILTER firmware

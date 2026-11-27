@@ -15,12 +15,12 @@ on post-fs-data
 on early-boot
     chown cameraserver camera /sys/devices/platform/soc/11eb1000.i2c/i2c-4/4-0069/mode
     chmod 0664 /sys/devices/platform/soc/11eb1000.i2c/i2c-4/4-0069/mode
+    chown cameraserver camera /sys/module/imgsensor_isp6s/parameters/imx766_4cell
+    chmod 0664 /sys/module/imgsensor_isp6s/parameters/imx766_4cell
 
 on property:vendor.all.modules.ready=1
     chown cameraserver camera /sys/devices/platform/soc/11eb1000.i2c/i2c-4/4-0069/mode
     chmod 0664 /sys/devices/platform/soc/11eb1000.i2c/i2c-4/4-0069/mode
-
-on early-boot && property:persist.vendor.camera.maxres=*
     chown cameraserver camera /sys/module/imgsensor_isp6s/parameters/imx766_4cell
     chmod 0664 /sys/module/imgsensor_isp6s/parameters/imx766_4cell
 

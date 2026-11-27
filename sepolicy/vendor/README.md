@@ -1,7 +1,8 @@
 # sepolicy/vendor - rules on top of `device/mediatek/sepolicy_vndr` (MT6789 baseline)
 
-Filled in on 06.09 from the `avc: denied` messages of the first permissive boots of this ROM:
-genfs_contexts (vibrator, eta6965), mtk_hal_c2.te, vendor_init.te, file.te.
+Device-specific policy additions for MindOne hardware and vendor services:
+genfs_contexts (vibrator, charger, display, sensors), media/codec2, camera, audio,
+modem/IMS netlink xperms, and vendor_init properties.
 
-Rules here are written only from denials seen on this device. Do not copy another device's `.te`
-files in: they are tuned for that device's denials, not this one's.
+Rules here are scoped strictly to this board's services and hardware nodes. Do not copy
+another device's `.te` files in without auditing every rule against MindOne.
