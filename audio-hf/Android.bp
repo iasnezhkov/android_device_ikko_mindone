@@ -34,17 +34,10 @@ cc_library_shared {
     name: "libmindone_audio_backend",
     defaults: ["mindone_audio_impl_defaults"],
     srcs: ["audio_hw.c"],
-    export_include_dirs: ["."],
-    compile_multilib: "64",
-}
-
-cc_library_static {
-    name: "libaudio.mindone.rust.impl",
-    srcs: ["audio_hw.c"],
-    defaults: ["mindone_audio_impl_defaults"],
-    compile_multilib: "64",
     cflags: ["-DMINDONE_AUDIO_RUST_ROUTES"],
     static_libs: ["libmindone_audio_routes_ffi"],
+    export_include_dirs: ["."],
+    compile_multilib: "64",
 }
 
 rust_library_rlib {

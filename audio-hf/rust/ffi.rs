@@ -27,13 +27,13 @@ pub struct RoutePlan {
 }
 
 const _: () = {
-    assert!(size_of::<RouteState>() == 20 && align_of::<RouteState>() == 4);
+    assert!(size_of::<RouteState>() == 24 && align_of::<RouteState>() == 4);
     assert!(size_of::<RouteAction>() == 8 && align_of::<RouteAction>() == 4);
     assert!(offset_of!(RouteAction, kind) == 0 && offset_of!(RouteAction, endpoint) == 4);
-    assert!(size_of::<RoutePlan>() == 64 && align_of::<RoutePlan>() == 4);
+    assert!(size_of::<RoutePlan>() == 68 && align_of::<RoutePlan>() == 4);
     assert!(offset_of!(RoutePlan, next) == 0);
-    assert!(offset_of!(RoutePlan, action_count) == 20);
-    assert!(offset_of!(RoutePlan, actions) == 24);
+    assert!(offset_of!(RoutePlan, action_count) == 24);
+    assert!(offset_of!(RoutePlan, actions) == 28);
 };
 
 fn status(error: Error) -> i32 {

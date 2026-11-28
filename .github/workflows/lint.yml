@@ -155,6 +155,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B audio-hf/tests/tracking_check.py --output "$RUNNER_TEMP/audio-tracking"
+          python3 -B audio-hf/tests/mixer_policy_check.py
+          python3 -B bridges/audio/tests/sco_check.py
           python3 -B bridges/fingerprint/tests/lockout-persistence-check.py
           python3 -B sensors-hf/tests/batch_check.py
           python3 -B sensors-hf/tests/state_check.py

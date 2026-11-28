@@ -372,6 +372,8 @@ impl Modem {
             let mut input = [0; 29];
             let bytes = match self.endpoint.read(&mut input) {
                 IoResult::Transferred(0) | IoResult::Fault(Fault::WouldBlock) => break,
+                #[cfg(target_os = "linux")]
+                IoResult::Fault(Fault::Failure) => break,
                 IoResult::Transferred(bytes) => bytes,
                 result => panic!("Modem read: {result:?}"),
             };

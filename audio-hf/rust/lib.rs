@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![no_std]
 
-pub const ENDPOINT_COUNT: usize = 5;
+pub const ENDPOINT_COUNT: usize = 6;
 pub const ACTION_CAPACITY: usize = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -13,6 +13,7 @@ pub enum Endpoint {
     Headphone = 2,
     Earpiece = 3,
     Sco = 4,
+    WiredHeadset = 5,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +34,7 @@ impl TryFrom<u32> for Endpoint {
             2 => Ok(Self::Headphone),
             3 => Ok(Self::Earpiece),
             4 => Ok(Self::Sco),
+            5 => Ok(Self::WiredHeadset),
             _ => Err(Error::Endpoint),
         }
     }
@@ -90,6 +92,8 @@ impl Owners {
                 let shared = match old {
                     Endpoint::Speaker => Endpoint::Earpiece,
                     Endpoint::Earpiece => Endpoint::Speaker,
+                    Endpoint::Headphone => Endpoint::WiredHeadset,
+                    Endpoint::WiredHeadset => Endpoint::Headphone,
                     _ => Endpoint::None,
                 };
                 if transition.next.users[shared as usize] > 0 {

@@ -80,19 +80,23 @@ static int speech_rx_pump(struct mindone_audio_device *device, const char *value
         for name in ("OUT_DEVICE_COUNT", "IN_DEVICE_COUNT", "OUT_CHANNEL_COUNT", "OUT_SAMPLING_RATE",
                      "OUT_PERIOD_SIZE", "OUT_PERIOD_COUNT", "OUT_DEEP_PERIOD_SIZE", "OUT_DEEP_PERIOD_COUNT",
                      "OUT_FAST_PERIOD_SIZE", "OUT_FAST_PERIOD_COUNT", "PCM_DEVICE_PRIMARY", "PCM_DEVICE_FAST",
-                     "PCM_DEVICE_DEEP_BUFFER"):
+                     "PCM_DEVICE_DEEP_BUFFER", "PCM_DEVICE_CAPTURE_MAIN", "PCM_DEVICE_CAPTURE_VOICE",
+                     "PCM_DEVICE_BTCVSD"):
             enums += "\n" + re.search(r"^#define " + name + r" .+$", implementation, re.M).group()
         structures = "\n".join(re.search(r"struct " + name + r" \{.*?\n\};", implementation, re.S).group()
                                for name in ("mindone_audio_device", "mindone_stream_out", "mindone_stream_in"))
         signatures = (
             "static enum output_device output_device_from_mask(", "static enum input_device input_device_from_mask(",
             "static const char *output_path_name(", "static const char *output_path_off_name(",
+            "static int input_pcm_device(",
             "static int endpoint_acquire(", "static int endpoint_release(",
             "static int apply_output_route(", "static int teardown_output_route(",
             "static int voice_route_disable(", "static int voice_route_enable(",
+            "static int voice_route_change_analog(",
             "static int do_out_standby(", "static int out_standby(", "static int out_set_route(", "static int out_set_parameters(",
             "static int start_output_stream(", "static ssize_t out_write(",
             "static int set_mode(", "int mindone_audio_set_mode(", "int mindone_audio_set_sco(",
+            "static audio_patch_handle_t alloc_patch_handle(",
             "static int create_audio_patch(", "int mindone_audio_create_patch(")
         if baseline:
             signatures = signatures[:-5] + ("static int adev_set_mode(", "static int adev_set_parameters(", "static int adev_create_audio_patch(")

@@ -141,7 +141,7 @@ static void ffi_errors(void)
     check(mindone_audio_route_plan(NULL, 0, 1, &output) == -1, "null input rejected");
     check(mindone_audio_route_plan(&state, 0, 1, NULL) == -1, "null output rejected");
     check(mindone_audio_route_plan(&state, UINT32_MAX, 1, &output) == -2, "invalid old endpoint rejected");
-    check(mindone_audio_route_plan(&state, 0, 5, &output) == -2, "invalid new endpoint rejected");
+    check(mindone_audio_route_plan(&state, 0, 6, &output) == -2, "invalid new endpoint rejected");
     check(mindone_audio_route_plan(&state, 1, 2, &output) == -4, "unowned reroute rejected");
     state.users[0] = 1;
     check(mindone_audio_route_plan(&state, 0, 1, &output) == -3, "NONE owner rejected");

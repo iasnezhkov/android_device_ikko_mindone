@@ -44,6 +44,7 @@ _Static_assert(sizeof(struct pcm_config) == 64, "tinyalsa v2 LP64 configuration 
 #define PCM_DEVICE_FAST         2
 #define PCM_DEVICE_DEEP_BUFFER  3
 #define PCM_DEVICE_CAPTURE_MAIN 9
+#define PCM_DEVICE_CAPTURE_VOICE 17
 #define PCM_DEVICE_BTCVSD       46
 #define SCO_RATE_NB             8000
 #define SCO_RATE_WB             16000
@@ -75,19 +76,22 @@ _Static_assert(sizeof(struct pcm_config) == 64, "tinyalsa v2 LP64 configuration 
 enum output_device {
     OUT_DEVICE_NONE = 0,
     OUT_DEVICE_SPEAKER,
-    OUT_DEVICE_HEADPHONE,
+    OUT_DEVICE_WIRED_HEADPHONE,
     OUT_DEVICE_EARPIECE,
     OUT_DEVICE_BT_SCO,
+    OUT_DEVICE_WIRED_HEADSET,
+    OUT_DEVICE_HEADPHONE = OUT_DEVICE_WIRED_HEADPHONE,
 };
-#define OUT_DEVICE_COUNT (OUT_DEVICE_BT_SCO + 1)
+#define OUT_DEVICE_COUNT (OUT_DEVICE_WIRED_HEADSET + 1)
 
 enum input_device {
     IN_DEVICE_NONE = 0,
     IN_DEVICE_MAIN_MIC,
     IN_DEVICE_HEADSET_MIC,
     IN_DEVICE_BT_SCO,
+    IN_DEVICE_VOICE_CALL,
 };
-#define IN_DEVICE_COUNT (IN_DEVICE_BT_SCO + 1)
+#define IN_DEVICE_COUNT (IN_DEVICE_VOICE_CALL + 1)
 
 struct mindone_audio_device {
     pthread_mutex_t lock;
@@ -97,9 +101,10 @@ struct mindone_audio_device {
     audio_mode_t mode;
     bool mic_mute;
     float voice_volume;
-    struct mixer_ctl *voice_gain_ctl;
-    long voice_gain_values[2];
-    unsigned int voice_gain_count;
+    struct mixer_ctl *voice_gain_ctls[2];
+    long voice_gain_values[2][2];
+    unsigned int voice_gain_counts[2];
+    unsigned int voice_gain_ctl_count;
 
     bool bt_wb;
 
@@ -107,7 +112,10 @@ struct mindone_audio_device {
     bool speech_on;
     int speech_fd;
     enum output_device voice_out_device;
+    enum output_device voice_pending_out_device;
     enum input_device voice_in_device;
+    audio_patch_handle_t voice_patch_handle;
+    audio_patch_handle_t next_patch_handle;
     struct pcm *speech_hostless_out;
     struct pcm *speech_hostless_in;
 
@@ -195,10 +203,12 @@ struct mindone_stream_in {
 
 static enum output_device output_device_from_mask(audio_devices_t device)
 {
-    if (device & (AUDIO_DEVICE_OUT_WIRED_HEADSET | AUDIO_DEVICE_OUT_WIRED_HEADPHONE))
-        return OUT_DEVICE_HEADPHONE;
     if (device & AUDIO_DEVICE_OUT_SPEAKER)
         return OUT_DEVICE_SPEAKER;
+    if (device & AUDIO_DEVICE_OUT_WIRED_HEADSET)
+        return OUT_DEVICE_WIRED_HEADSET;
+    if (device & AUDIO_DEVICE_OUT_WIRED_HEADPHONE)
+        return OUT_DEVICE_WIRED_HEADPHONE;
     if (device & AUDIO_DEVICE_OUT_EARPIECE)
         return OUT_DEVICE_EARPIECE;
     if (device & (AUDIO_DEVICE_OUT_BLUETOOTH_SCO |
@@ -211,22 +221,24 @@ static enum output_device output_device_from_mask(audio_devices_t device)
 static const char *output_path_name(enum output_device d)
 {
     switch (d) {
-    case OUT_DEVICE_HEADPHONE: return "headphone";
-    case OUT_DEVICE_EARPIECE:  return "earpiece";
-    case OUT_DEVICE_BT_SCO:    return NULL;
+    case OUT_DEVICE_WIRED_HEADPHONE:
+    case OUT_DEVICE_WIRED_HEADSET: return "headphone";
+    case OUT_DEVICE_EARPIECE:      return "earpiece";
+    case OUT_DEVICE_BT_SCO:        return NULL;
     case OUT_DEVICE_SPEAKER:
-    default:                   return "speaker";
+    default:                       return "speaker";
     }
 }
 
 static const char *output_path_off_name(enum output_device d)
 {
     switch (d) {
-    case OUT_DEVICE_HEADPHONE: return "headphone-off";
-    case OUT_DEVICE_EARPIECE:  return "earpiece-off";
-    case OUT_DEVICE_BT_SCO:    return NULL;
+    case OUT_DEVICE_WIRED_HEADPHONE:
+    case OUT_DEVICE_WIRED_HEADSET: return "headphone-off";
+    case OUT_DEVICE_EARPIECE:      return "earpiece-off";
+    case OUT_DEVICE_BT_SCO:        return NULL;
     case OUT_DEVICE_SPEAKER:
-    default:                   return "speaker-off";
+    default:                       return "speaker-off";
     }
 }
 
@@ -237,8 +249,9 @@ static int plan_endpoint_transition(const struct mindone_audio_route_state *curr
                                     struct mindone_audio_route_plan *plan)
 {
     _Static_assert(OUT_DEVICE_NONE == 0 && OUT_DEVICE_SPEAKER == 1 &&
-                   OUT_DEVICE_HEADPHONE == 2 && OUT_DEVICE_EARPIECE == 3 &&
-                   OUT_DEVICE_BT_SCO == 4 && OUT_DEVICE_COUNT == 5, "endpoint ABI");
+                   OUT_DEVICE_WIRED_HEADPHONE == 2 && OUT_DEVICE_EARPIECE == 3 &&
+                   OUT_DEVICE_BT_SCO == 4 && OUT_DEVICE_WIRED_HEADSET == 5 &&
+                   OUT_DEVICE_COUNT == 6, "endpoint ABI");
     int32_t status = mindone_audio_route_plan(current, (uint32_t)old_device,
                                              (uint32_t)new_device, plan);
     return status == 0 ? 0 : status == -5 ? -EOVERFLOW : -EINVAL;
@@ -329,6 +342,10 @@ static int endpoint_release(struct mindone_audio_device *adev, enum output_devic
             audio_route_apply_path(adev->route, output_path_name(OUT_DEVICE_EARPIECE));
         else if (d == OUT_DEVICE_EARPIECE && adev->out_ep_users[OUT_DEVICE_SPEAKER] > 0)
             audio_route_apply_path(adev->route, output_path_name(OUT_DEVICE_SPEAKER));
+        else if (d == OUT_DEVICE_WIRED_HEADPHONE && adev->out_ep_users[OUT_DEVICE_WIRED_HEADSET] > 0)
+            audio_route_apply_path(adev->route, output_path_name(OUT_DEVICE_WIRED_HEADSET));
+        else if (d == OUT_DEVICE_WIRED_HEADSET && adev->out_ep_users[OUT_DEVICE_WIRED_HEADPHONE] > 0)
+            audio_route_apply_path(adev->route, output_path_name(OUT_DEVICE_WIRED_HEADPHONE));
         audio_route_update_mixer(adev->route);
     }
     return 0;
@@ -404,6 +421,8 @@ static enum input_device input_device_from_mask(audio_devices_t device)
 {
     const audio_devices_t type = device & ~AUDIO_DEVICE_BIT_IN;
 
+    if (type & (AUDIO_DEVICE_IN_VOICE_CALL & ~AUDIO_DEVICE_BIT_IN))
+        return IN_DEVICE_VOICE_CALL;
     if (type & (AUDIO_DEVICE_IN_BLUETOOTH_SCO_HEADSET & ~AUDIO_DEVICE_BIT_IN))
         return IN_DEVICE_BT_SCO;
     if (type & (AUDIO_DEVICE_IN_WIRED_HEADSET & ~AUDIO_DEVICE_BIT_IN))
@@ -411,10 +430,20 @@ static enum input_device input_device_from_mask(audio_devices_t device)
     return IN_DEVICE_MAIN_MIC;
 }
 
+static int input_pcm_device(enum input_device d)
+{
+    if (d == IN_DEVICE_BT_SCO)
+        return PCM_DEVICE_BTCVSD;
+    if (d == IN_DEVICE_VOICE_CALL)
+        return PCM_DEVICE_CAPTURE_VOICE;
+    return PCM_DEVICE_CAPTURE_MAIN;
+}
+
 static const char *input_path_name(enum input_device d)
 {
     switch (d) {
     case IN_DEVICE_HEADSET_MIC: return "headset-mic";
+    case IN_DEVICE_VOICE_CALL:  return "voice-uplink-capture";
     case IN_DEVICE_BT_SCO:      return NULL;
     case IN_DEVICE_MAIN_MIC:
     default:                    return "mic";
@@ -425,6 +454,7 @@ static const char *input_path_off_name(enum input_device d)
 {
     switch (d) {
     case IN_DEVICE_HEADSET_MIC: return "headset-mic-off";
+    case IN_DEVICE_VOICE_CALL:  return "voice-uplink-capture-off";
     case IN_DEVICE_BT_SCO:      return NULL;
     case IN_DEVICE_MAIN_MIC:
     default:                    return "mic-off";
@@ -437,6 +467,7 @@ static void apply_input_route(struct mindone_audio_device *adev,
 {
     enum input_device selected = IN_DEVICE_NONE;
     const char *off, *on;
+    bool update = false;
 
     if (old_device == new_device)
         return;
@@ -446,9 +477,20 @@ static void apply_input_route(struct mindone_audio_device *adev,
             return;
         }
         adev->in_ep_users[old_device]--;
+        if (old_device == IN_DEVICE_VOICE_CALL &&
+            adev->in_ep_users[IN_DEVICE_VOICE_CALL] == 0) {
+            audio_route_apply_path(adev->route, input_path_off_name(IN_DEVICE_VOICE_CALL));
+            update = true;
+        }
     }
-    if (new_device != IN_DEVICE_NONE)
+    if (new_device != IN_DEVICE_NONE) {
         adev->in_ep_users[new_device]++;
+        if (new_device == IN_DEVICE_VOICE_CALL &&
+            adev->in_ep_users[IN_DEVICE_VOICE_CALL] == 1) {
+            audio_route_apply_path(adev->route, input_path_name(IN_DEVICE_VOICE_CALL));
+            update = true;
+        }
+    }
     if (adev->voice_in_device != IN_DEVICE_NONE &&
         adev->in_ep_users[adev->voice_in_device] > 0)
         selected = adev->voice_in_device;
@@ -456,17 +498,19 @@ static void apply_input_route(struct mindone_audio_device *adev,
         selected = IN_DEVICE_MAIN_MIC;
     else if (adev->in_ep_users[IN_DEVICE_HEADSET_MIC] > 0)
         selected = IN_DEVICE_HEADSET_MIC;
-    if (adev->input_routed_device == selected)
-        return;
-    off = adev->input_routed_device != IN_DEVICE_NONE ?
-        input_path_off_name(adev->input_routed_device) : NULL;
-    on = selected != IN_DEVICE_NONE ? input_path_name(selected) : NULL;
-    if (off)
-        audio_route_apply_path(adev->route, off);
-    if (on)
-        audio_route_apply_path(adev->route, on);
-    audio_route_update_mixer(adev->route);
-    adev->input_routed_device = selected;
+    if (adev->input_routed_device != selected) {
+        off = adev->input_routed_device != IN_DEVICE_NONE ?
+            input_path_off_name(adev->input_routed_device) : NULL;
+        on = selected != IN_DEVICE_NONE ? input_path_name(selected) : NULL;
+        if (off)
+            audio_route_apply_path(adev->route, off);
+        if (on)
+            audio_route_apply_path(adev->route, on);
+        adev->input_routed_device = selected;
+        update = true;
+    }
+    if (update)
+        audio_route_update_mixer(adev->route);
 }
 
 static void teardown_input_route(struct mindone_audio_device *adev,
@@ -475,85 +519,118 @@ static void teardown_input_route(struct mindone_audio_device *adev,
     apply_input_route(adev, device, IN_DEVICE_NONE);
 }
 
-static const char *output_volume_control_name(enum output_device device)
+static unsigned int output_volume_control_names(enum output_device device,
+                                                const char *names[2])
 {
     switch (device) {
-    case OUT_DEVICE_HEADPHONE: return "Headphone Volume";
-    case OUT_DEVICE_EARPIECE: return "Handset Volume";
-    case OUT_DEVICE_SPEAKER: return "Lineout Volume";
-    default: return NULL;
+    case OUT_DEVICE_WIRED_HEADPHONE:
+    case OUT_DEVICE_WIRED_HEADSET:
+        names[0] = "Headphone Volume";
+        return 1;
+    case OUT_DEVICE_EARPIECE:
+        names[0] = "Handset Volume";
+        return 1;
+    case OUT_DEVICE_SPEAKER:
+        names[0] = "Lineout Volume";
+        names[1] = "Handset Volume";
+        return 2;
+    default:
+        return 0;
     }
 }
 
 static int voice_gain_acquire(struct mindone_audio_device *adev, enum output_device device)
 {
-    const char *name = output_volume_control_name(device);
-    struct mixer_ctl *ctl;
-    unsigned int count;
+    const char *names[2];
+    struct mixer_ctl *ctls[2];
+    long values[2][2];
+    unsigned int counts[2];
+    unsigned int num_ctls;
 
-    if (!adev->mixer || !name || adev->voice_gain_ctl)
+    if (!adev->mixer || adev->voice_gain_ctl_count)
         return -EINVAL;
-    ctl = mixer_get_ctl_by_name(adev->mixer, name);
-    if (!ctl)
-        return -ENODEV;
-    count = mixer_ctl_get_num_values(ctl);
-    if (!count || count > sizeof(adev->voice_gain_values) / sizeof(adev->voice_gain_values[0]))
+    num_ctls = output_volume_control_names(device, names);
+    if (!num_ctls)
         return -EINVAL;
-    for (unsigned int i = 0; i < count; i++) {
-        int value = mixer_ctl_get_value(ctl, i);
+    for (unsigned int c = 0; c < num_ctls; c++) {
+        struct mixer_ctl *ctl = mixer_get_ctl_by_name(adev->mixer, names[c]);
+        unsigned int count;
 
-        if (value < 0)
-            return value;
-        if (value < mixer_ctl_get_range_min(ctl) || value > mixer_ctl_get_range_max(ctl))
-            return -ERANGE;
-        adev->voice_gain_values[i] = value;
+        if (!ctl)
+            return -ENODEV;
+        count = mixer_ctl_get_num_values(ctl);
+        if (!count || count > sizeof(values[0]) / sizeof(values[0][0]))
+            return -EINVAL;
+        for (unsigned int i = 0; i < count; i++) {
+            int value = mixer_ctl_get_value(ctl, i);
+
+            if (value < 0)
+                return value;
+            if (value < mixer_ctl_get_range_min(ctl) || value > mixer_ctl_get_range_max(ctl))
+                return -ERANGE;
+            values[c][i] = value;
+        }
+        ctls[c] = ctl;
+        counts[c] = count;
     }
-    adev->voice_gain_ctl = ctl;
-    adev->voice_gain_count = count;
+    for (unsigned int c = 0; c < num_ctls; c++) {
+        adev->voice_gain_ctls[c] = ctls[c];
+        adev->voice_gain_counts[c] = counts[c];
+        for (unsigned int i = 0; i < counts[c]; i++)
+            adev->voice_gain_values[c][i] = values[c][i];
+    }
+    adev->voice_gain_ctl_count = num_ctls;
     return 0;
 }
 
 static void voice_gain_release(struct mindone_audio_device *adev)
 {
-    int rc;
-
-    if (!adev->voice_gain_ctl)
+    if (!adev->voice_gain_ctl_count)
         return;
-    rc = mixer_ctl_set_array(adev->voice_gain_ctl, adev->voice_gain_values,
-                             adev->voice_gain_count);
-    if (rc)
-        ALOGE("%s: failed to restore endpoint gain: %d", __func__, rc);
-    adev->voice_gain_ctl = NULL;
-    adev->voice_gain_count = 0;
+    for (unsigned int c = 0; c < adev->voice_gain_ctl_count; c++) {
+        int rc = mixer_ctl_set_array(adev->voice_gain_ctls[c], adev->voice_gain_values[c],
+                                     adev->voice_gain_counts[c]);
+        if (rc)
+            ALOGE("%s: failed to restore endpoint gain: %d", __func__, rc);
+        adev->voice_gain_ctls[c] = NULL;
+        adev->voice_gain_counts[c] = 0;
+    }
+    adev->voice_gain_ctl_count = 0;
 }
 
 static void set_hw_output_volume(struct mindone_audio_device *adev,
                                   enum output_device device, float vol)
 {
-    const char *ctl_name = output_volume_control_name(device);
-    struct mixer_ctl *ctl;
-    int min, max, value;
-    unsigned int i, num_values;
+    const char *names[2];
+    unsigned int num_ctls;
 
-    if (!adev->mixer || !ctl_name)
+    if (!adev->mixer)
         return;
-
-    ctl = mixer_get_ctl_by_name(adev->mixer, ctl_name);
-    if (!ctl) {
-        ALOGW("%s: mixer control '%s' not found", __func__, ctl_name);
+    num_ctls = output_volume_control_names(device, names);
+    if (!num_ctls)
         return;
-    }
 
     if (vol < 0.0f) vol = 0.0f;
     if (vol > 1.0f) vol = 1.0f;
 
-    min = mixer_ctl_get_range_min(ctl);
-    max = mixer_ctl_get_range_max(ctl);
-    value = min + (int)lroundf(vol * (float)(max - min));
+    for (unsigned int c = 0; c < num_ctls; c++) {
+        struct mixer_ctl *ctl = mixer_get_ctl_by_name(adev->mixer, names[c]);
+        int min, max, value;
+        unsigned int i, num_values;
 
-    num_values = mixer_ctl_get_num_values(ctl);
-    for (i = 0; i < num_values; i++)
-        mixer_ctl_set_value(ctl, (int)i, value);
+        if (!ctl) {
+            ALOGW("%s: mixer control '%s' not found", __func__, names[c]);
+            continue;
+        }
+
+        min = mixer_ctl_get_range_min(ctl);
+        max = mixer_ctl_get_range_max(ctl);
+        value = min + (int)lroundf(vol * (float)(max - min));
+
+        num_values = mixer_ctl_get_num_values(ctl);
+        for (i = 0; i < num_values; i++)
+            mixer_ctl_set_value(ctl, (int)i, value);
+    }
 }
 
 #define SCO_PCM_PACKET_BYTES    60
@@ -746,9 +823,13 @@ static void sph_input_attr_for_route(enum output_device out, struct sp_input_att
         attr->outputDevice = AUDIO_DEVICE_OUT_SPEAKER;
         attr->inputDevice = AUDIO_DEVICE_IN_BUILTIN_MIC;
         break;
-    case OUT_DEVICE_HEADPHONE:
+    case OUT_DEVICE_WIRED_HEADSET:
         attr->outputDevice = AUDIO_DEVICE_OUT_WIRED_HEADSET;
         attr->inputDevice = AUDIO_DEVICE_IN_WIRED_HEADSET;
+        break;
+    case OUT_DEVICE_WIRED_HEADPHONE:
+        attr->outputDevice = AUDIO_DEVICE_OUT_WIRED_HEADPHONE;
+        attr->inputDevice = AUDIO_DEVICE_IN_BUILTIN_MIC;
         break;
     case OUT_DEVICE_BT_SCO:
         attr->outputDevice = AUDIO_DEVICE_OUT_BLUETOOTH_SCO;
@@ -1332,7 +1413,7 @@ static int voice_route_enable(struct mindone_audio_device *adev, enum output_dev
         return rc;
     adev->voice_out_device = out;
     adev->voice_in_device = out == OUT_DEVICE_BT_SCO ? IN_DEVICE_NONE :
-        out == OUT_DEVICE_HEADPHONE ? IN_DEVICE_HEADSET_MIC : IN_DEVICE_MAIN_MIC;
+        out == OUT_DEVICE_WIRED_HEADSET ? IN_DEVICE_HEADSET_MIC : IN_DEVICE_MAIN_MIC;
     if (out != OUT_DEVICE_BT_SCO) {
         apply_input_route(adev, IN_DEVICE_NONE, adev->voice_in_device);
         audio_route_apply_path(adev->route, "voice-downlink");
@@ -1386,10 +1467,53 @@ static int voice_route_change_sco(struct mindone_audio_device *adev, enum output
     return rc;
 }
 
+static int voice_route_change_analog(struct mindone_audio_device *adev, enum output_device out)
+{
+    enum output_device old_out = adev->voice_out_device;
+    enum input_device old_in = adev->voice_in_device;
+    enum input_device new_in = out == OUT_DEVICE_WIRED_HEADSET ?
+        IN_DEVICE_HEADSET_MIC : IN_DEVICE_MAIN_MIC;
+    int rc;
+
+#if defined(MINDONE_AUDIO_RUST_ROUTES)
+    rc = check_endpoint_transition(adev, old_out, out);
+    if (rc)
+        return rc;
+#endif
+    rc = speech_ccci_set_mode(adev, out);
+    if (rc) {
+        voice_route_disable(adev, true);
+        return rc;
+    }
+    voice_gain_release(adev);
+    rc = apply_output_route(adev, old_out, out);
+    if (rc) {
+        voice_route_disable(adev, true);
+        return rc;
+    }
+    adev->voice_out_device = out;
+    if (new_in != old_in) {
+        speech_hostless_close(adev);
+        adev->voice_in_device = new_in;
+        apply_input_route(adev, old_in, new_in);
+        rc = speech_hostless_open(adev);
+    }
+    if (!rc)
+        rc = voice_gain_acquire(adev, out);
+    if (rc) {
+        voice_route_disable(adev, true);
+        return rc;
+    }
+    set_hw_output_volume(adev, out, adev->voice_volume);
+    ALOGI("%s: voice route switched to %s", __func__,
+          output_path_name(out) ? output_path_name(out) : "unknown");
+    return 0;
+}
+
 static enum output_device voice_output_device(struct mindone_audio_device *adev)
 {
-    if (adev->active_out && adev->active_out->device)
-        return output_device_from_mask(adev->active_out->device);
+    if (adev->voice_pending_out_device != OUT_DEVICE_NONE)
+        return adev->voice_pending_out_device;
     return OUT_DEVICE_EARPIECE;
 }
 
@@ -2073,8 +2197,7 @@ static int in_set_route(struct mindone_stream_in *in, audio_devices_t new_mask)
     if (!in->standby) {
         enum input_device new_dev = input_device_from_mask(new_mask);
 
-        restart = (new_dev == IN_DEVICE_BT_SCO) !=
-                  (in->routed_device == IN_DEVICE_BT_SCO);
+        restart = input_pcm_device(new_dev) != input_pcm_device(in->routed_device);
         if (!restart) {
             apply_input_route(adev, in->routed_device, new_dev);
             in->routed_device = new_dev;
@@ -2122,12 +2245,13 @@ static int start_input_stream(struct mindone_stream_in *in)
 
     pthread_mutex_lock(&adev->lock);
     new_dev = input_device_from_mask(in->device);
+    pcm_dev = input_pcm_device(new_dev);
     if (new_dev == IN_DEVICE_BT_SCO) {
-        pcm_dev = PCM_DEVICE_BTCVSD;
         sco_pcm_config(adev, &in->hw_config);
     } else {
-        pcm_dev = PCM_DEVICE_CAPTURE_MAIN;
         in->hw_config = in->config;
+        if (new_dev == IN_DEVICE_VOICE_CALL)
+            in->hw_config.channels = 1;
     }
     in->reopen_pending = false;
     if (new_dev != IN_DEVICE_BT_SCO)
@@ -2269,7 +2393,7 @@ static ssize_t in_read(struct mindone_stream_in *in, void *buffer, size_t bytes)
     }
 
 
-    if (in->config.channels == 1) {
+    if (routed_device == IN_DEVICE_VOICE_CALL || in->config.channels == 1) {
         ret = pcm_transfer_frames(in->pcm, buffer, bytes / in->frame_size,
                                   in->frame_size, true);
         if (ret == 0)
@@ -2546,7 +2670,7 @@ static int set_mode(struct mindone_audio_device *adev, audio_mode_t mode)
     bool want_call;
 
     pthread_mutex_lock(&adev->lock);
-    if (mode == adev->mode) {
+    if (mode == adev->mode && (mode != AUDIO_MODE_IN_CALL || adev->in_call)) {
         pthread_mutex_unlock(&adev->lock);
         return 0;
     }
@@ -2558,8 +2682,13 @@ static int set_mode(struct mindone_audio_device *adev, audio_mode_t mode)
         rc = voice_route_enable(adev, voice_output_device(adev));
     else
         rc = voice_route_disable(adev, true);
-    if (!rc)
+    if (!rc) {
         adev->mode = mode;
+        if (!want_call) {
+            adev->voice_patch_handle = AUDIO_PATCH_HANDLE_NONE;
+            adev->voice_pending_out_device = OUT_DEVICE_NONE;
+        }
+    }
 
     pthread_mutex_unlock(&adev->lock);
     return rc;
@@ -2649,6 +2778,16 @@ static int check_output_patch(const struct mindone_audio_device *adev,
 }
 #endif
 
+static audio_patch_handle_t alloc_patch_handle(struct mindone_audio_device *adev)
+{
+    audio_patch_handle_t h = adev->next_patch_handle;
+
+    if (h <= AUDIO_PATCH_HANDLE_NONE)
+        h = AUDIO_PATCH_HANDLE_NONE + 1;
+    adev->next_patch_handle = (h == INT_MAX) ? (AUDIO_PATCH_HANDLE_NONE + 1) : (h + 1);
+    return h;
+}
+
 static int create_audio_patch(struct mindone_audio_device *adev,
                                     unsigned int num_sources,
                                     const struct audio_port_config *sources,
@@ -2656,16 +2795,20 @@ static int create_audio_patch(struct mindone_audio_device *adev,
                                     const struct audio_port_config *sinks,
                                     audio_patch_handle_t *handle)
 {
+    audio_patch_handle_t assigned;
+
     if (!sources || !sinks || num_sources < 1 || num_sinks < 1 || !handle)
         return -EINVAL;
 
+    pthread_mutex_lock(&adev->lock);
+
     if (sinks[0].type == AUDIO_PORT_TYPE_DEVICE &&
         sinks[0].ext.device.type == AUDIO_DEVICE_OUT_TELEPHONY_TX) {
-        *handle = AUDIO_PATCH_HANDLE_NONE + 1;
+        assigned = alloc_patch_handle(adev);
+        pthread_mutex_unlock(&adev->lock);
+        *handle = assigned;
         return 0;
     }
-
-    pthread_mutex_lock(&adev->lock);
 
     if (sinks[0].type == AUDIO_PORT_TYPE_DEVICE) {
         if (num_sinks != 1) {
@@ -2674,45 +2817,35 @@ static int create_audio_patch(struct mindone_audio_device *adev,
         }
         enum output_device d = output_device_from_mask(sinks[0].ext.device.type);
 
-        if ((adev->in_call || adev->mode == AUDIO_MODE_IN_CALL) &&
-            sources[0].type == AUDIO_PORT_TYPE_DEVICE &&
+        if (sources[0].type == AUDIO_PORT_TYPE_DEVICE &&
             sources[0].ext.device.type == AUDIO_DEVICE_IN_VOICE_CALL) {
             if (num_sources != 1) {
                 pthread_mutex_unlock(&adev->lock);
                 return -EINVAL;
             }
-            if (adev->in_call &&
-                (d == OUT_DEVICE_BT_SCO || adev->voice_out_device == OUT_DEVICE_BT_SCO) &&
-                adev->voice_out_device != d) {
-                int rc = voice_route_change_sco(adev, d);
-                if (rc) {
-                    pthread_mutex_unlock(&adev->lock);
-                    return rc;
-                }
-            } else if (!adev->in_call || adev->voice_out_device != d) {
-#if defined(MINDONE_AUDIO_RUST_ROUTES)
-                int planning_rc = check_endpoint_transition(adev, adev->voice_out_device, d);
-                if (planning_rc) {
-                    pthread_mutex_unlock(&adev->lock);
-                    return planning_rc;
-                }
-#endif
-                if (adev->in_call) {
-                    int rc = speech_ccci_set_mode(adev, d);
-                    if (rc) {
-                        voice_route_disable(adev, true);
-                        pthread_mutex_unlock(&adev->lock);
-                        return rc;
-                    }
-                }
-                int rc = voice_route_disable(adev, false);
-                if (!rc)
+            if (adev->in_call || adev->mode == AUDIO_MODE_IN_CALL ||
+                adev->mode == AUDIO_MODE_RINGTONE) {
+                int rc = 0;
+
+                if (adev->in_call && adev->voice_out_device != d) {
+                    if (d == OUT_DEVICE_BT_SCO || adev->voice_out_device == OUT_DEVICE_BT_SCO)
+                        rc = voice_route_change_sco(adev, d);
+                    else
+                        rc = voice_route_change_analog(adev, d);
+                } else if (!adev->in_call) {
                     rc = voice_route_enable(adev, d);
+                }
                 if (rc) {
                     pthread_mutex_unlock(&adev->lock);
                     return rc;
                 }
             }
+            adev->voice_pending_out_device = d;
+            assigned = alloc_patch_handle(adev);
+            adev->voice_patch_handle = assigned;
+            pthread_mutex_unlock(&adev->lock);
+            *handle = assigned;
+            return 0;
         } else {
             unsigned int si;
 
@@ -2778,7 +2911,7 @@ static int create_audio_patch(struct mindone_audio_device *adev,
             matched = true;
             in->device = sources[0].ext.device.type;
             if (!in->standby) {
-                if ((d == IN_DEVICE_BT_SCO) != (in->routed_device == IN_DEVICE_BT_SCO)) {
+                if (input_pcm_device(d) != input_pcm_device(in->routed_device)) {
                     in->reopen_pending = true;
                 } else if (in->routed_device != d) {
                     apply_input_route(adev, in->routed_device, d);
@@ -2792,17 +2925,30 @@ static int create_audio_patch(struct mindone_audio_device *adev,
         }
     }
 
+    assigned = alloc_patch_handle(adev);
     pthread_mutex_unlock(&adev->lock);
 
-    *handle = AUDIO_PATCH_HANDLE_NONE + 1;
+    *handle = assigned;
     return 0;
 }
 
 static int release_audio_patch(struct mindone_audio_device *adev,
                                      audio_patch_handle_t handle)
 {
-    (void)adev; (void)handle;
-    return 0;
+    int rc = 0;
+
+    if (handle == AUDIO_PATCH_HANDLE_NONE)
+        return 0;
+    pthread_mutex_lock(&adev->lock);
+    if (handle == adev->voice_patch_handle) {
+        rc = voice_route_disable(adev, true);
+        if (!rc) {
+            adev->voice_patch_handle = AUDIO_PATCH_HANDLE_NONE;
+            adev->voice_pending_out_device = OUT_DEVICE_NONE;
+        }
+    }
+    pthread_mutex_unlock(&adev->lock);
+    return rc;
 }
 
 int mindone_audio_device_close(struct mindone_audio_device *adev)

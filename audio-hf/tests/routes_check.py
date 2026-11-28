@@ -94,23 +94,29 @@ def main():
     def caller_fixture(implementation):
         enums = enum + "\n" + count + "\n"
         enums += re.search(r"enum input_device \{.*?\n\};", implementation, re.S).group() + "\n"
-        for name in ("IN_DEVICE_COUNT", "OUT_CHANNEL_COUNT"):
+        for name in ("IN_DEVICE_COUNT", "OUT_CHANNEL_COUNT", "PCM_DEVICE_CAPTURE_MAIN",
+                     "PCM_DEVICE_CAPTURE_VOICE", "PCM_DEVICE_BTCVSD"):
             enums += re.search(r"^#define " + name + r" .+$", implementation, re.M).group() + "\n"
         structures = []
         for name in ("mindone_audio_device", "mindone_stream_out", "mindone_stream_in"):
             structures.append(re.search(r"struct " + name + r" \{.*?\n\};", implementation, re.S).group())
         methods = [extract(implementation, signature) for signature in (
             "static enum output_device output_device_from_mask(", "static enum input_device input_device_from_mask(",
+            "static int input_pcm_device(",
             "static const char *output_path_name(", "static const char *output_path_off_name(",
             "static int plan_endpoint_transition(", "static struct mindone_audio_route_state endpoint_snapshot(",
             "static int check_endpoint_transition(", "static int apply_endpoint_transition(",
             "static int endpoint_acquire(", "static int endpoint_release(",
             "static int apply_output_route(", "static int teardown_output_route(",
             "static int voice_route_disable(", "static int voice_route_enable(",
+            "static int voice_route_change_analog(",
             "static int do_out_standby(", "static int out_standby(",
             "static int out_set_route(", "static int start_output_stream(",
             "static ssize_t out_write(",
-            "static int set_mode(", "int mindone_audio_set_mode(", "static int check_output_patch(", "static int create_audio_patch(", "int mindone_audio_create_patch(")]
+            "static int set_mode(", "int mindone_audio_set_mode(", "static int check_output_patch(",
+            "static audio_patch_handle_t alloc_patch_handle(",
+            "static int create_audio_patch(", "int mindone_audio_create_patch(",
+            "static int release_audio_patch(", "int mindone_audio_release_patch(")]
         methods.append("#define free checked_free\n" +
                        extract(implementation, "static void close_output_stream(") + "\n#undef free")
         return (source / "tests/callers.c").read_text().replace("PRODUCTION_ENUMS", enums).replace(

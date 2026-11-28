@@ -5,15 +5,18 @@
 #include <aidl/android/hardware/secure_element/BnSecureElement.h>
 #include <aidl/android/hardware/secure_element/ISecureElementCallback.h>
 #include <aidl/android/hardware/radio/sim/IRadioSim.h>
+#include <android/binder_auto_utils.h>
 #include <android/binder_manager.h>
 #include <android/binder_process.h>
 #include <android/binder_ibinder.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unistd.h>
@@ -53,12 +56,20 @@ static bool unhex(const std::string& text, Bytes* out) {
 }
 
 class SecureElement final : public se::BnSecureElement {
+    enum class CardQuery { OK, RADIO_ERROR, INTERRUPTED, DISCONNECTED };
     struct Reply {
         radio::RadioResponseInfo info;
         int value = 0;
         Bytes bytes;
         std::string text;
         int sw1 = 0, sw2 = 0;
+    };
+    struct BackendDeathCookie {
+        std::weak_ptr<SecureElement> self;
+        uint64_t epoch;
+    };
+    struct ClientDeathCookie {
+        std::weak_ptr<SecureElement> self;
     };
     std::string backendName;
     std::mutex operation, responses;
@@ -70,16 +81,55 @@ class SecureElement final : public se::BnSecureElement {
     std::map<int, uid_t> channels;
     uid_t owner = static_cast<uid_t>(-1);
     int serial = 0, pending = 0;
-    bool readyReply = false, connected = false;
+    bool readyReply = false, connected = false, stateKnown = false;
     Reply result;
-    std::atomic<bool> dirty{true}, invalidated{false};
+    std::atomic<bool> dirty{true}, invalidated{false}, backendDead{false}, stopping{false};
+    std::mutex monitorMutex;
+    std::condition_variable monitorCv;
+    bool monitorPending = false;
+    bool resetBackoff = false;
     std::mutex notifications;
     std::condition_variable notificationReady;
+    bool stopNotifier = false;
     struct Event { std::shared_ptr<se::ISecureElementCallback> cb; bool state; std::string reason; };
     std::deque<Event> events;
+    std::thread notifierThread;
     std::atomic<uint64_t> generation{0};
     uint64_t activeGeneration = 0;
+    ndk::ScopedAIBinder_DeathRecipient backendDeath;
+    ndk::ScopedAIBinder_DeathRecipient clientDeath;
+    void* backendDeathCookie = nullptr;
+    void* clientDeathCookie = nullptr;
 
+    void wakeMonitor(bool reset) {
+        std::lock_guard lock(monitorMutex);
+        monitorPending = true;
+        if (reset) resetBackoff = true;
+        monitorCv.notify_all();
+    }
+    void onBackendDied(uint64_t epoch) {
+        if (epoch == generation.load()) {
+            backendDead.store(true);
+            dirty.store(true);
+            {
+                std::lock_guard lock(responses);
+                completed.notify_all();
+            }
+            wakeMonitor(true);
+        }
+    }
+    void unlinkBackend() {
+        if (backend && backendDeathCookie) {
+            AIBinder_unlinkToDeath(backend->asBinder().get(), backendDeath.get(), backendDeathCookie);
+            backendDeathCookie = nullptr;
+        }
+    }
+    void unlinkClient() {
+        if (client && clientDeathCookie) {
+            AIBinder_unlinkToDeath(client->asBinder().get(), clientDeath.get(), clientDeathCookie);
+            clientDeathCookie = nullptr;
+        }
+    }
     bool owned() const {
         return client && owner == AIBinder_getCallingUid() &&
                AIBinder_isAlive(client->asBinder().get());
@@ -92,17 +142,28 @@ class SecureElement final : public se::BnSecureElement {
             notificationReady.notify_one();
         }
     }
-    void discard() {
+    void discard(bool wake = true) {
+        bool hadBackend = static_cast<bool>(backend);
+        unlinkBackend();
         backend.reset();
         channels.clear();
+        stateKnown = false;
+        dirty.store(true);
         ++generation;
-        activeGeneration = generation;
-        notify(false, "Radio connection lost");
+        activeGeneration = generation.load();
+        if (connected) notify(false, "Radio connection lost");
+        if (wake && hadBackend) wakeMonitor(true);
     }
-    bool connect() {
-        if (invalidated.exchange(false) && backend) discard();
-        if (backend && AIBinder_isAlive(backend->asBinder().get())) return true;
-        if (backend) discard();
+    bool connect(bool wakeOnDiscard = true) {
+        if (backendDead.exchange(false) && backend) discard(wakeOnDiscard);
+        if (backend && AIBinder_isAlive(backend->asBinder().get())) {
+            if (invalidated.exchange(false)) {
+                channels.clear();
+                if (connected) notify(false, "SIM state changed");
+            }
+            return true;
+        }
+        if (backend) discard(wakeOnDiscard);
         ndk::SpAIBinder binder(AServiceManager_checkService(backendName.c_str()));
         if (!binder.get()) return false;
         auto candidate = sim::IRadioSim::fromBinder(binder);
@@ -110,41 +171,64 @@ class SecureElement final : public se::BnSecureElement {
         auto r = ndk::SharedRefBase::make<RadioSimResponse>();
         auto i = ndk::SharedRefBase::make<RadioSimIndication>();
         uint64_t epoch = ++generation;
-        r->reply = [this, epoch](const radio::RadioResponseInfo& info, int value,
-                                const Bytes& bytes, const std::string& text, int sw1, int sw2) {
+        std::weak_ptr<SecureElement> weak(ref<SecureElement>());
+        r->reply = [weak, epoch](const radio::RadioResponseInfo& info, int value,
+                                 const Bytes& bytes, const std::string& text, int sw1, int sw2) {
             if (info.type == radio::RadioResponseType::SOLICITED_ACK) return;
-            std::lock_guard lock(responses);
-            if (epoch != generation || info.serial != pending) return;
-            result = {info, value, bytes, text, sw1, sw2};
-            readyReply = true;
-            completed.notify_all();
+            auto self = weak.lock();
+            if (!self) return;
+            std::lock_guard lock(self->responses);
+            if (epoch != self->generation.load() || info.serial != self->pending) return;
+            self->result = {info, value, bytes, text, sw1, sw2};
+            self->readyReply = true;
+            self->completed.notify_all();
         };
         i->acknowledge = [candidate] { candidate->responseAcknowledgement(); };
-        i->changed = [this, epoch] { if (epoch == generation) { dirty = true; invalidated = true; } };
+        i->changed = [weak, epoch] {
+            auto self = weak.lock();
+            if (!self) return;
+            if (epoch == self->generation.load()) {
+                self->dirty.store(true);
+                self->invalidated.store(true);
+                self->wakeMonitor(true);
+            }
+        };
         if (!candidate->setResponseFunctions(r, i).isOk()) return false;
         backend = candidate;
         response = r;
         indication = i;
         activeGeneration = epoch;
-        dirty = true;
+        stateKnown = false;
+        dirty.store(true);
+        invalidated.store(false);
+        backendDead.store(false);
+        if (AIBinder_isRemote(binder.get())) {
+            auto* cookie = new BackendDeathCookie{weak, epoch};
+            if (AIBinder_linkToDeath(binder.get(), backendDeath.get(), cookie) == STATUS_OK) {
+                backendDeathCookie = cookie;
+            }
+        }
         return true;
     }
-    template<class F> bool request(F fn, Reply* reply, bool allowStateChange = false) {
-        if (!connect()) return false;
-        uint64_t epoch = generation;
+    template<class F> bool request(F fn, Reply* reply, bool allowStateChange = false, bool wakeOnDiscard = true) {
+        if (!connect(wakeOnDiscard)) return false;
+        uint64_t epoch = generation.load();
         {
             std::lock_guard lock(responses);
-            if (serial == INT32_MAX) { discard(); return false; }
+            if (serial == INT32_MAX) { discard(wakeOnDiscard); return false; }
             pending = ++serial;
             readyReply = false;
         }
-        if (!fn(pending).isOk()) { discard(); return false; }
+        if (!fn(pending).isOk()) { discard(wakeOnDiscard); return false; }
         std::unique_lock lock(responses);
-        bool done = completed.wait_for(lock, std::chrono::seconds(5), [this] { return readyReply; });
-        if (!done) { lock.unlock(); discard(); return false; }
+        bool done = completed.wait_for(lock, std::chrono::seconds(5), [this] {
+            return readyReply || stopping.load() || backendDead.load();
+        });
+        if (stopping.load()) return false;
+        if (!done || backendDead.load()) { lock.unlock(); discard(wakeOnDiscard); return false; }
         *reply = result;
         lock.unlock();
-        if (epoch != generation || (invalidated && !allowStateChange)) return false;
+        if (epoch != generation.load() || (invalidated.load() && !allowStateChange)) return false;
         if (reply->info.type == radio::RadioResponseType::SOLICITED_ACK_EXP)
             backend->responseAcknowledgement();
         return true;
@@ -160,8 +244,15 @@ class SecureElement final : public se::BnSecureElement {
             return error(se::ISecureElement::UNSUPPORTED_OPERATION);
         return error();
     }
+    CardQuery queryCard(Reply* r, bool wakeOnDiscard = true) {
+        if (!request([this](int s) { return backend->getIccCardStatus(s); }, r, false, wakeOnDiscard)) {
+            if (backend && invalidated.load()) return CardQuery::INTERRUPTED;
+            return CardQuery::DISCONNECTED;
+        }
+        return success(*r) ? CardQuery::OK : CardQuery::RADIO_ERROR;
+    }
     bool card(Reply* r) {
-        return request([this](int s) { return backend->getIccCardStatus(s); }, r) && success(*r);
+        return queryCard(r) == CardQuery::OK;
     }
     void closeAll() {
         if (!connect()) { channels.clear(); return; }
@@ -179,7 +270,7 @@ class SecureElement final : public se::BnSecureElement {
         int channel = (data[0] & 0x40) ? 4 + (data[0] & 15) : data[0] & 3;
         if (!connect()) return error(se::ISecureElement::CHANNEL_NOT_AVAILABLE);
         auto it = channels.find(channel);
-        if (it == channels.end() || it->second != owner || (generation != activeGeneration || invalidated))
+        if (it == channels.end() || it->second != owner || (generation.load() != activeGeneration || invalidated.load()))
             return error(se::ISecureElement::CHANNEL_NOT_AVAILABLE);
         if (data[1] == 0x70) return error(se::ISecureElement::UNSUPPORTED_OPERATION);
         sim::SimApdu command;
@@ -206,37 +297,157 @@ class SecureElement final : public se::BnSecureElement {
         return Status::ok();
     }
 public:
-    SecureElement() : backendName(std::string(sim::IRadioSim::descriptor) + "/se1") {
-        std::thread([this] {
+    SecureElement()
+        : backendName(std::string(sim::IRadioSim::descriptor) + "/se1"),
+          backendDeath(AIBinder_DeathRecipient_new([](void* data) {
+              auto* cookie = static_cast<BackendDeathCookie*>(data);
+              if (auto self = cookie->self.lock()) self->onBackendDied(cookie->epoch);
+          })),
+          clientDeath(AIBinder_DeathRecipient_new([](void* data) {
+              auto* cookie = static_cast<ClientDeathCookie*>(data);
+              if (auto self = cookie->self.lock()) self->wakeMonitor(false);
+          })) {
+        AIBinder_DeathRecipient_setOnUnlinked(backendDeath.get(), [](void* data) {
+            delete static_cast<BackendDeathCookie*>(data);
+        });
+        AIBinder_DeathRecipient_setOnUnlinked(clientDeath.get(), [](void* data) {
+            delete static_cast<ClientDeathCookie*>(data);
+        });
+        notifierThread = std::thread([this] {
             for (;;) {
                 std::unique_lock lock(notifications);
-                notificationReady.wait(lock, [this] { return !events.empty(); });
-                auto event = events.front();
+                notificationReady.wait(lock, [this] { return stopNotifier || !events.empty(); });
+                if (stopNotifier) break;
+                auto event = std::move(events.front());
                 events.pop_front();
                 lock.unlock();
                 event.cb->onStateChange(event.state, event.reason);
             }
-        }).detach();
+        });
+    }
+    ~SecureElement() override {
+        shutdown();
+        unlinkBackend();
+        unlinkClient();
+    }
+    void shutdown() {
+        stopping.store(true);
+        {
+            std::lock_guard lock(monitorMutex);
+            monitorPending = true;
+            monitorCv.notify_all();
+        }
+        {
+            std::lock_guard lock(responses);
+            completed.notify_all();
+        }
+        {
+            std::lock_guard lock(notifications);
+            stopNotifier = true;
+            notificationReady.notify_all();
+        }
+        if (notifierThread.joinable() && notifierThread.get_id() != std::this_thread::get_id()) {
+            notifierThread.join();
+        }
     }
     void monitor() {
+        static constexpr std::array<std::chrono::seconds, 5> kBackoff{
+            std::chrono::seconds(1),
+            std::chrono::seconds(2),
+            std::chrono::seconds(4),
+            std::chrono::seconds(8),
+            std::chrono::seconds(30),
+        };
+        size_t backoffIndex = 0;
         for (;;) {
+            bool retry = false;
+            bool immediate = false;
             {
                 std::lock_guard lock(operation);
-                if (client && AIBinder_ping(client->asBinder().get()) != STATUS_OK) {
+                if (stopping.load()) break;
+                if (client && (!AIBinder_isAlive(client->asBinder().get()) ||
+                               AIBinder_ping(client->asBinder().get()) != STATUS_OK)) {
                     closeAll();
+                    unlinkClient();
                     client.reset();
                     owner = static_cast<uid_t>(-1);
                 }
-                if ((activeGeneration != generation || invalidated.exchange(false)) && backend) discard();
-                if (connect()) {
-                    Reply r;
-                    bool present = card(&r) && r.value == sim::CardStatus::STATE_PRESENT;
-                    if (!present && connected) { channels.clear(); notify(false, "SIM unavailable"); }
-                    bool changed = dirty.exchange(false);
-                    if (present && (!connected || changed)) notify(true, "SIM ready");
+                if ((activeGeneration != generation.load() || backendDead.exchange(false)) && backend) {
+                    discard(false);
+                }
+                bool simChanged = invalidated.exchange(false);
+                if (simChanged) channels.clear();
+                bool needConnect = !backend || !AIBinder_isAlive(backend->asBinder().get());
+                bool needQuery = needConnect || simChanged || dirty.load() || !stateKnown;
+                if (needQuery) {
+                    if (!connect(false)) {
+                        retry = true;
+                    } else {
+                        Reply r;
+                        CardQuery q = queryCard(&r, false);
+                        if (stopping.load()) break;
+                        if (q == CardQuery::OK) {
+                            bool present = r.value == sim::CardStatus::STATE_PRESENT;
+                            stateKnown = true;
+                            bool changed = dirty.exchange(false);
+                            if (!present && connected) {
+                                channels.clear();
+                                notify(false, "SIM unavailable");
+                            } else if (present) {
+                                if (simChanged && connected) notify(false, "SIM state changed");
+                                if (!connected || changed) notify(true, "SIM ready");
+                            }
+                            backoffIndex = 0;
+                        } else if (q == CardQuery::INTERRUPTED) {
+                            immediate = true;
+                        } else {
+                            if (connected) {
+                                channels.clear();
+                                notify(false, "SIM unavailable");
+                            }
+                            stateKnown = false;
+                            retry = true;
+                        }
+                    }
+                } else {
+                    backoffIndex = 0;
                 }
             }
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (immediate) continue;
+            std::unique_lock waitLock(monitorMutex);
+            if (stopping.load()) break;
+            if (monitorPending) {
+                monitorPending = false;
+                if (resetBackoff) {
+                    resetBackoff = false;
+                    backoffIndex = 0;
+                }
+                continue;
+            }
+            if (retry && backoffIndex < kBackoff.size()) {
+                auto delay = kBackoff[backoffIndex++];
+                monitorCv.wait_for(waitLock, delay, [this] {
+                    return stopping.load() || monitorPending;
+                });
+                if (stopping.load()) break;
+                if (monitorPending) {
+                    monitorPending = false;
+                    if (resetBackoff) {
+                        resetBackoff = false;
+                        backoffIndex = 0;
+                    }
+                }
+            } else {
+                monitorCv.wait(waitLock, [this] {
+                    return stopping.load() || monitorPending;
+                });
+                if (stopping.load()) break;
+                monitorPending = false;
+                if (resetBackoff) {
+                    resetBackoff = false;
+                    backoffIndex = 0;
+                }
+            }
         }
     }
     Status init(const std::shared_ptr<se::ISecureElementCallback>& cb) override {
@@ -245,10 +456,29 @@ public:
         if (client && owner != AIBinder_getCallingUid() && AIBinder_isAlive(client->asBinder().get()))
             return Status::fromExceptionCode(EX_SECURITY);
         closeAll();
+        unlinkClient();
         client = cb;
         owner = AIBinder_getCallingUid();
+        auto binder = client->asBinder();
+        if (binder.get() && AIBinder_isRemote(binder.get())) {
+            auto* cookie = new ClientDeathCookie{ref<SecureElement>()};
+            if (AIBinder_linkToDeath(binder.get(), clientDeath.get(), cookie) == STATUS_OK) {
+                clientDeathCookie = cookie;
+            }
+        }
         Reply r;
-        notify(card(&r) && r.value == sim::CardStatus::STATE_PRESENT, "Initialization");
+        CardQuery q = queryCard(&r, false);
+        if (q == CardQuery::OK) {
+            stateKnown = true;
+            dirty.store(false);
+            notify(r.value == sim::CardStatus::STATE_PRESENT, "Initialization");
+            wakeMonitor(true);
+        } else {
+            stateKnown = false;
+            dirty.store(true);
+            notify(false, "Initialization");
+            wakeMonitor(true);
+        }
         return Status::ok();
     }
     Status getAtr(Bytes* out) override {
@@ -262,7 +492,9 @@ public:
     Status isCardPresent(bool* out) override {
         std::lock_guard lock(operation);
         Reply r;
-        *out = card(&r) && r.value == sim::CardStatus::STATE_PRESENT;
+        CardQuery q = queryCard(&r);
+        *out = q == CardQuery::OK && r.value == sim::CardStatus::STATE_PRESENT;
+        if (q != CardQuery::OK) wakeMonitor(true);
         return Status::ok();
     }
     Status openLogicalChannel(const Bytes& aid, int8_t p2, se::LogicalChannelResponse* out) override {
@@ -320,7 +552,7 @@ public:
         int channel = static_cast<uint8_t>(number);
         if (!owned()) return Status::fromExceptionCode(EX_SECURITY);
         if (!channels.count(channel)) return error(se::ISecureElement::FAILED);
-        if ((generation != activeGeneration || invalidated)) { channels.clear(); return error(); }
+        if ((generation.load() != activeGeneration || invalidated.load())) { channels.clear(); return error(); }
         if (channel) {
             Reply r;
             if (!request([this, channel](int s) { return backend->iccCloseLogicalChannel(s, channel); }, &r)) return error();
@@ -338,9 +570,20 @@ public:
         Reply down, up, state;
         bool off = request([this](int s) { return backend->setSimCardPower(s, sim::CardPowerState::POWER_DOWN); }, &down, true) && success(down);
         bool on = request([this](int s) { return backend->setSimCardPower(s, sim::CardPowerState::POWER_UP); }, &up, true) && success(up);
-        dirty = true;
-        if (!off || !on) return error(se::ISecureElement::FAILED);
-        if (card(&state) && state.value == sim::CardStatus::STATE_PRESENT) notify(true, "Reset complete");
+        dirty.store(true);
+        if (!off || !on) {
+            stateKnown = false;
+            wakeMonitor(true);
+            return error(se::ISecureElement::FAILED);
+        }
+        if (queryCard(&state) == CardQuery::OK) {
+            stateKnown = true;
+            dirty.store(false);
+            if (state.value == sim::CardStatus::STATE_PRESENT) notify(true, "Reset complete");
+        } else {
+            stateKnown = false;
+            wakeMonitor(true);
+        }
         return Status::ok();
     }
 };
@@ -352,7 +595,9 @@ int main() {
     if (!AServiceManager_isDeclared(name.c_str())) return 1;
     auto service = ndk::SharedRefBase::make<SecureElement>();
     if (AServiceManager_addService(service->asBinder().get(), name.c_str()) != STATUS_OK) return 1;
-    std::thread([service] { service->monitor(); }).detach();
+    std::thread monitorThread([service] { service->monitor(); });
     ABinderProcess_joinThreadPool();
+    service->shutdown();
+    monitorThread.join();
     return 1;
 }

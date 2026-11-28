@@ -634,14 +634,11 @@ vendor/bin/ccci_mdinit
 vendor/bin/ccci_rpcd
 vendor/bin/charon
 vendor/bin/epdg_wod
-vendor/bin/ipsec_mon
 vendor/bin/muxreport
-vendor/bin/rcs_volte_stack
 vendor/bin/starter
 vendor/bin/stroke
 vendor/bin/volte_imcb
 vendor/bin/volte_imsm_93
-vendor/bin/volte_rcs_ua
 vendor/bin/volte_stack
 vendor/bin/volte_ua
 vendor/bin/xcap
@@ -658,7 +655,6 @@ vendor/etc/init/init.volte_ua.rc
 vendor/etc/init/init.wfca.rc
 vendor/etc/init/init.wod.rc
 vendor/etc/init/init.xcap.rc
-vendor/etc/init/ipsec_mon.rc
 vendor/etc/init/mtklog.rc
 vendor/etc/init/mtkrild.rc
 vendor/etc/init/muxreport.rc

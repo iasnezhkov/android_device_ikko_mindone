@@ -23,6 +23,7 @@ class LegacyBackend {
     int setVoiceVolume(float volume);
     int setMicMute(bool muted);
     int getMicMute(bool* muted);
+    int setSco(mindone_audio_sco_band band);
     int createAudioPatch(const std::vector<audio_port_config>& sources,
                          const std::vector<audio_port_config>& sinks, audio_patch_handle_t* handle);
     int releaseAudioPatch(audio_patch_handle_t handle);

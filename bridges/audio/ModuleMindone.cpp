@@ -12,6 +12,7 @@
 #include <media/AidlConversionCppNdk.h>
 #include <media/AidlConversionNdk.h>
 
+#include "BluetoothMindone.h"
 #include "StreamMindone.h"
 #include "TelephonyMindone.h"
 
@@ -52,6 +53,18 @@ ndk::ScopedAStatus ModuleMindone::getTelephony(std::shared_ptr<ITelephony>* tele
     return ndk::ScopedAStatus::ok();
 }
 
+ndk::ScopedAStatus ModuleMindone::getBluetooth(std::shared_ptr<IBluetooth>* bluetooth) {
+    if (bluetooth == nullptr) {
+        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    }
+    std::lock_guard lock(mMutex);
+    if (!mBluetooth) {
+        mBluetooth = ndk::SharedRefBase::make<BluetoothMindone>(mBackend);
+    }
+    *bluetooth = mBluetooth.getInstance();
+    return ndk::ScopedAStatus::ok();
+}
+
 ndk::ScopedAStatus ModuleMindone::setAudioPatch(const AudioPatch& in_requested,
                                               AudioPatch* _aidl_return) {
     std::lock_guard lock(mMutex);
@@ -89,24 +102,11 @@ ndk::ScopedAStatus ModuleMindone::setAudioPatch(const AudioPatch& in_requested,
         }
         return true;
     };
-    bool releasedLegacy = false;
     const auto rollback = [&]() {
         if (previous.has_value()) {
             AudioPatch restored;
             if (!Module::setAudioPatch(*previous, &restored).isOk()) {
                 LOG(ERROR) << "Failed to restore audio patch " << previous->id;
-            }
-            if (releasedLegacy) {
-                std::vector<audio_port_config> sources;
-                std::vector<audio_port_config> sinks;
-                audio_patch_handle_t handle = AUDIO_PATCH_HANDLE_NONE;
-                if (convert(previous->sourcePortConfigIds, true, &sources) &&
-                    convert(previous->sinkPortConfigIds, false, &sinks) &&
-                    mBackend->createAudioPatch(sources, sinks, &handle) == 0) {
-                    mLegacyPatches[previous->id] = handle;
-                } else {
-                    LOG(ERROR) << "Failed to restore legacy audio patch " << previous->id;
-                }
             }
         } else if (!Module::resetAudioPatch(_aidl_return->id).isOk()) {
             LOG(ERROR) << "Failed to roll back audio patch " << _aidl_return->id;
@@ -125,15 +125,21 @@ ndk::ScopedAStatus ModuleMindone::setAudioPatch(const AudioPatch& in_requested,
         return rollback();
     }
     auto existing = mLegacyPatches.find(_aidl_return->id);
-    if (existing != mLegacyPatches.end()) {
-        if (mBackend->releaseAudioPatch(existing->second) != 0) return rollback();
-        mLegacyPatches.erase(existing);
-        releasedLegacy = true;
-    }
     if (devicePatch) {
         audio_patch_handle_t handle = AUDIO_PATCH_HANDLE_NONE;
         if (mBackend->createAudioPatch(sources, sinks, &handle) != 0) return rollback();
-        mLegacyPatches[_aidl_return->id] = handle;
+        if (existing != mLegacyPatches.end()) {
+            const audio_patch_handle_t previousHandle = existing->second;
+            existing->second = handle;
+            if (previousHandle != handle && mBackend->releaseAudioPatch(previousHandle) != 0) {
+                LOG(ERROR) << "Failed to release superseded legacy patch " << previousHandle;
+            }
+        } else {
+            mLegacyPatches[_aidl_return->id] = handle;
+        }
+    } else if (existing != mLegacyPatches.end()) {
+        if (mBackend->releaseAudioPatch(existing->second) != 0) return rollback();
+        mLegacyPatches.erase(existing);
     }
     return status;
 }

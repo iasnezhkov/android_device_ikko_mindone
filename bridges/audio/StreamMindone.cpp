@@ -212,17 +212,21 @@ void DriverMindone::shutdown() {
 
 ndk::ScopedAStatus DriverMindone::routeDevices(const std::vector<AudioDevice>& devices) {
     if (devices.empty()) return ndk::ScopedAStatus::ok();
-    if (devices.size() != 1) {
+    if (mIsInput && devices.size() != 1) {
         return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
     }
-    auto device = ::aidl::android::aidl2legacy_AudioDeviceDescription_audio_devices_t(
-            devices.front().type);
-    if (!device.ok() || audio_is_input_device(device.value()) != mIsInput) {
-        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+    audio_devices_t mask = AUDIO_DEVICE_NONE;
+    for (const auto& entry : devices) {
+        auto device = ::aidl::android::aidl2legacy_AudioDeviceDescription_audio_devices_t(
+                entry.type);
+        if (!device.ok() || audio_is_input_device(device.value()) != mIsInput) {
+            return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+        }
+        mask |= device.value();
     }
     std::lock_guard lock(mMutex);
     if (!hasStream()) return ndk::ScopedAStatus::fromServiceSpecificError(-ENODEV);
-    const mindone_audio_route route = {device.value()};
+    const mindone_audio_route route = {mask};
     const int status = mIsInput ? mindone_audio_input_route(mInput, route)
                                : mindone_audio_output_route(mOutput, route);
     return status == 0 ? ndk::ScopedAStatus::ok()

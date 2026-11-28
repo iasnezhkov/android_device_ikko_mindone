@@ -31,6 +31,7 @@ class ModuleMindone : public Module {
             const std::optional<::aidl::android::media::audio::common::AudioOffloadInfo>& offloadInfo,
             std::shared_ptr<StreamOut>* result) override;
     ndk::ScopedAStatus getTelephony(std::shared_ptr<ITelephony>* telephony) override;
+    ndk::ScopedAStatus getBluetooth(std::shared_ptr<IBluetooth>* bluetooth) override;
     ndk::ScopedAStatus setAudioPatch(const AudioPatch& in_requested,
                                    AudioPatch* _aidl_return) override;
     ndk::ScopedAStatus resetAudioPatch(int32_t in_patchId) override;
@@ -46,6 +47,7 @@ class ModuleMindone : public Module {
   private:
     std::shared_ptr<LegacyBackend> mBackend;
     ChildInterface<ITelephony> mTelephony;
+    ChildInterface<IBluetooth> mBluetooth;
     std::mutex mMutex;
     std::map<int32_t, audio_patch_handle_t> mLegacyPatches;
 };

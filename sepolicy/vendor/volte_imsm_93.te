@@ -3,5 +3,5 @@
 
 allow volte_imsm_93 self:netlink_route_socket nlmsg;
 allowxperm volte_imsm_93 self:netlink_route_socket nlmsg {
-  RTM_NEWROUTE RTM_DELROUTE RTM_NEWRULE RTM_DELRULE
+  RTM_GETLINK RTM_NEWROUTE RTM_DELROUTE RTM_NEWRULE RTM_DELRULE
 };

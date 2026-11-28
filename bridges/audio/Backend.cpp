@@ -53,6 +53,11 @@ int LegacyBackend::getMicMute(bool* muted) {
     return status;
 }
 
+int LegacyBackend::setSco(mindone_audio_sco_band band) {
+    std::lock_guard lock(mMutex);
+    return mindone_audio_set_sco(mDevice, mindone_audio_sco{band});
+}
+
 int LegacyBackend::createAudioPatch(const std::vector<audio_port_config>& sources,
                                     const std::vector<audio_port_config>& sinks,
                                     audio_patch_handle_t* handle) {
